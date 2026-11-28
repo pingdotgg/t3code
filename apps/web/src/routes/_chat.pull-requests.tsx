@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
@@ -7,6 +8,10 @@ import { type PullRequestsSearch } from "../components/pullRequest/usePullReques
 import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
+
+function sliceSearchText(value: string) {
+  return value.slice(0, splitsSurrogatePair(value, 200) ? 199 : 200);
+}
 
 function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
@@ -17,7 +22,7 @@ function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const seen = new Set<string>();
   for (const rawValue of values) {
     if (typeof rawValue !== "string") continue;
-    const value = rawValue.trim().slice(0, 200);
+    const value = sliceSearchText(rawValue.trim());
     const key = value.toLowerCase();
     if (value.length === 0 || seen.has(key)) continue;
     labels.push(value);
@@ -60,7 +65,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
     // Always include free-text keys to override numeric values in the parent route's unvalidated search.
-    q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
+    q: typeof raw.q === "string" && raw.q ? sliceSearchText(raw.q) : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||
@@ -70,9 +75,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       : {}),
     ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
     author:
-      typeof raw.author === "string" && raw.author.trim()
-        ? raw.author.trim().slice(0, 200)
-        : undefined,
+      typeof raw.author === "string" ? sliceSearchText(raw.author.trim()) || undefined : undefined,
     labels: pullRequestSearchLabels(raw.labels),
   }),
   component: PullRequestsPage,

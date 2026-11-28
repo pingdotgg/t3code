@@ -119,7 +119,7 @@ const mergeSorted = <A>(chunk: Chunk<A>, values: ReadonlyArray<A>, ord: Order<A>
     out[k++] = value
   }
   for (; i < arr.length; i++) out[k++] = arr[i]
-  return C.fromIterable(out)
+  return C.fromArrayUnsafe(out)
 }
 
 /**
@@ -181,7 +181,7 @@ export function fromIterable<A>(
   }
   const arr = Array.from(iterable).sort((a, b) => order(a, b))
   return Effect.map(
-    TxRef.make<Chunk<A>>(C.fromIterable(arr)),
+    TxRef.make<Chunk<A>>(C.fromArrayUnsafe(arr)),
     (ref) => makeTxPriorityQueue(ref, order)
   )
 }

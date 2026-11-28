@@ -1,3 +1,6 @@
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
+import { characterEntities } from "character-entities";
+import { characterEntitiesLegacy } from "character-entities-legacy";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -16,6 +19,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
+const ICON_SOURCE_SCAN_BYTES = 128 * 1024;
 const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
 const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
@@ -62,6 +66,9 @@ const FAVICON_CANDIDATES = [
   "AppIcon.icns",
 ] as const;
 
+// Flutter's default favicon ranks below icons a project declares in its source.
+const FALLBACK_FAVICON_CANDIDATES = ["web/favicon.png"] as const;
+
 const ICON_SOURCE_FILES = [
   "index.html",
   "public/index.html",
@@ -72,11 +79,51 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-// Anchor HTML at <link and scan brace-free metadata runs to avoid quadratic regex rescans.
-const LINK_ICON_HTML_RE =
-  /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
-const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
-const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
+// A quote opens a value only right after `=`; the lookahead+backreference keeps it atomic so
+// backtracking cannot re-read the value as plain text.
+// A comment (to `-->`, `--!>` or the end) hides the links inside it, as in a browser.
+const HTML_LINK_RE =
+  /<!--(?:-?>|[\s\S]*?--!?>|[\s\S]*)|<link\b(?:[^<>=]|=(?=([\t\n\f\r ]*(?:"[^"]*"|'[^']*')|))\1)*>/gi;
+// `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
+const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
+// HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
+const HTML_ATTRIBUTE_RE =
+  /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
+const ICON_REL_RE = new RegExp(
+  String.raw`(?:^|[\s,{]|\*\/)(?:"rel"|'rel'|rel)\s*:\s*${ICON_REL_VALUE}`,
+  "i",
+);
+const ICON_HREF_RE = /(?:^|[\s,{]|\*\/)(?:"href"|'href'|href)\s*:\s*(?:"([^"?#]+)|'([^'?#]+))/i;
+// https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
+const HTML_C1_REPLACEMENTS: Readonly<Partial<Record<number, number>>> = {
+  0x80: 0x20ac,
+  0x82: 0x201a,
+  0x83: 0x0192,
+  0x84: 0x201e,
+  0x85: 0x2026,
+  0x86: 0x2020,
+  0x87: 0x2021,
+  0x88: 0x02c6,
+  0x89: 0x2030,
+  0x8a: 0x0160,
+  0x8b: 0x2039,
+  0x8c: 0x0152,
+  0x8e: 0x017d,
+  0x91: 0x2018,
+  0x92: 0x2019,
+  0x93: 0x201c,
+  0x94: 0x201d,
+  0x95: 0x2022,
+  0x96: 0x2013,
+  0x97: 0x2014,
+  0x98: 0x02dc,
+  0x99: 0x2122,
+  0x9a: 0x0161,
+  0x9b: 0x203a,
+  0x9c: 0x0153,
+  0x9e: 0x017e,
+  0x9f: 0x0178,
+};
 
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
@@ -115,15 +162,60 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
-function extractIconHref(source: string): string | null {
-  const htmlMatch = source.match(LINK_ICON_HTML_RE);
-  if (htmlMatch?.[1]) return htmlMatch[1];
+function decodeHtmlAttribute(value: string, html: boolean): string {
+  return value.replace(
+    /&(?:([a-z][a-z\d]*)([;=]?)|#(?:(\d+)|x([a-f\d]+));?)/gi,
+    (reference, name?: string, terminator?: string, decimal?: string, hex?: string) => {
+      if (name !== undefined) {
+        // HTML attributes, unlike JSX, decode legacy names without `;` unless `=` or an alphanumeric follows.
+        const decoded =
+          terminator === ";"
+            ? Object.hasOwn(characterEntities, name)
+            : terminator === "" && html && characterEntitiesLegacy.includes(name);
+        return decoded ? characterEntities[name]! : reference;
+      }
+      const codePoint = hex === undefined ? Number(decimal) : Number.parseInt(hex, 16);
+      if (codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+        return "\uFFFD";
+      }
+      return String.fromCodePoint(HTML_C1_REPLACEMENTS[codePoint] ?? codePoint);
+    },
+  );
+}
+
+function* extractIconHrefs(source: string, html: boolean): Generator<string> {
+  for (const [tag] of source.matchAll(HTML_LINK_RE)) {
+    if (tag.startsWith("<!--")) continue;
+    const attributes = new Map<string, { value: string; quoted: boolean }>();
+    for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag
+      .slice("<link".length)
+      .matchAll(HTML_ATTRIBUTE_RE)) {
+      const key = name!.toLowerCase();
+      if (attributes.has(key)) continue;
+      const quotedValue = doubleQuoted ?? singleQuoted;
+      attributes.set(key, {
+        value: quotedValue ?? unquoted ?? "",
+        quoted: quotedValue !== undefined,
+      });
+    }
+    const rawRel = attributes.get("rel")?.value;
+    if (rawRel === undefined) continue;
+    const rel = (html ? decodeHtmlAttribute(rawRel, true) : rawRel)
+      .toLowerCase()
+      .split(/[\t\n\f\r ]+/);
+    if (!rel.includes("icon")) continue;
+    const href = attributes.get("href");
+    // An unquoted `{...}` is a JSX expression, not a path.
+    if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
+    const path = decodeHtmlAttribute(href.value, html).split(/[?#]/, 1)[0];
+    if (path) yield path;
+  }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
-    if (hrefMatch?.[1]) return hrefMatch[1];
+    const href = hrefMatch?.[1] ?? hrefMatch?.[2];
+    if (href) yield href;
   }
-  return null;
 }
 
 export const optionOnNotFound = <A, R>(
@@ -137,16 +229,37 @@ export const optionOnNotFound = <A, R>(
     }),
   );
 
+// A path through a file (ENOTDIR) or a symlink loop names no file either.
+const optionOnMissing = <A, R>(
+  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
+): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
+  optionOnNotFound(effect).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "BadResource",
+      () => Effect.succeedNone,
+    ),
+  );
+
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
-  const resolveIconHref = (href: string): ReadonlyArray<string> => {
+  const resolveIconHref = (href: string, sourceFile: string): ReadonlyArray<string> => {
+    // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
+    if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
-    const clean = href.trim().replace(/^\//, "");
-    return [path.join("public", clean), clean];
+    const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
+    // A decoded NUL fails `stat` instead of missing.
+    if (clean.includes("\0")) return [];
+    const candidates = [path.join("public", clean), clean];
+    // A relative href in HTML resolves against that file's directory (e.g. Vite `root: "src"`).
+    const htmlDir = sourceFile.endsWith(".html") ? path.dirname(sourceFile) : ".";
+    if (htmlDir !== "." && !href.trim().startsWith("/")) {
+      candidates.push(path.join(htmlDir, clean));
+    }
+    return candidates;
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
@@ -174,7 +287,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(candidate)) {
         continue;
       }
-      const stats = yield* optionOnNotFound(fileSystem.stat(candidate.value.absolutePath)).pipe(
+      const stats = yield* optionOnMissing(fileSystem.stat(candidate.value.absolutePath)).pipe(
         Effect.mapError(
           (cause) =>
             new ProjectFaviconResolutionError({
@@ -213,7 +326,27 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
+    const stats = yield* optionOnMissing(fileSystem.stat(sourcePath.absolutePath)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "stat-candidate",
+            workspaceRoot: projectCwd,
+            relativePath: sourceFile,
+            absolutePath: sourcePath.absolutePath,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(stats) || stats.value.type !== "File") {
+      return null;
+    }
+    const source = yield* optionOnMissing(
+      fileSystem.open(sourcePath.absolutePath, { flag: "r" }).pipe(
+        Effect.flatMap((file) => file.readAlloc(ICON_SOURCE_SCAN_BYTES)),
+        Effect.scoped,
+      ),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -225,14 +358,14 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (Option.isNone(source)) {
+    if (Option.isNone(source) || Option.isNone(source.value)) {
       return null;
     }
-    const href = extractIconHref(source.value);
-    if (!href) {
-      return null;
-    }
-    return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
+    const hrefs = Array.from(
+      extractIconHrefs(new TextDecoder().decode(source.value.value), sourceFile.endsWith(".html")),
+    );
+    const candidates = hrefs.flatMap((href) => resolveIconHref(href, sourceFile));
+    return yield* findExistingFile(projectCwd, candidates, "workspace");
   });
 
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
@@ -291,9 +424,14 @@ export const make = Effect.gen(function* () {
       return wellKnown;
     }
 
-    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+    const sourceDeclared = yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
       findIconFromSource(projectCwd, sourceFile),
     );
+    if (sourceDeclared) {
+      return sourceDeclared;
+    }
+
+    return yield* findExistingFile(projectCwd, FALLBACK_FAVICON_CANDIDATES, "workspace");
   });
 
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(
@@ -323,7 +461,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
+    const stats = yield* optionOnMissing(fileSystem.stat(cached)).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({

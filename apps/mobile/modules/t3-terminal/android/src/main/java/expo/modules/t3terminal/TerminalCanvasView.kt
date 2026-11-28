@@ -8,7 +8,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.util.Log
 import android.view.ActionMode
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
@@ -17,28 +16,17 @@ import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.widget.OverScroller
+import com.facebook.react.common.assets.ReactFontManager
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
-internal object TerminalTypefaces {
-  private var loaded = false
-  var regular: Typeface = Typeface.MONOSPACE
-    private set
-  var bold: Typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-    private set
-
-  @Suppress("TooGenericExceptionCaught") // Typeface.createFromAsset exposes RuntimeException.
-  fun ensureLoaded(context: Context) {
-    if (loaded) return
-    loaded = true
-    try {
-      regular = Typeface.createFromAsset(context.assets, "fonts/MesloLGS-NF-Regular.ttf")
-      bold = Typeface.createFromAsset(context.assets, "fonts/MesloLGS-NF-Bold.ttf")
-    } catch (error: RuntimeException) {
-      Log.w("TerminalCanvasView", "bundled terminal font unavailable, using monospace", error)
-    }
-  }
+private class TerminalTypefaces(context: Context, family: String) {
+  private val fonts = ReactFontManager.getInstance()
+  val regular: Typeface = fonts.getTypeface(family, Typeface.NORMAL, context.assets)
+  val bold: Typeface = fonts.getTypeface(family, Typeface.BOLD, context.assets)
+  val italic: Typeface = fonts.getTypeface(family, Typeface.ITALIC, context.assets)
+  val boldItalic: Typeface = fonts.getTypeface(family, Typeface.BOLD_ITALIC, context.assets)
 }
 
 /**
@@ -76,14 +64,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private val scaledDensity = density * resources.configuration.fontScale
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
 
-  init {
-    TerminalTypefaces.ensureLoaded(context)
-  }
-
-  private val regularTypeface = TerminalTypefaces.regular
-  private val boldTypeface = TerminalTypefaces.bold
-  private val italicTypeface = Typeface.create(TerminalTypefaces.regular, Typeface.ITALIC)
-  private val boldItalicTypeface = Typeface.create(TerminalTypefaces.bold, Typeface.ITALIC)
+  private var typefaces = TerminalTypefaces(context, "monospace")
   private val gestureDetector = GestureDetector(context, TerminalGestureListener())
   private val contentPadding = 8f * density
   private var frame: TerminalFrame? = null
@@ -154,6 +135,15 @@ internal class TerminalCanvasView(context: Context) : View(context) {
       updateCellMetrics()
     }
 
+  /** A React Native family name; `monospace` selects the system monospace font. */
+  var fontFamily: String = "monospace"
+    set(value) {
+      if (field == value) return
+      field = value
+      typefaces = TerminalTypefaces(context, value)
+      updateCellMetrics()
+    }
+
   var cellWidthPx: Float = 1f
     private set
   var cellHeightPx: Float = 1f
@@ -164,7 +154,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     isClickable = true
     isFocusable = true
     isFocusableInTouchMode = true
-    paint.typeface = regularTypeface
+    paint.typeface = typefaces.regular
     updateCellMetrics()
   }
 
@@ -230,9 +220,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
           configureTextPaint(flags, currentFrame.cellForegrounds[index])
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
-          if (flags and FLAG_OVERLINE != 0) {
-            canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
-          }
+          drawOverline(canvas, flags, left, top, right)
         }
       }
     }
@@ -284,7 +272,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
 
   private fun updateCellMetrics() {
     paint.textSize = fontSizeSp * scaledDensity
-    paint.typeface = regularTypeface
+    paint.typeface = typefaces.regular
     cellWidthPx = ceil(paint.measureText("M").toDouble()).toFloat().coerceAtLeast(1f)
     val metrics = paint.fontMetrics
     val glyphHeight = metrics.descent - metrics.ascent
@@ -298,10 +286,10 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     val bold = flags and FLAG_BOLD != 0
     val italic = flags and FLAG_ITALIC != 0
     paint.typeface = when {
-      bold && italic -> boldItalicTypeface
-      bold -> boldTypeface
-      italic -> italicTypeface
-      else -> regularTypeface
+      bold && italic -> typefaces.boldItalic
+      bold -> typefaces.bold
+      italic -> typefaces.italic
+      else -> typefaces.regular
     }
     paint.textSize = fontSizeSp * scaledDensity
     paint.color = color
@@ -335,8 +323,15 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
           configureTextPaint(flags, currentFrame.background)
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
+          drawOverline(canvas, flags, left, top, right)
         }
       }
+    }
+  }
+
+  private fun drawOverline(canvas: Canvas, flags: Int, left: Float, top: Float, right: Float) {
+    if (flags and FLAG_OVERLINE != 0) {
+      canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
     }
   }
 

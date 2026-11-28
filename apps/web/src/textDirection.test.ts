@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownProseDirection, textDirection } from "./textDirection";
+import { hasRightToLeftLetter, markdownProseDirection, textDirection } from "./textDirection";
 
 describe("textDirection", () => {
   it.each([
@@ -50,6 +50,12 @@ describe("textDirection", () => {
   });
 });
 
+describe("hasRightToLeftLetter", () => {
+  it("does not count a byte order mark as a right-to-left letter", () => {
+    expect(hasRightToLeftLetter("\uFEFFHello")).toBe(false);
+  });
+});
+
 describe("markdownProseDirection", () => {
   it.each([
     [
@@ -75,6 +81,8 @@ describe("markdownProseDirection", () => {
       "rtl",
     ],
     ["Hebrew around a URL", "ראה https://github.com/pingdotgg/t3code/pull/24050 לפני", "rtl"],
+    ["Hebrew after an uppercase URL scheme", "HTTP://example.org שלום", "rtl"],
+    ["Hebrew immediately after an angle autolink", "<https://example.org>שלום", "rtl"],
     ["English around inline code", "Should I edit `useMemo` or keep it?", "ltr"],
     ["English quoting one Hebrew word", "Please check the שלום label before the release", "ltr"],
   ])("reads %s", (_, markdown, direction) => {

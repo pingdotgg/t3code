@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
-import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
+import {
+  filterPullRequestTestFiles,
+  filterPullRequestViewedFiles,
+  shownPatchIndices,
+  viewedFilePaths,
+} from "./pullRequestFileFilters";
 
 function patch(path: string) {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
@@ -42,6 +47,31 @@ describe("mobile PR test file filter", () => {
     expect(visible.files[1]).toBe(parsed.files[2]);
   });
 
+  it("hides viewed files except those kept on screen", () => {
+    const parsed = buildReviewParsedDiff(
+      ["src/read.ts", "src/opened.ts", "src/drafted.ts", "src/unread.ts"].map(patch).join("\n"),
+      "pr",
+    );
+    const paths = viewedFilePaths(
+      parsed,
+      (path) => path !== "src/unread.ts",
+      (path) => path === "src/opened.ts" || path === "src/drafted.ts",
+    );
+    expect(paths).toEqual({
+      viewed: ["src/read.ts", "src/opened.ts", "src/drafted.ts"],
+      hidden: ["src/read.ts"],
+    });
+    const visible = filterPullRequestViewedFiles(parsed, new Set(paths.hidden));
+    if (parsed.kind !== "files" || visible.kind !== "files") throw new Error("Expected files");
+    expect(visible.files.map((file) => file.path)).toEqual([
+      "src/opened.ts",
+      "src/drafted.ts",
+      "src/unread.ts",
+    ]);
+    expect(visible.fileCount).toBe(3);
+    expect(filterPullRequestViewedFiles(parsed, new Set())).toBe(parsed);
+  });
+
   it("uses the current path when a file is renamed out of a test directory", () => {
     const parsed = buildReviewParsedDiff(
       "diff --git a/tests/helper.ts b/src/helper.ts\nsimilarity index 100%\nrename from tests/helper.ts\nrename to src/helper.ts\n",
@@ -69,5 +99,14 @@ describe("mobile PR test file filter", () => {
     expect(filterPullRequestTestFiles(raw, true)).toBe(raw);
     const empty = { kind: "empty" as const };
     expect(filterPullRequestTestFiles(empty, true)).toBe(empty);
+  });
+
+  it("loads patches for the files the review will show, skipping hidden tests", () => {
+    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.ts", "e.test.ts", "f.ts", "g.ts"].map(
+      (path) => ({ path }),
+    );
+    expect(shownPatchIndices(files, true, null)).toEqual([3, 5, 6]);
+    expect(shownPatchIndices(files, true, 5)).toEqual([5, 6]);
+    expect(shownPatchIndices(files, false, null)).toEqual([0, 1, 2]);
   });
 });

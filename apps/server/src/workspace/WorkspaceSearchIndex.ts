@@ -22,6 +22,7 @@ import * as LayerMap from "effect/LayerMap";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -32,6 +33,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
@@ -54,7 +56,8 @@ const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
-const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
+const PASSIVE_REFRESH_INTERVAL_MS = 60_000;
+export const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const GIT_GREP_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -149,7 +152,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       ProjectSearchContentsResult,
       WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
     >;
-    readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
+    readonly refresh: (mode?: "passive") => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
@@ -285,6 +288,28 @@ function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">)
     : { searchQuery: input.query.toLowerCase(), regexMode: false };
 }
 
+const ASCII_WORD = /^\w+$/;
+
+// A whole-word search for an ASCII word asks fff for the word itself, so substring hits are dropped
+// natively instead of filling pages with lines the JS check then discards. `-u` keeps `\b` and `i`
+// to ASCII: plain search does not fold `ſ` or `K`, and any non-ASCII neighbour stays a candidate.
+function buildWholeWordPattern(query: string, caseSensitive: boolean): string {
+  return `(?${caseSensitive ? "" : "i"}-u)\\b${query}\\b`;
+}
+
+// fff's ranges for that pattern are not used: the JS word check decides, on every hit in the line.
+function findWordRanges(
+  line: string,
+  word: string,
+  caseSensitive: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  // No `u` flag: with it, `i` would fold `ſ` and `K` onto ASCII letters.
+  return Array.from(line.matchAll(new RegExp(word, caseSensitive ? "g" : "gi")), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
 function mapContentMatchRanges(
   line: string,
   byteRanges: ReadonlyArray<readonly [number, number]>,
@@ -306,34 +331,60 @@ function escapeRegExp(input: string): string {
 function locateRegexMatches(
   line: string,
   matches: { readonly column: number; readonly texts: ReadonlyArray<string> } | undefined,
-): Array<readonly [number, number]> {
+): Array<{ readonly start: number; readonly end: number }> {
   if (!matches) return [];
   const lineBytes = Buffer.from(line);
-  const ranges: Array<readonly [number, number]> = [];
-  let start = matches.column - 1;
+  const toStringIndex = (byteOffset: number) => lineBytes.subarray(0, byteOffset).toString().length;
+  const ranges: Array<{ readonly start: number; readonly end: number }> = [];
+  // The column counts the file's bytes; invalid UTF-8 decodes to U+FFFD, never fewer bytes, so the
+  // column can only land early and the first match is found by its text from there too.
+  const firstStart = toStringIndex(matches.column - 1);
   for (const text of matches.texts) {
-    const textBytes = Buffer.from(text);
-    if (ranges.length > 0) start = lineBytes.indexOf(textBytes, ranges.at(-1)![1]);
-    if (start < 0) break;
-    ranges.push([start, start + textBytes.length]);
+    const start = line.indexOf(text, ranges.length > 0 ? ranges.at(-1)!.end : firstStart);
+    if (start >= 0) {
+      ranges.push({ start, end: start + text.length });
+    } else if (ranges.length === 0) {
+      // Git outside a UTF-8 locale can match part of a character, whose bytes decode to U+FFFD.
+      const endByte = matches.column - 1 + Buffer.byteLength(text);
+      ranges.push({ start: firstStart, end: toStringIndex(endByte) });
+    } else {
+      break;
+    }
   }
   return ranges;
 }
 
-// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+// `git grep -z` records: NUL-terminated metadata fields (filenames may contain LF), then LF-terminated text.
 function parseGitGrepRecords(
   stdout: string,
   fieldCount: number,
   truncated: boolean,
 ): Array<Array<string>> {
-  const lines = stdout.split("\n");
-  if (truncated || lines.at(-1) === "") lines.pop();
   const records: Array<Array<string>> = [];
-  for (const line of lines) {
-    const fields = line.split("\0");
-    if (fields.length < fieldCount) continue;
-    // Only the last field (the line or match text) can contain NUL bytes.
-    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  let offset = 0;
+  while (offset < stdout.length) {
+    const fields: Array<string> = [];
+    let complete = true;
+    for (let index = 0; index < fieldCount - 1; index += 1) {
+      const delimiter = stdout.indexOf("\0", offset);
+      if (delimiter === -1) {
+        complete = false;
+        break;
+      }
+      fields.push(stdout.slice(offset, delimiter));
+      offset = delimiter + 1;
+    }
+    if (!complete) break;
+    const lineEnd = stdout.indexOf("\n", offset);
+    if (lineEnd === -1) {
+      if (truncated) break;
+      fields.push(stdout.slice(offset));
+      records.push(fields);
+      break;
+    }
+    fields.push(stdout.slice(offset, lineEnd));
+    records.push(fields);
+    offset = lineEnd + 1;
   }
   return records;
 }
@@ -526,13 +577,12 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
       maxOutputBytes: 16 * 1024 * 1024,
     })
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return new Set<string>();
-  return new Set(
-    result.stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0)
-      .map((entry) => trimDirectorySeparator(toPosixPath(entry, hostIsWindows))),
-  );
+  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return [];
+  // Folders keep their trailing `/`.
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => toPosixPath(entry, hostIsWindows));
 });
 
 function mixedItemPath(item: MixedItem): string {
@@ -624,7 +674,50 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // so content searches do not wait for it; git grep answers until it is ready.
   let contentIndexPending = variant === "content";
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+
+  /** The nearest `.ignore` with a pattern matching `relativePath` itself decides. */
+  const makeIgnoreFileDecider = () => {
+    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
+    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
+      directory: string,
+    ) {
+      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
+      const contents = yield* fileSystem
+        .readFileString(path.join(cwd, directory, ".ignore"))
+        .pipe(Effect.option);
+      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
+      ignoreFiles.set(directory, file);
+      return file;
+    });
+    return Effect.fn("WorkspaceSearchIndex.decideByIgnoreFile")(function* (
+      relativePath: string,
+      isFolder: boolean,
+    ) {
+      const segments = relativePath.split("/");
+      for (let ancestor = segments.length - 1; ancestor >= 0; ancestor -= 1) {
+        const directory = segments.slice(0, ancestor).join("/");
+        const file = yield* readIgnoreFile(directory);
+        const relative = directory ? relativePath.slice(directory.length + 1) : relativePath;
+        const decision = file?.decide(relative, isFolder);
+        if (decision) return decision;
+      }
+      return undefined;
+    });
+  };
+
+  // Like ripgrep and fff, a `.ignore` that re-includes a path overrules Git's ignore rules for it.
+  const loadIgnoredPaths = Effect.fn("WorkspaceSearchIndex.loadIgnoredPaths")(function* () {
+    const decide = makeIgnoreFileDecider();
+    const ignored = new Set<string>();
+    for (const entry of yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows)) {
+      const relativePath = trimDirectorySeparator(entry);
+      if ((yield* decide(relativePath, entry.endsWith("/"))) !== "included") {
+        ignored.add(relativePath);
+      }
+    }
+    return ignored;
+  });
+  let ignoredPaths = yield* loadIgnoredPaths();
   if (variant === "paths") {
     yield* waitForIndexReady(
       cwd,
@@ -685,6 +778,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           "core.quotePath=false",
           "-c",
           "core.fsmonitor=false",
+          "-c",
+          "grep.column=false",
+          "-c",
+          "grep.fullName=false",
+          "-c",
+          "submodule.recurse=false",
           "grep",
           "--untracked",
           "--no-color",
@@ -713,32 +812,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // fff leaves out what `.ignore` files exclude, which git cannot evaluate; the nearest
   // `.ignore` that matches a path or one of its folders decides, as in decideByIgnoreFiles.
   const makeIgnoreFileFilter = () => {
-    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
-    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
-      directory: string,
-    ) {
-      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
-      const contents = yield* fileSystem
-        .readFileString(path.join(cwd, directory, ".ignore"))
-        .pipe(Effect.option);
-      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
-      ignoreFiles.set(directory, file);
-      return file;
-    });
+    const decide = makeIgnoreFileDecider();
     return Effect.fn("WorkspaceSearchIndex.isExcludedByIgnoreFiles")(function* (
       relativePath: string,
     ) {
       const segments = relativePath.split("/");
       for (let depth = 1; depth <= segments.length; depth += 1) {
         const candidate = segments.slice(0, depth).join("/");
-        for (let ancestor = depth - 1; ancestor >= 0; ancestor -= 1) {
-          const directory = segments.slice(0, ancestor).join("/");
-          const file = yield* readIgnoreFile(directory);
-          const relative = directory ? candidate.slice(directory.length + 1) : candidate;
-          const decision = file?.decide(relative, depth < segments.length);
-          if (decision === "ignored") return true;
-          if (decision === "included") break;
-        }
+        if ((yield* decide(candidate, depth < segments.length)) === "ignored") return true;
       }
       return false;
     });
@@ -814,31 +895,31 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         rangesCutOff = true;
         break;
       }
-      const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+      const lineContent = line.slice(
         0,
-        CONTENT_LINE_MAX_LENGTH,
+        splitsSurrogatePair(line, CONTENT_LINE_MAX_LENGTH)
+          ? CONTENT_LINE_MAX_LENGTH - 1
+          : CONTENT_LINE_MAX_LENGTH,
       );
-      const matchRanges = (
+      const ranges = (
         literal
-          ? Array.from(lineContent.matchAll(literal), (match) => ({
+          ? Array.from((input.wholeWord ? line : lineContent).matchAll(literal), (match) => ({
               start: match.index,
               end: match.index + match[0].length,
             }))
-          : mapContentMatchRanges(
-              lineContent,
-              locateRegexMatches(lineContent, regexMatches.get(key)),
+          : // A match can take in the `\r` of a CRLF line, which `line` leaves out.
+            locateRegexMatches(rawLine, regexMatches.get(key)).flatMap(({ start, end }) =>
+              start < line.length ? [{ start, end: Math.min(end, line.length) }] : [],
             )
-      ).filter(
-        (range) =>
-          range.end <= lineContent.length &&
-          (!input.wholeWord || isWholeWordRange(lineContent, range)),
-      );
-      if (input.wholeWord && matchRanges.length === 0) continue;
+      ).filter((range) => !input.wholeWord || isWholeWordRange(line, range));
+      if (input.wholeWord && ranges.length === 0) continue;
       matches.push({
         path: relativePath,
         lineNumber: Number(lineNumber),
         lineContent,
-        matchRanges,
+        // Like fff, a match that does not fit in the shown line keeps the line without its range.
+        matchRanges: ranges.filter((range) => range.end <= lineContent.length),
       });
       if (matches.length > input.limit) break;
     }
@@ -910,8 +991,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     repository: string,
     entries: ReadonlyArray<ProjectEntry>,
   ) {
-    const relativePaths = entries.map((entry) =>
-      repository ? entry.path.slice(repository.length + 1) : entry.path,
+    const relativePaths = entries.map(
+      (entry) => `./${repository ? entry.path.slice(repository.length + 1) : entry.path}`,
     );
     const repositoryCwd = path.join(cwd, repository);
     const result = yield* vcsProcess
@@ -919,6 +1000,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         operation: "WorkspaceSearchIndex.listGitIgnored",
         command: "git",
         // fff applies ignore rules to tracked paths too, so the index is not consulted.
+        // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
         args: ["-c", "core.fsmonitor=false", "check-ignore", "--no-index", "-z", "--stdin"],
         cwd: repositoryCwd,
         stdin: `${relativePaths.join("\0")}\0`,
@@ -949,7 +1031,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.stdout
       .split("\0")
       .filter(Boolean)
-      .map((relativePath) => (repository ? `${repository}/${relativePath}` : relativePath));
+      .map((ignoredPath) => {
+        const relativePath = ignoredPath.replace(/^\.\//, "");
+        return repository ? `${repository}/${relativePath}` : relativePath;
+      });
   });
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {
@@ -1030,38 +1115,36 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (!editsOnly) invalidateSymlinkScan();
   };
   // fff refuses subscriptions until its watcher is up, which can trail the initial scan, so
-  // each read retries until one is in place.
+  // each read retries until one is in place. Subscribing waits on fff's picker lock, which its
+  // watcher holds while it indexes a new folder, so it runs off the JS thread.
   let unwatch: WatchUnsubscribe | undefined;
   yield* Effect.addFinalizer(() => Effect.sync(() => unwatch?.()));
-  const ensureWatching = () => {
+  const ensureWatching = Effect.fn("WorkspaceSearchIndex.ensureWatching")(function* () {
     if (unwatch) return true;
-    try {
-      const result = finder.watch(onWatchBatch);
-      if (result.ok) unwatch = result.value;
-    } catch {
-      // Not ready yet; the next read tries again.
-    }
+    const result = yield* Effect.promise(() =>
+      finder.watchAsync(onWatchBatch).catch(() => undefined),
+    );
+    if (result?.ok) unwatch = result.value;
     return unwatch !== undefined;
-  };
+  });
   const indexScope = yield* Effect.scope;
   const startSymlinkScan = Effect.fn("WorkspaceSearchIndex.startSymlinkScan")(function* () {
     symlinkScanStale = false;
-    // Subscribing before the scan starts means no change during it goes unseen.
-    const watched = ensureWatching();
     const done = yield* Deferred.make<SymlinkScan>();
     pendingSymlinkScan = done;
-    yield* scanSymlinkEntries().pipe(
-      Effect.tap((result) =>
-        Effect.gen(function* () {
-          lastSymlinkScan = result;
-          knownLinkPaths = result.linkPaths;
-          // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
-          lastSymlinkScanExpiresAt =
-            watched && result.indexComplete
-              ? undefined
-              : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
-        }),
-      ),
+    yield* Effect.gen(function* () {
+      // Subscribing before the scan starts means no change during it goes unseen.
+      const watched = yield* ensureWatching();
+      const result = yield* scanSymlinkEntries();
+      lastSymlinkScan = result;
+      knownLinkPaths = result.linkPaths;
+      // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
+      lastSymlinkScanExpiresAt =
+        watched && result.indexComplete
+          ? undefined
+          : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
+      return result;
+    }).pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
           pendingSymlinkScan = undefined;
@@ -1130,40 +1213,60 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
   });
 
+  const refreshPermit = yield* Semaphore.make(1);
+  let lastRefreshStartedAt: number | undefined;
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
-  )(function* () {
-    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
-    const result = yield* Effect.tryPromise({
-      try: () => finder.scanFilesAsync(),
-      catch: (cause) =>
-        new WorkspaceSearchIndexRefreshFailed({
-          cwd,
-          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
-          cause,
-        }),
-    });
-    if (!result.ok) {
-      return yield* new WorkspaceSearchIndexRefreshFailed({
-        cwd,
-        reason: result.error,
+  )(
+    function* (mode) {
+      const now = yield* Clock.currentTimeMillis;
+      if (mode === "passive") {
+        if (
+          lastRefreshStartedAt !== undefined &&
+          now - lastRefreshStartedAt < PASSIVE_REFRESH_INTERVAL_MS
+        ) {
+          return;
+        }
+        // The native scan can still be running after the caller's wait expires.
+        if (yield* isScanning) return;
+      }
+      // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+      const result = yield* Effect.tryPromise({
+        try: () => finder.scanFilesAsync(),
+        catch: (cause) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
+            cause,
+          }),
       });
-    }
-    // A rescan that outlasts the wait keeps running, and the finder answers
-    // from its previous index until it finishes, so the index stays usable.
-    yield* waitForIndexReady(
-      cwd,
-      finder,
-      ({ reason, cause }) =>
-        new WorkspaceSearchIndexRefreshFailed({
+      if (!result.ok) {
+        return yield* new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason,
-          cause,
-        }),
-    ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
-    invalidateSymlinkScan();
-  });
+          reason: result.error,
+        });
+      }
+      lastRefreshStartedAt = now;
+      // A rescan that outlasts the wait keeps running, and the finder answers
+      // from its previous index until it finishes, so the index stays usable.
+      yield* waitForIndexReady(
+        cwd,
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason,
+            cause,
+          }),
+      ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+      ignoredPaths = yield* loadIgnoredPaths();
+      invalidateSymlinkScan();
+    },
+    (effect, mode) =>
+      mode === "passive"
+        ? refreshPermit.withPermitsIfAvailable(1)(effect).pipe(Effect.asVoid)
+        : refreshPermit.withPermit(effect),
+  );
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
@@ -1296,7 +1399,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
       contentIndexPending = false;
     }
-    let { searchQuery, regexMode } = buildContentSearchQuery(input);
+    // fff reads glob and path syntax out of a query even in regex mode, so only a bare word qualifies.
+    const wholeWordPrefilter = input.wholeWord && !input.useRegex && ASCII_WORD.test(input.query);
+    let { searchQuery, regexMode } = wholeWordPrefilter
+      ? { searchQuery: buildWholeWordPattern(input.query, input.caseSensitive), regexMode: true }
+      : buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -1329,9 +1436,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
-        const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
-          (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
-        );
+        const matchRanges = (
+          wholeWordPrefilter
+            ? findWordRanges(match.lineContent, input.query, input.caseSensitive)
+            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+        ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({

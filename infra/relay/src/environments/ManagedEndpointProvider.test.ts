@@ -15,6 +15,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import * as ManagedTunnelBinding from "./ManagedTunnelBinding.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
@@ -44,7 +45,8 @@ interface TunnelCall {
     | "putConfiguration"
     | "getConfiguration"
     | "getToken"
-    | "delete";
+    | "delete"
+    | "disconnect";
   readonly input: unknown;
 }
 
@@ -118,6 +120,10 @@ function makeTunnelClient(calls: TunnelCall[] = []) {
       Effect.sync(() => {
         calls.push({ operation: "delete", input: tunnelId });
       }),
+    disconnect: (tunnelId) =>
+      Effect.sync(() => {
+        calls.push({ operation: "disconnect", input: tunnelId });
+      }),
   });
 }
 
@@ -174,6 +180,10 @@ function makePersistentTunnelClient(
       Effect.sync(() => {
         calls.push({ operation: "delete", input: tunnelId });
         tunnel = null;
+      }),
+    disconnect: (tunnelId) =>
+      Effect.sync(() => {
+        calls.push({ operation: "disconnect", input: tunnelId });
       }),
   });
 }
@@ -772,7 +782,7 @@ describe("ManagedEndpointProvider", () => {
           listCalls += 1;
           return Effect.fail({ _tag: "TooManyRequests", message: "Rate limited" });
         }),
-    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+    } as unknown as ManagedTunnelBinding.ManagedTunnelClient;
 
     return Effect.gen(function* () {
       const readStarted = yield* Deferred.make<void>();
@@ -826,7 +836,7 @@ describe("ManagedEndpointProvider", () => {
             message: "Tunnel configuration not found",
           }),
         ),
-    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+    } as unknown as ManagedTunnelBinding.ManagedTunnelClient;
     const layer = ManagedEndpointProvider.layerCloudflareBindings(
       tunnelClient,
       {} as Cloudflare.DNS.ReadWriteDnsClient,
@@ -1519,6 +1529,61 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("drops a live host's connectors only when deprovisioning is forced", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const persistent = makePersistentTunnelClient(tunnelCalls);
+    let connected = true;
+    const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+      ...persistent,
+      delete: (tunnelId) =>
+        connected
+          ? Effect.fail(
+              new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+                operation: "delete",
+                tunnelId,
+                cause: {
+                  _tag: "BadRequest",
+                  code: 1022,
+                  message:
+                    "This tunnel has active connections. Please stop all cloudflared replicas, or wait a few minutes for connections to close, then try again.",
+                },
+              }),
+            )
+          : persistent.delete(tunnelId),
+      disconnect: (tunnelId) =>
+        persistent.disconnect(tunnelId).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              connected = false;
+            }),
+          ),
+        ),
+    });
+    const allocations = makeAllocations();
+    const layer = layerProvider(tunnelClient, makeDnsClient(), allocations);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      const unforced = yield* Effect.flip(provider.deprovision(key));
+      expect(unforced.stage).toBe("delete-tunnel");
+      expect(tunnelCalls.some((call) => call.operation === "disconnect")).toBe(false);
+
+      expect(yield* provider.deprovision({ ...key, forceDisconnect: true })).toBe(true);
+      expect(
+        tunnelCalls
+          .filter((call) => call.operation === "disconnect" || call.operation === "delete")
+          .map((call) => call.operation),
+      ).toEqual(["disconnect", "delete"]);
+      expect(yield* allocations.get(key)).toBeNull();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("keeps the allocation when tunnel cleanup fails so unlink can retry", () => {
     const allocationCalls: AllocationCall[] = [];
     const tunnelCalls: TunnelCall[] = [];
@@ -1623,45 +1688,48 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats already deleted remote resources as successfully deprovisioned", () => {
-    const allocationCalls: AllocationCall[] = [];
-    const notFound = { _tag: "NotFound" } as const;
-    const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
-      ...makeTunnelClient(),
-      delete: () =>
-        Effect.fail(
-          new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
-            operation: "delete",
-            tunnelId: "tunnel-id",
-            cause: notFound,
-          }),
-        ),
-    });
-    const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
-      ...makeDnsClient(),
-      deleteRecord: () =>
-        Effect.fail(
-          new ManagedEndpointProvider.ManagedEndpointDnsClientError({
-            operation: "delete-record",
-            dnsRecordId: "created-record-id",
-            cause: notFound,
-          }),
-        ),
-    });
-    const layer = layerProvider(tunnelClient, dnsClient, makeAllocations(allocationCalls));
-
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
-      yield* provider.provision({
-        ...key,
-        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+  it.effect.each(["NotFound", "RecordNotFound"])(
+    "treats deleted remote resources as deprovisioned (%s)",
+    (dnsErrorTag) => {
+      const allocationCalls: AllocationCall[] = [];
+      const notFound = { _tag: "NotFound" } as const;
+      const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+        ...makeTunnelClient(),
+        delete: () =>
+          Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "delete",
+              tunnelId: "tunnel-id",
+              cause: notFound,
+            }),
+          ),
       });
-      yield* provider.deprovision(key);
+      const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
+        ...makeDnsClient(),
+        deleteRecord: () =>
+          Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+              operation: "delete-record",
+              dnsRecordId: "created-record-id",
+              cause: { _tag: dnsErrorTag },
+            }),
+          ),
+      });
+      const layer = layerProvider(tunnelClient, dnsClient, makeAllocations(allocationCalls));
 
-      expect(allocationCalls.map((call) => call.operation)).toContain("removeClaimed");
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+        const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+        yield* provider.provision({
+          ...key,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        });
+        yield* provider.deprovision(key);
+
+        expect(allocationCalls.map((call) => call.operation)).toContain("removeClaimed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("scopes managed endpoint resources by user", () => {
     const tunnelCalls: TunnelCall[] = [];

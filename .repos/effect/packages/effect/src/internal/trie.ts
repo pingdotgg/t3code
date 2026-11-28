@@ -16,8 +16,6 @@ export const TrieTypeId = "~effect/Trie"
 
 type TraversalMap<K, V, A> = (k: K, v: V) => A
 
-type TraversalFilter<K, V> = (k: K, v: V) => boolean
-
 /** @internal */
 export interface TrieImpl<in out V> extends TR.Trie<V> {
   readonly _root: Node<V> | undefined
@@ -35,7 +33,7 @@ const trieSeed = Hash.string(TrieTypeId)
 const TrieProto: TR.Trie<unknown> = {
   [TrieTypeId]: trieVariance,
   [Symbol.iterator]<V>(this: TrieImpl<V>): Iterator<[string, V]> {
-    return new TrieIterator(this, (k, v) => [k, v], () => true)
+    return new TrieIterator(this, (k, v) => [k, v])
   },
   [Hash.symbol](this: TR.Trie<unknown>): number {
     let hash = trieSeed
@@ -79,33 +77,55 @@ const makeImpl = <V>(root: Node<V> | undefined, emptyEntry: Entry<V> | undefined
   return trie
 }
 
+// Find the node for the final UTF-16 code unit of a non-empty key.
+const findNode = <V>(node: Node<V> | undefined, key: string): Node<V> | undefined => {
+  let index = 0
+  while (node !== undefined) {
+    const c = key[index]
+    if (c < node.key) {
+      node = node.left
+    } else if (c > node.key) {
+      node = node.right
+    } else if (++index === key.length) {
+      return node
+    } else {
+      node = node.mid
+    }
+  }
+  return undefined
+}
+
 class TrieIterator<in out V, out T> implements IterableIterator<T> {
   stack: Array<[Node<V>, string, boolean]> = []
-  emptyEntry: Entry<V> | undefined
+  firstEntry: Entry<V> | undefined
   readonly f: TraversalMap<string, V, T>
-  readonly filter: TraversalFilter<string, V>
+  readonly prefix: string
 
   constructor(
     trie: TrieImpl<V>,
     f: TraversalMap<string, V, T>,
-    filter: TraversalFilter<string, V>
+    prefix = ""
   ) {
     this.f = f
-    this.filter = filter
-    this.emptyEntry = trie._empty
-    const root = trie._root !== undefined ? trie._root : undefined
+    this.prefix = prefix
+    let root = trie._root
+    if (prefix === "") {
+      this.firstEntry = trie._empty
+    } else {
+      const match = findNode(root, prefix)
+      this.firstEntry = match?.value
+      root = match?.mid
+    }
     if (root !== undefined) {
-      this.stack.push([root, "", false])
+      this.stack.push([root, prefix, false])
     }
   }
 
   next(): IteratorResult<T> {
-    const emptyEntry = this.emptyEntry
-    if (emptyEntry !== undefined) {
-      this.emptyEntry = undefined
-      if (this.filter("", emptyEntry.value)) {
-        return { done: false, value: this.f("", emptyEntry.value) }
-      }
+    const first = this.firstEntry
+    if (first !== undefined) {
+      this.firstEntry = undefined
+      return { done: false, value: this.f(this.prefix, first.value) }
     }
     while (this.stack.length > 0) {
       const [node, keyString, isAdded] = this.stack.pop()!
@@ -114,9 +134,7 @@ class TrieIterator<in out V, out T> implements IterableIterator<T> {
         const value = node.value
         if (value !== undefined) {
           const key = keyString + node.key
-          if (this.filter(key, value.value)) {
-            return { done: false, value: this.f(key, value.value) }
-          }
+          return { done: false, value: this.f(key, value.value) }
         }
       } else {
         this.addToStack(node, keyString)
@@ -277,15 +295,15 @@ export const isEmpty = <V>(self: TR.Trie<V>): boolean => size(self) === 0
 
 /** @internal */
 export const keys = <V>(self: TR.Trie<V>): IterableIterator<string> =>
-  new TrieIterator(self as TrieImpl<V>, (key) => key, () => true)
+  new TrieIterator(self as TrieImpl<V>, (key) => key)
 
 /** @internal */
 export const values = <V>(self: TR.Trie<V>): IterableIterator<V> =>
-  new TrieIterator(self as TrieImpl<V>, (_, value) => value, () => true)
+  new TrieIterator(self as TrieImpl<V>, (_, value) => value)
 
 /** @internal */
 export const entries = <V>(self: TR.Trie<V>): IterableIterator<[string, V]> =>
-  new TrieIterator(self as TrieImpl<V>, (key, value) => [key, value], () => true)
+  new TrieIterator(self as TrieImpl<V>, (key, value) => [key, value])
 
 /** @internal */
 export const reduce = dual<
@@ -366,7 +384,7 @@ export const keysWithPrefix = dual<
 >(
   2,
   <V>(self: TR.Trie<V>, prefix: string): IterableIterator<string> =>
-    new TrieIterator(self as TrieImpl<V>, (key) => key, (key) => key.startsWith(prefix))
+    new TrieIterator(self as TrieImpl<V>, (key) => key, prefix)
 )
 
 /** @internal */
@@ -376,7 +394,7 @@ export const valuesWithPrefix = dual<
 >(
   2,
   <V>(self: TR.Trie<V>, prefix: string): IterableIterator<V> =>
-    new TrieIterator(self as TrieImpl<V>, (_, value) => value, (key) => key.startsWith(prefix))
+    new TrieIterator(self as TrieImpl<V>, (_, value) => value, prefix)
 )
 
 /** @internal */
@@ -386,7 +404,7 @@ export const entriesWithPrefix = dual<
 >(
   2,
   <V>(self: TR.Trie<V>, prefix: string): IterableIterator<[string, V]> =>
-    new TrieIterator(self as TrieImpl<V>, (key, value) => [key, value], (key) => key.startsWith(prefix))
+    new TrieIterator(self as TrieImpl<V>, (key, value) => [key, value], prefix)
 )
 
 /** @internal */
@@ -405,41 +423,9 @@ export const get = dual<
 >(
   2,
   <V>(self: TR.Trie<V>, key: string) => {
-    if (key.length === 0) {
-      const emptyEntry = (self as TrieImpl<V>)._empty
-      return emptyEntry === undefined ? Option.none() : Option.some(emptyEntry.value)
-    }
-    let n: Node<V> | undefined = (self as TrieImpl<V>)._root
-    if (n === undefined) return Option.none()
-    let cIndex = 0
-    while (cIndex < key.length) {
-      const c = key[cIndex]
-      if (c > n.key) {
-        if (n.right === undefined) {
-          return Option.none()
-        } else {
-          n = n.right
-        }
-      } else if (c < n.key) {
-        if (n.left === undefined) {
-          return Option.none()
-        } else {
-          n = n.left
-        }
-      } else {
-        if (cIndex === key.length - 1) {
-          return n.value === undefined ? Option.none() : Option.some(n.value.value)
-        } else {
-          if (n.mid === undefined) {
-            return Option.none()
-          } else {
-            n = n.mid
-            cIndex += 1
-          }
-        }
-      }
-    }
-    return Option.none()
+    const trie = self as TrieImpl<V>
+    const entry = key === "" ? trie._empty : findNode(trie._root, key)?.value
+    return entry === undefined ? Option.none() : Option.some(entry.value)
   }
 )
 

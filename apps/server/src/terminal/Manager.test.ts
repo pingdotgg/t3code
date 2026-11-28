@@ -3,11 +3,15 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   DEFAULT_TERMINAL_ID,
+  TERMINAL_BRACKETED_PASTE_START,
+  TERMINAL_BRACKETED_PASTE_END,
+  type TerminalWriteInput,
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
-  type TerminalAttachStreamEvent,
+  TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
   ProviderDriverKind,
@@ -18,6 +22,8 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -49,6 +55,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { layerNoTaskFolders } from "../orchestration-v2/ProviderTurnStartService.testkit.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -61,6 +68,12 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
 
+const POWERSHELL_ARGS = [
+  "-NoLogo",
+  "-NoExit",
+  "-Command",
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()",
+];
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
@@ -315,7 +328,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => command));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -479,6 +492,98 @@ it("restores bounded history across append compaction, clears and split Unicode"
   expect(persisted).toBe("z".repeat(maxBytes));
 });
 
+it("stops holding a control sequence that outgrows its limit", () => {
+  const limit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
+  // No final byte for a CSI and no terminator for a string.
+  const filler = "0123456789 123\r\n".repeat(64);
+  const fed = filler.repeat(Math.ceil(limit / filler.length) + 2);
+  // The terminal runs the line breaks inside a CSI while it waits for the final byte.
+  const lineBreaks = fed.replaceAll(/[^\r\n]/g, "");
+  for (const { name, open, end, history } of [
+    { name: "OSC, BEL", open: ["\u001b]0;"], end: ["\u0007"], history: "\u001b\\" },
+    {
+      name: "OSC, split ST",
+      open: ["\u001b]0;"],
+      end: ["\u001b", "\\\u001b[31m"],
+      history: "\u001b\\\u001b[31m",
+    },
+    // The last UTF-8 byte of U+20805 is 0x85, NEL, which ends the DCS and replays as ESC E.
+    {
+      name: "DCS, split code point",
+      open: ["\u001bPstuck"],
+      end: ["\ud842", "\udc05"],
+      history: "\u001b\\\u001bE",
+    },
+    // The dropped CSI's ESC ended the title, so history ends it too. Its final byte would have
+    // made it a query that the replay answers.
+    {
+      name: "CSI after a title its ESC cuts short",
+      open: ["\u001b]0;title", "\u001b["],
+      end: ["\n6n"],
+      history: `\u001b]0;title\u001b\\${lineBreaks}\n`,
+    },
+    {
+      name: "CSI, ESC",
+      open: ["\u001b["],
+      end: ["\n\u001b[31m"],
+      history: `\u001b\\${lineBreaks}\n\u001b[31m`,
+    },
+  ]) {
+    let held = "";
+    let visible = "";
+    const feed = (data: string) => {
+      const sanitized = TerminalManager.sanitizeTerminalHistoryChunk(held, data);
+      held = sanitized.pendingControlSequence;
+      visible += sanitized.visibleText;
+    };
+
+    feed("before\n");
+    for (const data of open) feed(data);
+    for (let offset = 0; offset < fed.length; offset += filler.length) {
+      feed(fed.slice(offset, offset + filler.length));
+    }
+    expect(held.length, name).toBeLessThanOrEqual(3);
+
+    for (const data of end) feed(data);
+    feed("after\n");
+    expect(held, name).toBe("");
+    expect(visible, name).toBe(`before\n${history}after\n`);
+  }
+
+  // Held text of exactly the limit stays held, and a sequence that ends in the chunk where it
+  // passes the limit is kept whole.
+  for (const atLimit of ["\u001b]".padEnd(limit, "0"), "\u001b[".padEnd(limit, "0")]) {
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", atLimit)).toEqual({
+      visibleText: "",
+      pendingControlSequence: atLimit,
+    });
+    const ended = `${atLimit}0${atLimit[1] === "]" ? "\u0007" : "m"}`;
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", ended)).toEqual({
+      visibleText: ended,
+      pendingControlSequence: "",
+    });
+  }
+
+  // An escape sequence keeps its first four intermediates, the only ones libghostty reads.
+  const escape = '\u001b!"#$';
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "%&")).toEqual({
+    visibleText: "",
+    pendingControlSequence: escape,
+  });
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "%&B")).toEqual({
+    visibleText: `${escape}%&B`,
+    pendingControlSequence: "",
+  });
+
+  // A completed escape sequence stays when another ESC follows it at once.
+  for (const kept of ["OLD\u001bc\u001b[31mNEW", "abc\u001b7\u001b[2;5HB\u001b8Z"]) {
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", kept)).toEqual({
+      visibleText: kept,
+      pendingControlSequence: "",
+    });
+  }
+});
+
 it.layer(
   Layer.mergeAll(
     NodeServices.layer,
@@ -525,6 +630,7 @@ it.layer(
               Layer.mock(ProjectService.ProjectService)({
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
+              layerNoTaskFolders,
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),
@@ -774,6 +880,124 @@ it.layer(
     }),
   );
 
+  it.effect.each(["complete", "abort", "timeout", "close"] as const)(
+    "releases pending terminal input after paste %s",
+    (interruption) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+        const endPrefix = TERMINAL_BRACKETED_PASTE_END.slice(0, -1);
+        const endSuffix = TERMINAL_BRACKETED_PASTE_END.slice(-1);
+        const begin = TERMINAL_BRACKETED_PASTE_START + "partial";
+        const writePaste = (data: string, bracketedPaste: TerminalWriteInput["bracketedPaste"]) =>
+          manager.write({ ...target, data, ...(bracketedPaste && { bracketedPaste }) }, "paste");
+        yield* writePaste(begin, "start");
+        const pending = yield* manager
+          .write({ ...target, data: "next" }, "typing")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual([begin]);
+
+        if (interruption === "complete") {
+          const badEnd = yield* writePaste("incomplete end", "end").pipe(Effect.flip);
+          expect(badEnd._tag).toBe("TerminalWriteError");
+          expect(process.writes).toEqual([begin]);
+          yield* writePaste(endPrefix, "continue");
+          yield* writePaste(endSuffix, "end");
+        } else if (interruption === "abort") {
+          yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "abort");
+        } else if (interruption === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.close(target);
+          yield* manager.open(openInput());
+          const reopened = ptyAdapter.processes[1]!;
+          reopened.onKill = () => reopened.emitExit({ exitCode: 0, signal: 0 });
+          expect(reopened.writes).toEqual([]);
+        }
+        if (interruption === "close") {
+          const error = yield* Fiber.join(pending).pipe(Effect.flip);
+          expect(error._tag).toBe("TerminalNotRunningError");
+          expect(process.writes).toEqual([begin]);
+          expect(ptyAdapter.processes[1]!.writes).toEqual([]);
+        } else {
+          yield* Fiber.join(pending);
+          expect(process.writes).toEqual(
+            interruption === "complete"
+              ? [begin, endPrefix, endSuffix, "next"]
+              : [begin, TERMINAL_BRACKETED_PASTE_END, "next"],
+          );
+        }
+        const lateEnd = yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "end").pipe(Effect.exit);
+        expect(Exit.isFailure(lateEnd)).toBe(true);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["end", "abort", "timeout"] as const)(
+    "releases input after a plain split write ends by %s without adding a bracket",
+    (finish) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+        yield* manager.write({ ...target, data: "first", plainWrite: "start" }, "paste");
+        const pending = yield* manager
+          .write({ ...target, data: "typing" }, "other")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual(["first"]);
+        if (finish === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.write(
+            { ...target, data: finish === "end" ? "last" : "", plainWrite: finish },
+            "paste",
+          );
+        }
+        yield* Fiber.join(pending);
+        expect(process.writes).toEqual(
+          finish === "end" ? ["first", "last", "typing"] : ["first", "typing"],
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not reserve the terminal when writing a paste start fails", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+      const process = ptyAdapter.processes[0]!;
+      process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+      process.writeFailure = new Error("write failed");
+      const error = yield* manager
+        .write(
+          {
+            ...target,
+            data: TERMINAL_BRACKETED_PASTE_START + "paste",
+            bracketedPaste: "start",
+          },
+          "paste",
+        )
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("TerminalWriteError");
+
+      process.writeFailure = undefined;
+      yield* manager.write(
+        {
+          ...target,
+          data: TERMINAL_BRACKETED_PASTE_END,
+          bracketedPaste: "abort",
+        },
+        "paste",
+      );
+      yield* manager.write({ ...target, data: "next" }, "typing");
+      expect(process.writes).toEqual(["next"]);
+    }),
+  );
+
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -910,6 +1134,40 @@ it.layer(
     }),
   );
 
+  it.effect("rejects conditional paste chunks when the process has gone", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const original = yield* manager.open(input);
+      if (original.pid === null) throw new Error("Expected a running terminal");
+      expect(original.supportsConditionalWrites).toBe(true);
+      const pasteChunk = {
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "\x1b[200~paste",
+        expectedPid: original.pid,
+      };
+      yield* manager.write(pasteChunk);
+      yield* manager.close({ threadId: input.threadId, terminalId: original.terminalId });
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.open(input);
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.write({
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "after",
+      });
+      expect(ptyAdapter.processes.map(({ writes }) => writes)).toEqual([
+        [pasteChunk.data],
+        ["after"],
+      ]);
+    }),
+  );
+
   it.effect("supports multiple terminals per thread independently", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -985,6 +1243,54 @@ it.layer(
       }),
   );
 
+  it.effect("reports whether any terminal session for a thread has an active subprocess", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 100, ppid: 9000, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+          { pid: 9002, ppid: 1, name: "zsh" },
+          { pid: 300, ppid: 9002, name: "node" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "idle", threadId: "thread-idle" }));
+      yield* manager.open(openInput({ terminalId: "dev-server", threadId: "thread-active" }));
+      yield* manager.open(
+        openInput({ terminalId: "managed-dev", threadId: "thread-managed", stopOnSettle: true }),
+      );
+
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-none" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-managed" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-idle" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-active" })).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    ["linux", ["SIGHUP", "SIGTERM"]],
+    ["win32", ["SIGTERM"]],
+  ] as const)("closing a %s terminal hangs up the shell's jobs", ([platform, signals]) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5).pipe(
+        Effect.provide(layerWithHostPlatform(platform)),
+      );
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+
+      expect(shell.killSignals).toEqual(signals);
+      shell.emitExit({ exitCode: 0, signal: 0 });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1030,27 +1336,79 @@ it.layer(
       }),
   );
 
-  it.effect("labels a running command by its whole process name, spaces included", () =>
+  it.effect.each([
+    {
+      label: "spaces included",
+      processName: "Google Chrome",
+      expectedLabel: "Google Chrome",
+    },
+    {
+      label: "surrogate-safe truncation",
+      processName: "a".repeat(127) + "😀tail",
+      expectedLabel: "a".repeat(127),
+    },
+  ] as const)(
+    "labels a running command by its process name ($label)",
+    ({ processName, expectedLabel }) =>
+      Effect.gen(function* () {
+        const { manager } = yield* createManager(5, {
+          subprocessPollIntervalMs: 1_000,
+          processKillGraceMs: 0,
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9000, name: processName },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        const label = yield* Deferred.make<string>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "activity"
+            ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        yield* manager.open(openInput());
+        yield* TestClock.adjust("1 second");
+
+        expect(yield* Deferred.await(label)).toBe(expectedLabel);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
     Effect.gen(function* () {
-      const { manager } = yield* createManager(5, {
+      const shell = { pid: 9000, ppid: 1, name: "zsh" };
+      let table = [shell, { pid: 200, ppid: 9000, name: "node" }];
+      let queries = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
         subprocessPollIntervalMs: 1_000,
         processKillGraceMs: 0,
-        processTable: Effect.succeed([
-          { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9000, name: "Google Chrome" },
-        ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
-      const label = yield* Deferred.make<string>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "activity"
-          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
-          : Effect.void,
+        processTable: Effect.sync(() => {
+          queries += 1;
+          return table;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = Effect.map(getEvents, (events) =>
+        events.flatMap((event) =>
+          event.type === "activity" ? [event.hasRunningSubprocess ? event.label : null] : [],
+        ),
       );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       yield* manager.open(openInput());
-      yield* TestClock.adjust("1 second");
 
-      expect(yield* Deferred.await(label)).toBe("Google Chrome");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeGreaterThanOrEqual(115);
+      expect(queries).toBeLessThanOrEqual(125);
+
+      table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
+      ptyAdapter.processes[0]!.emitData("rebuilt\r\n");
+      queries = 0;
+      yield* TestClock.adjust("1 second");
+      expect(queries).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      table = [shell];
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* activity).toEqual(["node", null]);
+      yield* manager.close({ threadId: "thread-1" });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1550,7 +1908,7 @@ it.layer(
     }),
   );
 
-  it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
+  it.effect("strips replayable CSI, DCS and OSC traffic while preserving setters", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -1566,7 +1924,15 @@ it.layer(
       // BEL is DCS payload, not a terminator: only ST ends the string.
       process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\");
+      process.emitData("\u001b]11;rgb:ffff/ffff/ffff\u0007\u001b]10;rgb:1/2/3\n;?\u0007");
+      // Ghostty sets a colour beside a query, skips an LF, an empty field and a last index with no
+      // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
+      process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
+      // A long setter split across chunks is kept whole.
+      process.emitData(`\u001b[${"0".repeat(5000)}`);
+      process.emitData("31mX");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
@@ -1574,7 +1940,10 @@ it.layer(
       const reopened = yield* manager.open(openInput());
       expect(
         reopened.history.startsWith(
-          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
+            "\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\" +
+            "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
+            `\u001b[${"0".repeat(5000)}31mXdone\n`,
         ),
       ).toBe(true);
     }),
@@ -1687,6 +2056,76 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       expect((yield* manager.open(openInput())).history).toMatch(/^AB\nCSHOWN\u001b\\D\n/);
+    }),
+  );
+
+  it.effect("starts a snapshot inside the sequence the terminal has not finished", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const outputs = yield* Queue.unbounded<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" ? Queue.offer(outputs, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const historyAfter = Effect.fnUntraced(function* (data: string) {
+        process.emitData(data);
+        yield* Queue.take(outputs);
+        return (yield* manager.open(openInput())).history;
+      });
+
+      expect(yield* historyAfter("A\u001b]0;ti")).toBe("A\u001b]0;ti");
+      // A long string would push history out of the client's budget, so its payload is left out.
+      expect(yield* historyAfter("x".repeat(4_096))).toBe("A\u001b]");
+      // Past the limit only the introducer is left to replay.
+      expect(yield* historyAfter("x".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES))).toBe(
+        "A\u001b\\\u001b]",
+      );
+      expect(yield* historyAfter("\u0007B")).toBe("A\u001b\\B");
+
+      // Saved history has no live output to finish the sequence.
+      process.emitData("\u001b]0;open");
+      yield* Queue.take(outputs);
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("A\u001b\\B");
+    }),
+  );
+
+  it.effect.each([
+    { name: "NUL padding", body: "31" + "\u0000".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "DEL padding", body: "31" + "\u007f".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "non-ASCII padding", body: "31" + "é".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "over-budget parameters", body: "1".repeat(5_000) + "\r", replay: "\r" },
+    {
+      name: "parameters filling the budget",
+      body: "1".repeat(4_094) + "\r",
+      replay: "1".repeat(4_094),
+    },
+    { name: "repeated carriage returns", body: "31" + "\r".repeat(4_094), replay: "31\r" },
+    {
+      name: "over-budget line feeds",
+      body: "31" + "\n".repeat(4_094),
+      replay: "31" + "\n".repeat(4_092),
+    },
+  ])("replays an unfinished CSI with $name on attach", ({ body, replay }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+      yield* live;
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("prompt\u001b[" + body);
+      yield* live;
+
+      const joining = yield* Stream.toPull(manager.attachOutputStream(input, "joining"));
+      const [event] = yield* joining;
+      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+      process.emitData("mX");
+      const [output] = yield* joining;
+      if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+      expect(event.snapshot.history + output.data).toBe("prompt\u001b[" + replay + "mX");
     }),
   );
 
@@ -2207,6 +2646,91 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    { platform: "win32", shell: String.raw`C:\Program Files\Git\bin\bash.exe` },
+    { platform: "linux", shell: "/opt/custom shell/bin/bash" },
+  ] as const)("prefers the configured terminal shell on $platform: $shell", ({ platform, shell }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: ` ${shell} `, SHELL: "/bin/zsh" },
+      }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(shell);
+    }),
+  );
+
+  it.effect("lets script terminals keep the default shell without changing other terminals", () =>
+    Effect.gen(function* () {
+      const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: gitBash },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { T3CODE_TERMINAL_SHELL: "" } }));
+      yield* manager.open(openInput({ terminalId: "interactive" }));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["pwsh.exe", gitBash]);
+    }),
+  );
+
+  // POSIX exec failures are asynchronous in node-pty; ConPTY has a separate readiness protocol.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves configured shells and falls back from invalid paths with the real PTY adapter",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-real-shell-" });
+        const nonExecutable = path.join(baseDir, "not-executable");
+        yield* fs.writeFileString(nonExecutable, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(nonExecutable, 0o644);
+        const ptyAdapter = yield* PtyAdapter.PtyAdapter.pipe(Effect.provide(NodePtyAdapter.layer));
+        const toolsDir = path.join(baseDir, "tools");
+        const customShell = path.join(toolsDir, "custom-shell");
+        yield* fs.makeDirectory(toolsDir);
+        yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(customShell, 0o755);
+        const spacedDir = path.join(baseDir, "shells ");
+        const spacedShell = path.join(spacedDir, "custom-shell");
+        yield* fs.makeDirectory(spacedDir);
+        yield* fs.writeFileString(spacedShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(spacedShell, 0o755);
+        for (const { shell, searchPath, cwd, expectedShell } of [
+          { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: "custom-shell", searchPath: "./tools", expectedShell: customShell },
+          { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
+          { shell: "custom-shell", searchPath: ":/bin", cwd: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: `${spacedDir}:/bin`, expectedShell: spacedShell },
+        ] as ReadonlyArray<{
+          shell: string;
+          searchPath: string;
+          cwd?: string;
+          expectedShell: string;
+        }>) {
+          const spawnedShells: string[] = [];
+          const manager = yield* TerminalManager.makeWithOptions({
+            logsDir: path.join(baseDir, "logs"),
+            ptyAdapter: {
+              spawn: (input) => {
+                spawnedShells.push(input.shell);
+                return ptyAdapter.spawn(input);
+              },
+            },
+            shellResolver: () => "/bin/sh",
+            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
+          });
+          const snapshot = yield* manager.open(openInput({ cwd: cwd ?? baseDir }));
+          expect(spawnedShells).toEqual([expectedShell]);
+          expect(snapshot.status).toBe("running");
+          yield* manager.close({ threadId: "thread-1" });
+        }
+      }),
+  );
+
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2276,8 +2800,8 @@ it.layer(
       const ptyAdapter = new FakePtyAdapter();
       const { manager } = yield* createManager(5, {
         ptyAdapter,
-        shellResolver: () => "C:\\missing\\custom-shell.exe",
         env: {
+          T3CODE_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
@@ -2295,8 +2819,8 @@ it.layer(
         "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       ]);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(POWERSHELL_ARGS);
+      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(POWERSHELL_ARGS);
     }),
   );
 
@@ -2480,6 +3004,7 @@ it.layer(
         env: {
           PORT: "5173",
           T3CODE_PORT: "3773",
+          T3CODE_THREAD_ID: "server-thread",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
           TMUX: "/tmp/tmux-1000/default,1234,0",
@@ -2489,13 +3014,20 @@ it.layer(
         },
       });
       yield* manager.open(openInput());
-      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
+      yield* manager.open(
+        openInput({
+          terminalId: "explicit",
+          env: { TMUX_PANE: "%9", T3CODE_THREAD_ID: "client-thread" },
+        }),
+      );
       const spawnInput = ptyAdapter.spawnInputs[0];
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.T3CODE_THREAD_ID).toBe("thread-1");
+      expect(ptyAdapter.spawnInputs[1]?.env.T3CODE_THREAD_ID).toBe("thread-1");
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
       expect(spawnInput.env.TMUX).toBeUndefined();
@@ -2689,7 +3221,10 @@ it.layer(
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(shutdown);
 
-      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      const platform = yield* HostProcess.Platform;
+      expect(process.killSignals).toEqual(
+        platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGHUP", "SIGTERM", "SIGKILL"],
+      );
       expect(process.exitListenerCount).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
@@ -2724,16 +3259,18 @@ it.layer(
     }),
   );
 
-  it.effect("starts bash as a login shell on macOS only", () =>
+  it.effect("starts bash as a login shell on macOS and Windows", () =>
     Effect.gen(function* () {
       for (const [platform, shell, args] of [
         ["darwin", "/bin/bash", ["-l"]],
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
         ["linux", "/bin/bash", undefined],
-        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
+        ["win32", "C:/Program Files/Git/bin/bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["win32", "pwsh.exe", ["-NoLogo"]],
+        ["linux", "/opt/team\\zsh", undefined],
+        ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
           shellResolver: () => shell,
@@ -2798,6 +3335,36 @@ it.layer(
         { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
       ]);
       expect(ptyAdapter.processes).toHaveLength(1);
+    }),
+  );
+
+  it.effect("attaches to a working shell after the original open is interrupted", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const input = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const opening = yield* manager.open(input).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      const cancelled = yield* Fiber.interrupt(opening).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(cancelled);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }),
+      );
+      stop();
+      const first = events[0];
+      expect(first?.type === "snapshot" ? first.snapshot.status : first?.type).toBe("running");
     }),
   );
 
@@ -2971,6 +3538,115 @@ it.layer(
       yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
       yield* expectRetained();
     }),
+  );
+
+  it.effect(
+    "keeps a title update hidden when the history limit cuts through the previous title",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        // UTF-8 exceeds the wire history budget while the string fits the parser's held text limit.
+        process.emitData("\u001b]0;");
+        yield* live;
+        const titleChunk = "界".repeat(8_192);
+        for (let index = 0; index < 24; index += 1) {
+          process.emitData(titleChunk);
+          yield* live;
+        }
+        // The second OSC's escape ends the first title without a separate terminator.
+        process.emitData("\u001b]0;Build ");
+        yield* live;
+
+        const joining = yield* Stream.toPull(
+          manager.attachOutputStream(
+            { ...input, maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES },
+            "joining",
+          ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        process.emitData("progress\u0007ready\r\n");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+        const state = terminalSequenceStateAfter(0, event.snapshot.history);
+        const firstVisible = terminalSequenceEnd(state, output.data);
+        expect(output.data.slice(firstVisible)).toBe("ready\r\n");
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "title with no history budget",
+      pending: "\u001b]0;Build ",
+      tail: "progress\u0007",
+      budget: 0,
+      history: "",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    {
+      name: "title beyond the pending prefix limit",
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n",
+      viewer: "attach",
+      supportsSnapshotSequenceState: true,
+    },
+    ...(["attach", "observe", "resync"] as const).map((viewer) => ({
+      name: `long title for a legacy ${viewer} viewer`,
+      pending: "\u001b]0;" + "x".repeat(4_096),
+      tail: "progress\u0007",
+      budget: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+      history: "before\r\n\u001b]",
+      viewer,
+      supportsSnapshotSequenceState: false,
+    })),
+  ] as const)(
+    "keeps a snapshot's $name out of visible output",
+    ({ pending, tail, budget, history, viewer, supportsSnapshotSequenceState }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        process.emitData("before\r\n" + pending);
+        yield* live;
+
+        const viewerInput = { ...input, supportsSnapshotSequenceState };
+        const joining = yield* Stream.toPull(
+          viewer === "attach"
+            ? manager.attachOutputStream({ ...viewerInput, maxHistoryBytes: budget }, "joining")
+            : terminalOutputStream((listener, cleanup) =>
+                viewer === "observe"
+                  ? manager.observeStream(viewerInput, listener, cleanup)
+                  : manager.resyncStream(viewerInput, listener, cleanup),
+              ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        // The parser state must survive the wire schema's bounds check.
+        const wireEvent = Schema.fromJsonString(TerminalAttachStreamEvent);
+        const decoded = yield* Schema.decodeEffect(wireEvent)(
+          yield* Schema.encodeEffect(wireEvent)(event),
+        );
+        if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        expect(decoded.snapshot.history).toBe(history);
+        const omitted = decoded.snapshot.historySequenceState;
+        expect(omitted !== undefined).toBe(supportsSnapshotSequenceState);
+        const state = omitted ?? terminalSequenceStateAfter(0, decoded.snapshot.history);
+
+        process.emitData(tail + "ready");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected terminal output");
+        expect(output.data.slice(terminalSequenceEnd(state, output.data))).toBe("ready");
+      }),
   );
 
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>

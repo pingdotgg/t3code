@@ -101,6 +101,9 @@ export class MigrationError extends Data.TaggedError("MigrationError")<{
  *
  * **Details**
  *
+ * Each run is wrapped in a `Migrator.run` span with the migrations table name
+ * in the `effect.sql.migrator.table` attribute.
+ *
  * `transformWrites` transforms only the effects that create the migrations
  * table and insert into it, for clients such as ClickHouse that run row-less
  * statements differently from queries. Reads of the migrations table and the
@@ -268,16 +271,7 @@ ORDER BY migration_id`,
         orElse: () => Effect.void
       })
 
-      const [latestMigrationId, current] = yield* Effect.all([
-        Effect.map(
-          latestMigration,
-          Option.match({
-            onNone: () => 0,
-            onSome: (_) => _.id
-          })
-        ),
-        loader
-      ])
+      const [latest, current] = yield* Effect.all([latestMigration, loader])
 
       if (new Set(current.map(([id]) => id)).size !== current.length) {
         return yield* new MigrationError({
@@ -290,7 +284,7 @@ ORDER BY migration_id`,
 
       for (const resolved of current) {
         const [currentId, currentName] = resolved
-        if (currentId <= latestMigrationId) {
+        if (Option.isSome(latest) && currentId <= latest.value.id) {
           continue
         }
 
@@ -363,7 +357,11 @@ ORDER BY migration_id`,
     }
 
     return completed
-  })
+  }).pipe(
+    Effect.withSpan("Migrator.run", { attributes: { "effect.sql.migrator.table": table } }, {
+      captureStackTrace: false
+    })
+  )
 
 const migrationsTableExists = (sql: Client.SqlClient, table: string): Effect.Effect<boolean, SqlError> => {
   // Match query quoting: to_regclass folds unquoted names to lowercase.

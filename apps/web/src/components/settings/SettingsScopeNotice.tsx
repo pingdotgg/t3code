@@ -1,5 +1,6 @@
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -8,7 +9,6 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -21,6 +21,8 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ScopeChoice {
   label: string;
@@ -43,9 +45,10 @@ export function SettingsScopeNotice({
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
+  const gt = useGT();
   const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useRenderedSettingsPathname();
   const { environments } = useEnvironments();
   const environmentIcon = (environment: EnvironmentPresentation | undefined) =>
     environment ? (
@@ -69,7 +72,7 @@ export function SettingsScopeNotice({
           const { primary, secondary } = environment
             ? settingsScopeEnvironmentLabels(environment, environments)
             : {
-                primary: member.environmentLabel ?? "Environment",
+                primary: member.environmentLabel ?? gt("Environment"),
                 secondary: member.environmentId,
               };
           return {
@@ -87,7 +90,7 @@ export function SettingsScopeNotice({
         ? projectGroups.map((group) => ({
             label: group.displayName,
             secondary: [
-              ...(group.archived ? ["Archived"] : []),
+              ...(group.archived ? [gt("Archived", { $context: "project state" })] : []),
               ...(projectGroups.some(
                 (other) =>
                   other.projectKey !== group.projectKey && other.displayName === group.displayName,
@@ -117,7 +120,7 @@ export function SettingsScopeNotice({
               })
           : [
               {
-                label: "Open all environments",
+                label: gt("Open all environments"),
                 icon: <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />,
                 search: {},
               },
@@ -149,14 +152,12 @@ export function SettingsScopeNotice({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{choice.label}</span>
           {choice.secondary ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={<span className="block truncate text-xs text-muted-foreground" />}
-              >
-                {choice.secondary}
-              </TooltipTrigger>
-              <TooltipPopup>{choice.secondary}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span className="block truncate text-xs text-muted-foreground" />}
+              label={choice.secondary}
+            >
+              {choice.secondary}
+            </SharedTooltipTrigger>
           ) : null}
         </span>
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />

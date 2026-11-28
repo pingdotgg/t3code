@@ -2,6 +2,25 @@ import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 
 export type ChangedFileKind = keyof NonNullable<PullRequestChangeBreakdown>;
 
+export function summarizeChangedFiles(
+  files: ReadonlyArray<{ path: string; additions: number; deletions: number }>,
+): NonNullable<PullRequestChangeBreakdown> {
+  const empty = () => ({ additions: 0, deletions: 0 });
+  const breakdown = {
+    code: empty(),
+    tests: empty(),
+    mocks: empty(),
+    generated: empty(),
+    docs: empty(),
+  };
+  for (const file of files) {
+    const bucket = breakdown[classifyChangedFile(file.path)];
+    bucket.additions += file.additions;
+    bucket.deletions += file.deletions;
+  }
+  return breakdown;
+}
+
 const GENERATED_FILES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -25,11 +44,12 @@ const GENERATED_FILES = new Set([
   "yarn.lock",
 ]);
 const GENERATED_NAME =
-  /(\.generated\.|\.gen\.|\.g\.dart$|\.pb\.go$|_pb2(_grpc)?\.py$|\.pb\.(cc|h)$|\.min\.(js|css)$|\.(js|css)\.map$)/;
+  /(\.generated\.|\.gen\.|\.g\.dart$|\.pb\.go$|_pb2(_grpc)?\.py$|\.pb\.(cc|h)$|\.min\.(js|css)$|\.(js|css)\.map$)/i;
 const GENERATED_DIRS = new Set(["__generated__", "_generated", "generated"]);
 
-const MOCK_NAME =
-  /(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$|^(mocks?|fixtures?|stubs?|fakes?)([-_.A-Z]|$))/;
+const MOCK_NAME = /(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$)/i;
+// Case-sensitive after the prefix: `MockClock.ts` is a mock, `Mockup.ts` is not.
+const MOCK_PREFIX = /^([Mm]ocks?|[Ff]ixtures?|[Ss]tubs?|[Ff]akes?)([-_.A-Z]|$)/;
 const MOCK_DIRS = new Set([
   "__fixtures__",
   "__mocks__",
@@ -80,7 +100,7 @@ export function classifyChangedFile(path: string): ChangedFileKind {
   const inDir = (set: ReadonlySet<string>) => dirs.some((dir) => set.has(dir));
   if (GENERATED_FILES.has(name.toLowerCase()) || GENERATED_NAME.test(name) || inDir(GENERATED_DIRS))
     return "generated";
-  if (MOCK_NAME.test(name) || inDir(MOCK_DIRS)) return "mocks";
+  if (MOCK_NAME.test(name) || MOCK_PREFIX.test(name) || inDir(MOCK_DIRS)) return "mocks";
   if (TEST_NAME.test(name) || CLASS_TEST_NAME.test(name) || inDir(TEST_DIRS)) return "tests";
   if (DOCS_NAME.test(name) && !NOT_DOCS_NAME.test(name)) return "docs";
   return "code";

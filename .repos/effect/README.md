@@ -77,12 +77,18 @@ This monorepo contains the core `effect` package alongside integration packages 
 | [`@effect/sql-sqlite-node`](packages/sql/sqlite-node)                 | SQL client for SQLite via `node:sqlite`                  | [docs](https://effect.website/docs/v4/api/sql-sqlite-node)         |
 | [`@effect/sql-sqlite-react-native`](packages/sql/sqlite-react-native) | SQL client for SQLite in React Native                    | [docs](https://effect.website/docs/v4/api/sql-sqlite-react-native) |
 | [`@effect/sql-sqlite-wasm`](packages/sql/sqlite-wasm)                 | SQL client for SQLite compiled to WebAssembly            | [docs](https://effect.website/docs/v4/api/sql-sqlite-wasm)         |
+| [`@effect/ai-amazon-bedrock`](packages/ai/amazon-bedrock)             | Amazon Bedrock provider for the Effect AI modules        | [docs](https://effect.website/docs/v4/api/ai-amazon-bedrock)       |
 | [`@effect/ai-anthropic`](packages/ai/anthropic)                       | Anthropic provider for the Effect AI modules             | [docs](https://effect.website/docs/v4/api/ai-anthropic)            |
 | [`@effect/ai-openai`](packages/ai/openai)                             | OpenAI provider for the Effect AI modules                | [docs](https://effect.website/docs/v4/api/ai-openai)               |
 | [`@effect/ai-cloudflare`](packages/ai/cloudflare)                     | Cloudflare decision provider for the Effect AI modules   | [docs](https://effect.website/docs/v4/api/ai-cloudflare)           |
 | [`@effect/ai-typesafe`](packages/ai/typesafe)                         | TypeSafe decision provider for the Effect AI modules     | [docs](https://effect.website/docs/v4/api/ai-typesafe)             |
 | [`@effect/ai-openai-compat`](packages/ai/openai-compat)               | OpenAI-compatible API provider for the Effect AI modules | [docs](https://effect.website/docs/v4/api/ai-openai-compat)        |
 | [`@effect/ai-openrouter`](packages/ai/openrouter)                     | OpenRouter provider for the Effect AI modules            | [docs](https://effect.website/docs/v4/api/ai-openrouter)           |
+| [`@effect/chat-slack`](packages/chat/slack)                           | Slack adapter for `effect/chat`                          | [docs](https://effect.website/docs/v4/api/chat-slack)              |
+| [`@effect/chat-whatsapp`](packages/chat/whatsapp)                     | WhatsApp Cloud API adapter for `effect/chat`             | [docs](https://effect.website/docs/v4/api/chat-whatsapp)           |
+| [`@effect/chat-discord`](packages/chat/discord)                       | Discord adapter for `effect/chat`                        | [docs](https://effect.website/docs/v4/api/chat-discord)            |
+| [`@effect/chat-telegram`](packages/chat/telegram)                     | Telegram Bot API adapter for `effect/chat`               | [docs](https://effect.website/docs/v4/api/chat-telegram)           |
+| [`@effect/chat-teams`](packages/chat/teams)                           | Microsoft Teams adapter for `effect/chat`                | [docs](https://effect.website/docs/v4/api/chat-teams)              |
 | [`@effect/atom-react`](packages/atom/react)                           | React bindings for Effect Atom                           | [docs](https://effect.website/docs/v4/api/atom-react)              |
 | [`@effect/atom-solid`](packages/atom/solid)                           | SolidJS bindings for Effect Atom                         | [docs](https://effect.website/docs/v4/api/atom-solid)              |
 | [`@effect/atom-vue`](packages/atom/vue)                               | Vue bindings for Effect Atom                             | [docs](https://effect.website/docs/v4/api/atom-vue)                |

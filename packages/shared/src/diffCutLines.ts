@@ -7,8 +7,9 @@ export function cutLineNote(omittedCharacters: number): string {
 
 /** Where a cut line's note starts, past its leading space, or null for a whole line. */
 export function cutLineNoteStart(line: string): number | null {
-  if (!line.endsWith("more characters]")) return null;
-  const note = CUT_LINE_NOTE.exec(line);
+  const content = line.endsWith("\r") ? line.slice(0, -1) : line;
+  if (!content.endsWith("more characters]")) return null;
+  const note = CUT_LINE_NOTE.exec(content);
   return note === null ? null : note.index + 1;
 }
 

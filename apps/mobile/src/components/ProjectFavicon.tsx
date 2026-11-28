@@ -1,8 +1,10 @@
+import { useGT } from "gt-react-native";
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
 import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
@@ -41,6 +43,8 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
+  /** Projects whose icon to show, in order, when this project has none. */
+  readonly fallbackProjects?: ReadonlyArray<ProjectFaviconSource>;
 }) {
   const size = props.size ?? 42;
   const symbol = resolveProjectIconSymbol(props.projectIcon);
@@ -78,6 +82,17 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;
   }
 
+  if (renderableFaviconUrl === null && props.fallbackProjects?.length) {
+    return (
+      <FallbackProjectFavicon
+        projects={props.fallbackProjects}
+        projectTitle={props.projectTitle}
+        size={size}
+        open={props.open}
+      />
+    );
+  }
+
   return (
     <ProjectFaviconImage
       key={cacheKey}
@@ -89,6 +104,33 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     />
   );
 });
+
+type ProjectFaviconSource = Pick<
+  EnvironmentProject,
+  "environmentId" | "workspaceRoot" | "faviconPath" | "projectIcon"
+>;
+
+function FallbackProjectFavicon(props: {
+  readonly projects: ReadonlyArray<ProjectFaviconSource>;
+  readonly projectTitle: string;
+  readonly size: number;
+  readonly open: boolean | undefined;
+}) {
+  const [project, ...laterProjects] = props.projects;
+  if (!project) return null;
+  return (
+    <ProjectFavicon
+      environmentId={project.environmentId}
+      workspaceRoot={project.workspaceRoot}
+      faviconPath={project.faviconPath}
+      projectIcon={project.projectIcon}
+      projectTitle={props.projectTitle}
+      size={props.size}
+      fallbackProjects={laterProjects}
+      {...(props.open === undefined ? {} : { open: props.open })}
+    />
+  );
+}
 
 function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonly size: number }) {
   const { glyph, size } = props;
@@ -147,6 +189,7 @@ function ProjectFaviconImage(props: {
   readonly projectTitle: string;
   readonly size: number;
 }) {
+  const gt = useGT();
   const faviconRequest = createProjectFaviconRequest(props.cacheKey, props.faviconUrl);
   // Registers with the module-level loader before the Image's native onLoad/onError can fire,
   // so stale loads for a superseded URL under the same cacheKey are ignored.
@@ -205,7 +248,7 @@ function ProjectFaviconImage(props: {
           }
           cachePolicy={inlineFaviconUrl !== null ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}
-          accessibilityLabel={`${props.projectTitle} favicon`}
+          accessibilityLabel={gt("{projectTitle} favicon", { projectTitle: props.projectTitle })}
           style={{
             width: props.size,
             height: props.size,

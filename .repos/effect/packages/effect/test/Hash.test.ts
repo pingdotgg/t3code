@@ -257,6 +257,21 @@ describe("Hash", () => {
     })
   })
 
+  describe("Error objects", () => {
+    it("ignores non-enumerable construction-site metadata (JavaScriptCore)", () => {
+      const withSiteMetadata = (line: number): Error => {
+        const error = new Error("same message")
+        const metadata = { line, column: line, sourceURL: `file${line}.ts`, originalLine: line, originalColumn: line }
+        for (const [key, value] of Object.entries(metadata)) {
+          Object.defineProperty(error, key, { value, enumerable: false, writable: true, configurable: true })
+        }
+        return error
+      }
+
+      assert.strictEqual(Hash.hash(withSiteMetadata(1)), Hash.hash(withSiteMetadata(2)))
+    })
+  })
+
   describe("cyclic values", () => {
     it("does not cache a hash computed from a circular sentinel", () => {
       interface Node {

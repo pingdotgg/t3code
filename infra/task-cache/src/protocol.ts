@@ -1,6 +1,5 @@
 import { githubKeys } from "../vendor/vite-plus-remote-cache-cloudflare/src/auth.ts";
 
-export { cborResponse } from "../vendor/vite-plus-remote-cache-cloudflare/src/cbor.ts";
 export {
   cleanup,
   getScope,

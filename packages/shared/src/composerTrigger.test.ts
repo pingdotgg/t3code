@@ -1,12 +1,14 @@
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
+import { resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 interface MarkdownNode {
   readonly type: string;
@@ -19,11 +21,29 @@ function parsedLinkLabel(markdown: string): string | undefined {
     node.value ?? (node.children ?? []).map(textOf).join("");
   const find = (node: MarkdownNode): MarkdownNode | undefined =>
     node.type === "link" ? node : node.children?.map(find).find(Boolean);
-  const link = find(unified().use(remarkParse).parse(markdown) as MarkdownNode);
+  const link = find(unified().use(remarkParse).use(remarkGfm).parse(markdown) as MarkdownNode);
   return link && textOf(link);
 }
 
 describe("detectComposerTrigger", () => {
+  it.each(["\u3000", "\u00a0"])("detects completion after Unicode space %j", (space) => {
+    for (const [token, kind, query] of [
+      ["@src", "path", "src"],
+      ["#123", "pull-request", "123"],
+      ["$review", "skill", "review"],
+      ["/model", "slash-command", "model"],
+    ]) {
+      const prefix = `日本語${space}`;
+      const text = `${prefix}${token}`;
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind,
+        query,
+        rangeStart: prefix.length,
+        rangeEnd: text.length,
+      });
+    }
+  });
+
   it.each([
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],
@@ -34,22 +54,21 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
 
-  it("keeps a slash in the line-leading model picker query", () => {
-    expect(detectComposerTrigger("/model openai/gpt", 17)).toMatchObject({
-      kind: "slash-model",
-      query: "openai/gpt",
+  it.each([
+    ["/model", 0],
+    ["Question\n/MODEL", 9],
+  ])("offers typed %j as a slash command", (text, rangeStart) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: text.slice(rangeStart + 1),
+      rangeStart,
+      rangeEnd: text.length,
     });
   });
 
-  it.each(["/Model opus", "/MODEL opus"])(
-    "opens the model picker for capitalized %j the same as /model",
-    (text) => {
-      expect(detectComposerTrigger(text, text.length)).toMatchObject({
-        kind: "slash-model",
-        query: "opus",
-      });
-    },
-  );
+  it("does not reopen a menu after /model arguments", () => {
+    expect(detectComposerTrigger("/Model opus", "/Model opus".length)).toBeNull();
+  });
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
@@ -64,6 +83,50 @@ describe("detectComposerTrigger", () => {
     "does not trigger for %j",
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
+
+  it.each([
+    ["", "", ""],
+    ["Compare ", "8737", ""],
+    ["Compare (", "", ")"],
+    ["Compare(", "fix-name", ")"],
+    ["((", "fix_name", "))"],
+    ["[", "8737", "]"],
+    ["{", "8737", "}"],
+    ["【", "修正", "】"],
+  ])("keeps brackets outside the PR range after %j", (prefix, query, suffix) => {
+    const text = `${prefix}#${query}`;
+    expect(detectComposerTrigger(`${text}${suffix}`, text.length)).toEqual({
+      kind: "pull-request",
+      query,
+      rangeStart: prefix.length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each([
+    "# Heading",
+    "issue#123",
+    "https://example.com/#123",
+    "(#123)",
+    "[issue#123",
+    "[#_fix",
+    "]#123",
+  ])("does not detect a pull request in %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it.each([
+    ["@src/(#1", "path", "src/(#1"],
+    ["$review(#1", "skill", "review(#1"],
+  ])("keeps explicit completion for %j", (token, kind, query) => {
+    const text = `Use ${token}`;
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind,
+      query,
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
 
   it.each(["$", "€", "𑿝"])("detects %s skill prefixes and their source range", (prefix) => {
     const text = `Use ${prefix}review`;
@@ -96,10 +159,26 @@ describe("detectComposerTrigger", () => {
 });
 
 describe("serializeComposerFileLink", () => {
+  it.each(["reports:final.md", "file:notes.md"])("disambiguates the colon filename %s", (path) => {
+    const link = serializeComposerFileLink(path);
+    expect(link).toBe(`[${path}](./${path})`);
+    expect(resolveMarkdownFileLinkTarget(`./${path}`, "/workspace")).toBe(`/workspace/${path}`);
+  });
+
   it("encodes markdown-sensitive destination characters", () => {
     expect(serializeComposerFileLink("docs/My File (draft).md")).toBe(
       "[My File (draft).md](docs/My%20File%20%28draft%29.md)",
     );
+  });
+
+  it("preserves literal HTML entities in the file label and destination", () => {
+    const path = "docs/R&copy;.md";
+    const paragraph = unified().use(remarkParse).parse(serializeComposerFileLink(path)).children[0];
+    assert(paragraph?.type === "paragraph");
+    const link = paragraph.children[0];
+    assert(link?.type === "link");
+    expect(link.children).toMatchObject([{ type: "text", value: "R&copy;.md" }]);
+    expect(resolveMarkdownFileLinkTarget(link.url, "/workspace")).toBe(`/workspace/${path}`);
   });
 
   it("supports windows paths", () => {
@@ -111,6 +190,9 @@ describe("serializeComposerFileLink", () => {
   it.each([
     ["pkg/__init__.py", "__init__.py"],
     ["notes/*draft*.md", "*draft*.md"],
+    ["notes/[TODO].md", "[TODO].md"],
+    ["notes/~~draft~~.md", "~~draft~~.md"],
+    ["notes/&#91;TODO&#93;.md", "&#91;TODO&#93;.md"],
   ])("renders the mention of %j with its file name as the label", (path, basename) => {
     expect(parsedLinkLabel(serializeComposerFileLink(path))).toBe(basename);
   });

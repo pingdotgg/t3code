@@ -2,6 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
@@ -11,6 +12,7 @@ import { useAppForeground } from "../../lib/appState";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { browserTabTitle } from "./browserTabs";
 import { PreviewStreamWebView } from "./PreviewStreamWebView";
+import { useThreadServerBrowserTabs } from "../../state/preview";
 import { usePreparedConnection } from "../../state/session";
 
 const PLAYER_LONG_SIDE = 184;
@@ -20,11 +22,13 @@ const PLAYER_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 export function ThreadBrowserFloat(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
-  readonly loaded: boolean;
+  /** Whether the environment serves browser tabs. */
+  readonly enabled: boolean;
   readonly top: number;
   readonly onOpen: (tabId: string) => void;
 }) {
+  // Read here rather than by the thread screen, so a list read re-renders only the float.
+  const { tabs, loaded } = useThreadServerBrowserTabs(props);
   const [tabId, setTabId] = useState<string | null>(null);
   // The reveal requests already seen, so only a tab revealed after the first
   // list pops the player.
@@ -32,16 +36,16 @@ export function ThreadBrowserFloat(props: {
     readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
     readonly reveals: ReadonlyMap<string, string | undefined>;
   } | null>(null);
-  if (props.loaded && seen?.tabs !== props.tabs) {
+  if (loaded && seen?.tabs !== tabs) {
     setSeen({
-      tabs: props.tabs,
-      reveals: new Map(props.tabs.map((tab) => [tab.tabId, tab.revealRequest?.id])),
+      tabs,
+      reveals: new Map(tabs.map((tab) => [tab.tabId, tab.revealRequest?.id])),
     });
     const previous = seen?.reveals;
     const opened =
       previous === undefined
         ? undefined
-        : props.tabs.findLast(
+        : tabs.findLast(
             (tab) =>
               tab.reveal === true &&
               (tab.revealRequest
@@ -52,7 +56,7 @@ export function ThreadBrowserFloat(props: {
   }
   const focused = useIsFocused();
   const foreground = useAppForeground();
-  const tab = props.tabs.find((entry) => entry.tabId === tabId) ?? null;
+  const tab = tabs.find((entry) => entry.tabId === tabId) ?? null;
   const onOpen = props.onOpen;
   const open = () => {
     if (tabId === null) return;
@@ -84,6 +88,8 @@ function FloatingBrowserPlayer(props: {
   readonly onClose: () => void;
 }) {
   const { themeVariables } = useAppearancePreferences();
+  const gt = useGT();
+  const resolveMessage = useMessages();
   const prepared = usePreparedConnection(props.environmentId);
   const httpBaseUrl = Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
@@ -100,8 +106,10 @@ function FloatingBrowserPlayer(props: {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open browser, ${browserTabTitle(props.tab)}`}
-        accessibilityHint="Opens the browser tab full screen"
+        accessibilityLabel={gt("Open browser, {title}", {
+          title: browserTabTitle(props.tab, resolveMessage),
+        })}
+        accessibilityHint={gt("Opens the browser tab full screen")}
         onPress={props.onOpen}
         className="flex-1"
       >
@@ -126,7 +134,7 @@ function FloatingBrowserPlayer(props: {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Close floating preview"
+        accessibilityLabel={gt("Close floating preview")}
         hitSlop={8}
         onPress={props.onClose}
         className="absolute right-1.5 top-1.5 size-6 items-center justify-center rounded-full bg-black/55"

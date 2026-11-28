@@ -84,4 +84,15 @@ describe("threadContextAttachment", () => {
     expect(first.name).toMatch(/^Same _ title_ notes-[a-f0-9]+\.jsonl$/);
     expect(first.name.length).toBeLessThan(255);
   });
+
+  it("does not split a surrogate pair when truncating long titles", () => {
+    const source = EnvironmentId.make("source");
+    const threadId = ThreadId.make("surrogate-thread");
+    const updatedAt = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
+    const title = `${"a".repeat(63)}𠀀`;
+
+    const file = threadContextAttachment(source, { threadId, title, updatedAt, items: [] });
+
+    expect(file.name).toMatch(/^a{63}-[a-f0-9]+\.jsonl$/);
+  });
 });

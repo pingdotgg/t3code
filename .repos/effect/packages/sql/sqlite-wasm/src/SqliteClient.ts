@@ -66,7 +66,7 @@ export type TypeId = "~@effect/sql-sqlite-wasm/SqliteClient"
  * @category services
  * @since 4.0.0
  */
-export interface SqliteClient extends Client.SqlClient {
+export interface SqliteClient extends Client.Base {
   readonly [TypeId]: TypeId
   readonly config: SqliteClientMemoryConfig
   readonly export: Effect.Effect<Uint8Array, SqlError>
@@ -83,7 +83,9 @@ export interface SqliteClient extends Client.SqlClient {
  * @category services
  * @since 4.0.0
  */
-export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-wasm/SqliteClient")
+export const SqliteClient = Context.Service<SqliteClient, SqliteClient & Client.SqlClient>(
+  "@effect/sql-sqlite-wasm/SqliteClient"
+)
 
 /**
  * Configuration for an in-memory SQLite WASM client, including optional reactivity hooks, span attributes, and query/result name transforms.
@@ -142,7 +144,7 @@ const registered = new Set<string>()
  */
 export const makeMemory = (
   options: SqliteClientMemoryConfig
-): Effect.Effect<SqliteClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<SqliteClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const reactivity = yield* Reactivity.Reactivity
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
@@ -286,7 +288,7 @@ export const makeMemory = (
           [ATTR_DB_SYSTEM_NAME, "sqlite"]
         ],
         transformRows
-      })) as SqliteClient,
+      })) as SqliteClient & Client.SqlClient,
       {
         [TypeId]: TypeId as TypeId,
         config: options,
@@ -307,7 +309,7 @@ export const makeMemory = (
  */
 export const make = (
   options: SqliteClientConfig
-): Effect.Effect<SqliteClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<SqliteClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const reactivity = yield* Reactivity.Reactivity
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
@@ -459,7 +461,7 @@ export const make = (
           [ATTR_DB_SYSTEM_NAME, "sqlite"]
         ],
         transformRows
-      })) as SqliteClient,
+      })) as SqliteClient & Client.SqlClient,
       {
         [TypeId]: TypeId as TypeId,
         config: options,

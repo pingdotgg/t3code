@@ -1,0 +1,93 @@
+diff --git a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
+index 7ccce9681477328701755792fdc3bab09b428e30..b6f30dfeaf1638454a8370656bb761fd4f6e2cd5 100644
+--- a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
++++ b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
+@@ -265,6 +265,10 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+   var keepScreenOnWhilePlaying by VideoPlayerKeepAwake(this, appContext)
+ 
+   private val playerListener = object : Player.Listener {
++    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
++      emit("playbackRequestedChange", mapOf("isPlaybackRequested" to playWhenReady))
++    }
++
+     override fun onIsPlayingChanged(isPlaying: Boolean) {
+       this@VideoPlayer.playing = isPlaying
+     }
+diff --git a/build/VideoPlayerEvents.types.d.ts b/build/VideoPlayerEvents.types.d.ts
+index 9c7eaeaf9f27ef6735b2e356ec724af5d5ae58f3..25b87998ca01261fb39bf715a8124fe6f6d90da5 100644
+--- a/build/VideoPlayerEvents.types.d.ts
++++ b/build/VideoPlayerEvents.types.d.ts
+@@ -3,6 +3,9 @@ import type { PlayerError, SubtitleTrack, VideoPlayerStatus, VideoSource, VideoT
+  * Handlers for events which can be emitted by the player.
+  */
+ export type VideoPlayerEvents = {
++    /** Native play/pause intent, preserved while buffering or seeking. */
++    playbackRequestedChange(payload: { isPlaybackRequested: boolean }): void;
++
+     /**
+      * Handler for an event emitted when the status of the player changes.
+      */
+diff --git a/ios/VideoPlayer.swift b/ios/VideoPlayer.swift
+index 3c2fde463a10c78546947dacd8c0fda67f0494c7..ef432481c7641502a504ad70fe644b532d16af50 100644
+--- a/ios/VideoPlayer.swift
++++ b/ios/VideoPlayer.swift
+@@ -396,6 +396,12 @@ internal final class VideoPlayer: SharedRef<AVPlayer>, Hashable, VideoPlayerObse
+     VideoManager.shared.setAppropriateAudioSessionOrWarn()
+   }
+ 
++  func onPlaybackRequestedChanged(player: AVPlayer, requested: Bool) {
++    if self.appContext != nil {
++      self.emit(event: "playbackRequestedChange", payload: ["isPlaybackRequested": requested])
++    }
++  }
++
+   func onRateChanged(player: AVPlayer, oldRate: Float?, newRate: Float) {
+     if #available(iOS 16.0, tvOS 16.0, *) {
+       if player.defaultRate != playbackRate {
+diff --git a/ios/VideoPlayerObserver.swift b/ios/VideoPlayerObserver.swift
+index adf5820b4848be7da35d212d9cff91172aacdb2a..364483cdf251148d8ea1dd241aee45ef5bf7426a 100644
+--- a/ios/VideoPlayerObserver.swift
++++ b/ios/VideoPlayerObserver.swift
+@@ -46,6 +46,7 @@ private actor ObserverTaskManager {
+ protocol VideoPlayerObserverDelegate: AnyObject {
+   func onStatusChanged(player: AVPlayer, oldStatus: PlayerStatus?, newStatus: PlayerStatus, error: Exception?)
+   func onIsPlayingChanged(player: AVPlayer, oldIsPlaying: Bool?, newIsPlaying: Bool)
++  func onPlaybackRequestedChanged(player: AVPlayer, requested: Bool)
+   func onRateChanged(player: AVPlayer, oldRate: Float?, newRate: Float)
+   func onVolumeChanged(player: AVPlayer, oldVolume: Float?, newVolume: Float)
+   func onPlayedToEnd(player: AVPlayer)
+@@ -66,6 +67,7 @@ protocol VideoPlayerObserverDelegate: AnyObject {
+ extension VideoPlayerObserverDelegate {
+   func onStatusChanged(player: AVPlayer, oldStatus: PlayerStatus?, newStatus: PlayerStatus, error: Exception?) {}
+   func onIsPlayingChanged(player: AVPlayer, oldIsPlaying: Bool?, newIsPlaying: Bool) {}
++  func onPlaybackRequestedChanged(player: AVPlayer, requested: Bool) {}
+   func onRateChanged(player: AVPlayer, oldRate: Float?, newRate: Float) {}
+   func onVolumeChanged(player: AVPlayer, oldVolume: Float?, newVolume: Float) {}
+   func onPlayedToEnd(player: AVPlayer) {}
+@@ -497,6 +499,12 @@ class VideoPlayerObserver: VideoSourceLoaderListener {
+   }
+ 
+   private func onTimeControlStatusChanged(_ player: AVPlayer, _ change: NSKeyValueObservedChange<AVPlayer.TimeControlStatus>) {
++    // Waiting (including evaluatingBufferingRate) preserves the native play request.
++    let requested = player.timeControlStatus != .paused && player.status != .failed && player.currentItem?.status != .failed
++    delegates.forEach { delegate in
++      delegate.value?.onPlaybackRequestedChanged(player: player, requested: requested)
++    }
++
+     // iOS changes timeControlStatus after an error, so we need to check for errors.
+     if player.status == .failed || player.currentItem?.status == .failed {
+       isPlaying = false
+diff --git a/src/VideoPlayerEvents.types.ts b/src/VideoPlayerEvents.types.ts
+index c53b0821c46601d52d52bab17e2b81d3a2bc22a9..2d5fbcbb2273a8bd5b3375e79a7963a7b901841a 100644
+--- a/src/VideoPlayerEvents.types.ts
++++ b/src/VideoPlayerEvents.types.ts
+@@ -11,6 +11,9 @@ import type {
+  * Handlers for events which can be emitted by the player.
+  */
+ export type VideoPlayerEvents = {
++  /** Native play/pause intent, preserved while buffering or seeking. */
++  playbackRequestedChange(payload: { isPlaybackRequested: boolean }): void;
++
+   /**
+    * Handler for an event emitted when the status of the player changes.
+    */
