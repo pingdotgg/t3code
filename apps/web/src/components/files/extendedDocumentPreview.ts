@@ -512,6 +512,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     bold: false,
     italic: false,
     underline: false,
+    strike: false,
+    script: null as "sup" | "sub" | null,
     uc: 1,
     font: 0,
     fontTable: false,
@@ -555,6 +557,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (state.bold) span = `<strong>${span}</strong>`;
     if (state.italic) span = `<em>${span}</em>`;
     if (state.underline) span = `<u>${span}</u>`;
+    if (state.strike) span = `<s>${span}</s>`;
+    if (state.script) span = `<${state.script}>${span}</${state.script}>`;
     html += span;
     run = "";
   };
@@ -704,6 +708,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "i") state.italic = arg !== 0;
       else if (RTF_UNDERLINE_WORD.test(word!)) state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
+      else if (word === "strike" || word === "striked") state.strike = arg !== 0;
+      else if (word === "super") state.script = "sup";
+      else if (word === "sub") state.script = "sub";
+      else if (word === "nosupersub") state.script = null;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
       // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
@@ -716,6 +724,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           bold: false,
           italic: false,
           underline: false,
+          strike: false,
+          script: null,
           font: defaultFont,
         };
       else if (word === "uc") state.uc = Math.max(0, Math.min(10, arg));
