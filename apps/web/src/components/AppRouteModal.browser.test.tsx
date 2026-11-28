@@ -158,7 +158,7 @@ describe("AppRouteModal", () => {
       .getBoundingClientRect();
     const popup = settings.element().getBoundingClientRect();
     const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
-    const mouse = (type: string, x: number, y: number) =>
+    const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
       cdp().send("Input.dispatchMouseEvent", {
         type,
         x: frame.left + x,
