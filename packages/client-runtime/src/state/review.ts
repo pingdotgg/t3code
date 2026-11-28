@@ -148,6 +148,10 @@ export function createReviewEnvironmentAtoms<R, E>(
           }),
         ),
     }),
+    fetchBase: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:review:fetch-base",
+      tag: WS_METHODS.reviewFetchBase,
+    }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:review:diff-file-contents",
       tag: WS_METHODS.reviewGetDiffFileContents,

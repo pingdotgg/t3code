@@ -5109,25 +5109,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((result) => ("unavailable" in result ? null : result)),
     );
 
+  const resolveReviewBase = Effect.fn("resolveReviewBase")(function* (
+    cwd: string,
+    branch: string | null,
+    explicitBaseRef?: string,
+  ) {
+    return explicitBaseRef !== undefined
+      ? ((yield* resolveComparisonBaseRef(cwd, explicitBaseRef)) ?? {
+          baseRef: explicitBaseRef,
+          comparisonRef:
+            !explicitBaseRef.startsWith("refs/") && (yield* branchExists(cwd, explicitBaseRef))
+              ? `refs/heads/${explicitBaseRef}`
+              : explicitBaseRef,
+        })
+      : branch
+        ? yield* resolveBaseBranchForNoUpstream(cwd, branch, {
+            allowRemoteOfCurrent: true,
+          }).pipe(Effect.orElseSucceed(() => null))
+        : null;
+  });
+
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
     cwd: string,
     branch: string | null,
     explicitBaseRef?: string,
   ) {
-    const base =
-      explicitBaseRef !== undefined
-        ? ((yield* resolveComparisonBaseRef(cwd, explicitBaseRef)) ?? {
-            baseRef: explicitBaseRef,
-            comparisonRef:
-              !explicitBaseRef.startsWith("refs/") && (yield* branchExists(cwd, explicitBaseRef))
-                ? `refs/heads/${explicitBaseRef}`
-                : explicitBaseRef,
-          })
-        : branch
-          ? yield* resolveBaseBranchForNoUpstream(cwd, branch, {
-              allowRemoteOfCurrent: true,
-            }).pipe(Effect.orElseSucceed(() => null))
-          : null;
+    const base = yield* resolveReviewBase(cwd, branch, explicitBaseRef);
     if (base === null) return { baseRef: null, mergeBase: "HEAD" };
     const { baseRef, comparisonRef } = base;
     const args = ["merge-base", "--end-of-options", comparisonRef, "HEAD"];
@@ -5152,6 +5159,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     return { baseRef, mergeBase };
+  });
+
+  // Automatic fetches stop at a zero interval, so an explicit refresh still moves the base's remote.
+  const fetchReviewBase: GitVcsDriver.GitVcsDriver["Service"]["fetchReviewBase"] = Effect.fn(
+    "fetchReviewBase",
+  )(function* (input) {
+    const repository = yield* resolveReviewRepository(input.cwd, input.baseRef === undefined);
+    if (!repository) return;
+    const base = yield* resolveReviewBase(input.cwd, repository.currentBranch, input.baseRef);
+    if (!base?.comparisonRef.startsWith("refs/remotes/")) return;
+    const remote = parseRemoteRefWithRemoteNames(
+      base.comparisonRef.slice("refs/remotes/".length),
+      (yield* listRemoteNames(input.cwd)).toSorted((left, right) => right.length - left.length),
+    );
+    if (!remote) return;
+    const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+    yield* Cache.get(
+      statusRemoteRefreshCache,
+      new StatusRemoteRefreshCacheKey({ gitCommonDir, remoteName: remote.remoteName }),
+    ).pipe(Effect.ignore);
+    // The cache returns after five seconds while the fetch keeps running.
+    const pending = statusFetches.get(`${gitCommonDir}\0${remote.remoteName}`);
+    if (pending) yield* Fiber.await(pending.fiber);
   });
 
   const readBranchChangeTotals = Effect.fn("readBranchChangeTotals")(function* (
@@ -7857,6 +7887,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readRangeContext,
     getReviewBranchCommits,
     getReviewDiffPreview,
+    fetchReviewBase,
     getReviewDiffFileContents,
     readConfigValue,
     readBranchBase,

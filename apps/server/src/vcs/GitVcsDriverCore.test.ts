@@ -2834,6 +2834,47 @@ it.effect("does not fetch for status when the automatic fetch interval is zero",
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect(
+  "fetches the review base's remote on request when the automatic fetch interval is zero",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(VcsAutomaticFetchInterval, Effect.succeed(Duration.zero)),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const other = yield* makeTmpDir("git-vcs-driver-other-");
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      yield* git(cwd, ["push", "--set-upstream", "origin", initialBranch]);
+      yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+      yield* git(cwd, ["switch", "-c", "feature"]);
+      yield* git(cwd, ["commit", "--allow-empty", "-m", "feature"]);
+      yield* git(cwd, ["push", "--set-upstream", "origin", "feature"]);
+      yield* git(other, ["clone", "--branch", initialBranch, remote, "."]);
+      yield* git(other, [
+        "-c",
+        "user.name=Other",
+        "-c",
+        "user.email=other@example.com",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "merged elsewhere",
+      ]);
+      yield* git(other, ["push", "origin", initialBranch]);
+      const remoteHead = yield* git(other, ["rev-parse", "HEAD"]);
+
+      yield* driver.fetchReviewBase({ cwd });
+
+      assert.equal(
+        yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+        remoteHead,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("lets a worktree checkout that is still working run past five minutes", () =>
   Effect.gen(function* () {
     const checkoutStarted = yield* Deferred.make<void>();

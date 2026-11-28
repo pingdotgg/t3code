@@ -559,7 +559,27 @@ export default function DiffPanel({
     void openLink(url, { event });
   };
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const fetchReviewBase = useAtomCommand(reviewEnvironment.fetchBase, { reportFailure: false });
+  const [isFetchingBase, setIsFetchingBase] = useState(false);
+  // Automatic Git fetches can be off, so asking for a refresh first brings the base up to date.
+  const refreshDiffFromUserAction = () => {
+    if (branchDiffPreviewInput?.sourceKind !== "branch-range" || !activeThread) {
+      refreshPreviewQuery();
+      return;
+    }
+    if (isFetchingBase) return;
+    setIsFetchingBase(true);
+    void fetchReviewBase({
+      environmentId: activeThread.environmentId,
+      input: {
+        cwd: branchDiffPreviewInput.cwd,
+        ...(branchDiffPreviewInput.baseRef ? { baseRef: branchDiffPreviewInput.baseRef } : {}),
+      },
+    }).finally(() => {
+      setIsFetchingBase(false);
+      refreshPreviewQuery();
+    });
+  };
 
   const threadFolderName = activeProject?.title ?? gt("Project folder");
   const preview = branchDiffPreview.data;
@@ -1473,13 +1493,15 @@ export default function DiffPanel({
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                aria-label={isRefreshingDiff ? gt("Refreshing diff") : gt("Refresh diff")}
+                aria-label={
+                  isRefreshingDiff || isFetchingBase ? gt("Refreshing diff") : gt("Refresh diff")
+                }
                 onClick={refreshDiffFromUserAction}
               />
             }
-            label={isRefreshingDiff ? gt("Refreshing diff…") : gt("Refresh diff")}
+            label={isRefreshingDiff || isFetchingBase ? gt("Refreshing diff…") : gt("Refresh diff")}
           >
-            <RefreshIcon size="sm" refreshing={isRefreshingDiff} />
+            <RefreshIcon size="sm" refreshing={isRefreshingDiff || isFetchingBase} />
           </SharedTooltipTrigger>
         )}
         {diffFileKeys.length > 0 && (

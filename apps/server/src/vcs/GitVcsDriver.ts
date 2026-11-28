@@ -28,6 +28,7 @@ import {
   type ReviewBranchCommitsInput,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewInput,
+  type ReviewFetchBaseInput,
   type ReviewDiffPreviewResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffFileContentsResult,
@@ -467,6 +468,8 @@ export class GitVcsDriver extends Context.Service<
     readonly getReviewDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
+    /** Fetches the remote of the base a review diff compares against; a local base fetches nothing. */
+    readonly fetchReviewBase: (input: ReviewFetchBaseInput) => Effect.Effect<void, GitCommandError>;
     readonly getReviewDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, GitCommandError>;
