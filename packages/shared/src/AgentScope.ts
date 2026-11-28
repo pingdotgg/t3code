@@ -76,15 +76,10 @@ export const AgentScopeThreadId = Context.Reference<string | undefined>(
   { defaultValue: () => undefined },
 );
 
-export const AGENT_OOM_SCORE_ADJ = 800;
-
-export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;
-
-const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
+const LAUNCH_SCRIPT = 'exec "$@"';
 
 // systemd-run needs XDG_RUNTIME_DIR to reach this user's manager.
 const SCOPED_LAUNCH_SCRIPT = [
-  RAISE_OOM_SCORE_LINE,
   ': "${XDG_RUNTIME_DIR:=$1}"',
   "export XDG_RUNTIME_DIR",
   "shift",
@@ -107,7 +102,7 @@ export function agentScopeLauncherScript(launch: AgentScopeCommand): string {
   return `#!/bin/sh\nexec ${command} "$@"\n`;
 }
 
-/** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */
+/** Exec preserves the agent PID, stdio, and signals; descendants cannot lower an inherited OOM score. */
 export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
