@@ -1,4 +1,5 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
 
@@ -10,6 +11,7 @@ import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { writeExpandedDirectories } from "./fileTreeExpansion";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
@@ -51,6 +53,22 @@ vi.mock("~/fileContextMenu", () => ({
 const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
+vi.mock(import("~/hooks/useFileMetadata"), async (original) => ({
+  ...(await original()),
+  getFileMetadataQueryAtom: (_environmentId, path) => {
+    const metadata = previewMetadata.get(path);
+    return Atom.make(AsyncResult.success(metadata ?? null));
+  },
+}));
+
+const previewMetadata = new Map([
+  ["README.md", { kind: "file" as const, byteLength: FULL_TEXT_MAX_BYTES }],
+  ["empty.md", { kind: "file" as const, byteLength: 0 }],
+]);
 
 function findTreeRow(path: string): HTMLElement | null {
   for (const host of document.querySelectorAll("*")) {
@@ -154,7 +172,14 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
-  it("offers Open preview for markdown files and opens them rendered", async () => {
+  it("offers Open preview for Markdown files within the render limit", async () => {
+    using _listing = withDirectoryListing([
+      ...entries,
+      ...["empty.md", "missing.md", "notes.txt"].map((path): ProjectEntry => ({
+        path,
+        kind: "file",
+      })),
+    ]);
     const onOpenFilePreview = vi.fn();
     await using _screen = await render(
       <FileBrowserPanel
@@ -169,23 +194,34 @@ describe("FileBrowserPanel", () => {
       />,
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
-    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
-
-    findTreeRow("src/")!.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
-    );
-    await expect
-      .element(page.getByRole("menuitem", { name: "Copy mention", exact: true }))
-      .toBeVisible();
-    await expect.element(action).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-
-    findTreeRow("README.md")!.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
-    );
-    await userEvent.click(action);
-    expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
+    for (const [path, offersPreview] of [
+      ["README.md", true],
+      ["empty.md", true],
+      ["missing.md", false],
+      ["notes.txt", false],
+      ["src/", false],
+    ] as const) {
+      await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+      await expect
+        .element(page.getByRole("menuitem", { name: "Copy mention", exact: true }))
+        .toBeVisible();
+      if (offersPreview) {
+        await userEvent.click(action);
+        expect(onOpenFilePreview).toHaveBeenLastCalledWith(path);
+      } else {
+        await expect.element(action).not.toBeInTheDocument();
+        await userEvent.keyboard("{Escape}");
+      }
+    }
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {

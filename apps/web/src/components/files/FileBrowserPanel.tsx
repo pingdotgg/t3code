@@ -6,9 +6,14 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  type ContextMenuSource,
+  type EnvironmentId,
+  type ProjectEntry,
+} from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -24,9 +29,12 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+import { getFileMetadataQueryAtom } from "~/hooks/useFileMetadata";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { readEnvironmentScope } from "~/state/session";
 import {
   PIERRE_TREE_UNSAFE_CSS,
   pierreTreeStyle,
@@ -35,6 +43,7 @@ import {
 
 import { joinHostPath } from "./filePath";
 import { isMarkdownPreviewFile } from "./filePreviewMode";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
   areAllDirectoriesExpanded,
@@ -219,6 +228,8 @@ export default function FileBrowserPanel({
   // Tree path of the revealed row. Folders restored or loaded later insert rows above it, so each
   // path update scrolls to it again until the user takes over the scroll position.
   const followedRevealRef = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const menuRequestRef = useRef(0);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{
@@ -230,6 +241,7 @@ export default function FileBrowserPanel({
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+      const requestId = ++menuRequestRef.current;
       const api = readLocalApi();
       if (!api) {
         context.close();
@@ -250,13 +262,28 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-      const canOpenPreview =
+      const previewMetadataQuery =
         onOpenFilePreview !== undefined &&
         entryKindsRef.current.get(relativePath) === "file" &&
-        isMarkdownPreviewFile(relativePath);
+        isMarkdownPreviewFile(relativePath) &&
+        readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+          ? getFileMetadataQueryAtom(environmentId, relativePath, cwd)
+          : null;
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
+        const metadata = previewMetadataQuery
+          ? await executeAtomQuery(appAtomRegistry, previewMetadataQuery, {
+              reportFailure: false,
+              signal: AbortSignal.timeout(1_000),
+            })
+          : null;
+        if (requestId !== menuRequestRef.current || !panelRef.current?.isConnected) return;
+        const entry = metadata?._tag === "Success" ? metadata.value : null;
+        const canOpenPreview =
+          entry?.kind === "file" &&
+          entry.byteLength !== undefined &&
+          entry.byteLength <= FULL_TEXT_MAX_BYTES;
         const clicked = await api.contextMenu.show(
           [
             ...(canOpenPreview ? [{ id: "open-preview", label: gt("Open preview") }] : []),
@@ -638,6 +665,7 @@ export default function FileBrowserPanel({
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
+      ref={panelRef}
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
