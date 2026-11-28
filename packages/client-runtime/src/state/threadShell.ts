@@ -57,10 +57,9 @@ const isChildRunLive = (thread: Pick<OrchestrationV2ThreadShell, "activityRunSta
       thread.status === "waiting";
 
 /**
- * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * Whether a thread shows under its parent rather than in thread lists: a subagent, a side
+ * chat, or a delegated task (`delegatedUnderParent`, by thread key). A live task whose
+ * parent is unlisted stays in the lists; a settled one stays hidden so old tasks never flood them.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -97,7 +96,8 @@ export function resolveListedAncestorThreadRef(
         environmentId: thread.delegatedFrom.environmentId,
         threadId: thread.delegatedFrom.threadId,
       };
-      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      // Mirrors delegatedUnderParent: a live task whose parent is not listed keeps its own row;
+      // a settled one has none, so it matches no row.
       if (findThread(parent)?.archivedAt !== null) return current;
     } else {
       return current;
@@ -768,10 +768,12 @@ export function createEnvironmentThreadShellAtoms(input: {
         const parent = thread.delegatedFrom;
         if (
           parent !== undefined &&
-          environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          // A settled task stays hidden even when its parent is archived, deleted or gone,
+          // so old delegated tasks never flood the list; a live one stays listed on its own.
+          (!isChildRunLive(thread) ||
+            (environmentIds.has(parent.environmentId) &&
+              get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)
+                ?.archivedAt === null))
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }

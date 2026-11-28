@@ -526,6 +526,19 @@ describe("v2 thread shell lists", () => {
       threads: [{ ...parent, archivedAt: v2Now }],
     });
     expect(listed()).toEqual([`${remoteEnvironmentId}/${task.id}`]);
+    // Once settled, the task stays under its archived parent instead of flooding the list.
+    const settled = { ...task, status: "idle" as const, activityRunStatus: null };
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [settled, helper],
+    });
+    expect(listed()).toEqual([]);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
+    expect(listed()).toEqual([]);
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [task, helper],
+    });
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
     expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
     const catalog = registry.get(catalogValueAtom);
