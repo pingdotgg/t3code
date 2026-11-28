@@ -53,13 +53,14 @@ const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 // Stops at the next `<`, so matching stays linear in the length of the line.
 const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
 const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+const HTML_AMPERSAND_REFERENCE_PATTERN = /&(?:amp|AMP|#0*38|#[xX]0*26);/gu;
 
 function videoTagSource(html: string): string | undefined {
   for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
     for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
       if (attribute[1]!.toLowerCase() !== "src") continue;
       const value = attribute[2] ?? attribute[3] ?? attribute[4];
-      if (value) return value;
+      if (value) return value.replace(HTML_AMPERSAND_REFERENCE_PATTERN, "&");
     }
   }
   return undefined;
