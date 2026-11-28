@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   agentActivityCopy,
+  liveActivityCopy,
   localizeAggregateState,
   resolveAgentActivityLocale,
 } from "./agentActivityCopy.ts";
@@ -45,6 +46,12 @@ describe("agentActivityCopy", () => {
       body: "Approval: Project",
     });
     expect(alertForActivityRows([row, row], copy)?.title).toBe("2 agents need attention");
+  });
+
+  it("leaves English Live Activity content to the widget's built-in copy", () => {
+    expect(liveActivityCopy("en")).toBeUndefined();
+    expect(liveActivityCopy(null)).toBeUndefined();
+    expect(liveActivityCopy("zh")).toBe(agentActivityCopy("zh"));
   });
 
   it("keeps dollar sequences in project titles literal", () => {

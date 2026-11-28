@@ -28,7 +28,11 @@ import {
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
-import { type AgentActivityCopy, agentActivityCopy } from "./agentActivityCopy.ts";
+import {
+  type AgentActivityCopy,
+  agentActivityCopy,
+  liveActivityCopy,
+} from "./agentActivityCopy.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -450,7 +454,7 @@ function makeLiveActivityDeliveryRequest(
   apns: Apns.ApnsClient["Service"],
   input: SendLiveActivityDeliveryInput,
   now: DateTime.DateTime,
-  copy: AgentActivityCopy,
+  copy: AgentActivityCopy | undefined,
 ) {
   const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
   const base = {
@@ -748,7 +752,7 @@ const make = Effect.gen(function* () {
       apns,
       { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
       now,
-      agentActivityCopy(currentTarget.locale),
+      liveActivityCopy(currentTarget.locale),
     );
     const result = yield* apns
       .sendLiveActivityRequest({

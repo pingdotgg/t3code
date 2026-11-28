@@ -97,7 +97,7 @@ interface LiveActivityRequestBase {
   readonly token: string;
   readonly nowEpochSeconds: number;
   readonly nowIso: string;
-  readonly copy?: AgentActivityCopy;
+  readonly copy?: AgentActivityCopy | undefined;
 }
 
 type MakeLiveActivityRequestInput =

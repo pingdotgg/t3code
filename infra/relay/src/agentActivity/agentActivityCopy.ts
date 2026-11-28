@@ -420,6 +420,15 @@ export function agentActivityCopy(locale: string | null | undefined): AgentActiv
   return (resolved && copies.get(resolved)) || ENGLISH_AGENT_ACTIVITY_COPY;
 }
 
+/**
+ * Copy for Live Activity content. English devices get none: the widget's built-in English matches,
+ * and the payload keeps room for a fifth row.
+ */
+export function liveActivityCopy(locale: string | null | undefined): AgentActivityCopy | undefined {
+  const copy = agentActivityCopy(locale);
+  return copy === ENGLISH_AGENT_ACTIVITY_COPY ? undefined : copy;
+}
+
 /** Rewrites relay-authored row statuses and the subtitle into the device's language. */
 export function localizeAggregateState(
   aggregate: RelayAgentActivityAggregateState,
