@@ -27,7 +27,7 @@ interface TerminalScreen {
   readonly row: number;
   readonly col: number;
   readonly pen: string;
-  readonly saved: { readonly row: number; readonly col: number } | null;
+  readonly saved: { readonly row: number; readonly col: number; readonly pen?: string } | null;
 }
 
 export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
@@ -427,7 +427,7 @@ class Terminal {
   row: number;
   col: number;
   pen: string;
-  saved: { row: number; col: number } | null;
+  saved: { row: number; col: number; pen?: string } | null;
   /** Output was discarded on purpose (scrollback cleared or window over budget). */
   dropped = false;
   readonly maxChars: number;
@@ -589,9 +589,12 @@ class Terminal {
     if (sequence[1] === "[") {
       this.csi(sequence.slice(2, -1), sequence.at(-1)!);
     } else if (sequence === `${ESC}7`) {
-      this.saved = { row: this.row, col: this.col };
+      this.saved = { row: this.row, col: this.col, pen: this.pen };
     } else if (sequence === `${ESC}8`) {
-      if (this.saved !== null) this.moveTo(this.saved.row, this.saved.col);
+      if (this.saved !== null) {
+        this.moveTo(this.saved.row, this.saved.col);
+        if (this.saved.pen !== undefined) this.pen = this.saved.pen;
+      }
     } else if (sequence === `${ESC}M`) {
       this.moveTo(this.row - 1, this.col);
     }
@@ -790,15 +793,21 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
+  let pen = "";
   if (screen.saved !== null) {
+    const save = screen.saved.pen === undefined ? `${ESC}[s` : `${ESC}7`;
+    if (screen.saved.pen !== undefined && screen.saved.pen !== "") {
+      suffix += sgr(screen.saved.pen);
+      pen = screen.saved.pen;
+    }
     if (screen.saved.row > lastRow) {
       const extra = screen.saved.row - lastRow;
       suffix +=
         "\n".repeat(extra) +
-        `${ESC}[${screen.saved.col + 1}G${ESC}7` +
+        `${ESC}[${screen.saved.col + 1}G${save}` +
         `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
     } else {
-      suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${save}`;
       if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
     }
   }
@@ -809,7 +818,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   ) {
     suffix += goTo(screen.row, screen.col);
   }
-  if (screen.pen !== "") suffix += sgr(screen.pen);
+  if (screen.pen !== pen) suffix += sgr(screen.pen);
   return replay + suffix + state.pending;
 }
 

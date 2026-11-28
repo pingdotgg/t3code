@@ -99,6 +99,10 @@ describe("commandProgramName", () => {
     ["timeout -s KILL 30 npm test", "npm"],
     ["timeout --signal=TERM -v 60 cargo test", "cargo"],
     ["gtimeout -fk5 -- 30 node app.js", "node"],
+    ['env -S"FOO=1 git status"', "git"],
+    ['env -vS "FOO=1 git status"', "git"],
+    ['env -S"FOO=1" git status', "git"],
+    ["env - git status", "git"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });

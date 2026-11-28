@@ -119,6 +119,12 @@ describe("HtmlRender", () => {
         "<main style='min-height:+100vh'></main>",
         "<main style='min-height:1e2vh'></main>",
         "<style>main{min-height:1e+2vh}</style>",
+        '<style>p::after{content:"\\\\"}main{height:100vh}</style>',
+        "<style>/* don't */main{height:100vh}/* it's */</style>",
+        "<style>main{background:url(https://example.com/*);height:100vh}</style>",
+        "<style>.x\\'y{height:100vh;--label:'ok'}</style>",
+        `<main style="--a:&quot;'&quot;;height:100vh;--b:&quot;'&quot;">x</main>`,
+        `<script>document.write("<style>" + 'main{height:100vh}' + "</style>");</script>`,
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
@@ -142,6 +148,7 @@ describe("HtmlRender", () => {
         "<script>const markup = '<!-- <div style=\"height:100vh\"></div> -->';</script>",
       );
       yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
+      yield* htmlRender.prepare(`<style>p::after{content:"\\"100vh\\""}</style><p>Unit: </p>`);
     }).pipe(Effect.provide(layerTest)),
   );
 
