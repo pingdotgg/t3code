@@ -1,6 +1,6 @@
 import {
   encodeCanvasOnThisThread,
-  fitImageToMaxEdge,
+  fitImageForAttachment,
   type ImageSize,
   renderThumbnail,
 } from "./imageCanvas";
@@ -55,7 +55,12 @@ async function run(task: ImageWorkerTask): Promise<ImageWorkerResults[ImageWorke
     case "encode":
       return encodeBitmap(task);
     case "fit":
-      return fitImageToMaxEdge(task.file, task.mimeType, task.quality, encodeCanvasOnThisThread);
+      return fitImageForAttachment(
+        task.file,
+        task.mimeType,
+        task.quality,
+        encodeCanvasOnThisThread,
+      );
     case "thumbnail": {
       const blob = await renderThumbnail(task.file, encodeCanvasOnThisThread);
       return blob ? readAsDataUrl(blob) : null;

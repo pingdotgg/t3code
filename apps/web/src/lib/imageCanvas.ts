@@ -194,28 +194,43 @@ export const encodeCanvasOnThisThread: EncodeCanvas = async (
   return blob?.type === mimeType ? blob : null;
 };
 
-/** `null` when the image already fits, or the browser cannot draw or encode it. */
-export async function fitImageToMaxEdge(
+/** macOS pastes a photo copied from an iPhone as a 16-bit PNG, several times its 8-bit size. */
+function isSixteenBitPng(header: Uint8Array): boolean {
+  return (
+    header.length > 24 &&
+    new DataView(header.buffer, header.byteOffset).getUint32(0) === 0x89504e47 &&
+    header[24] === 16
+  );
+}
+
+/**
+ * Redraws an image over the max edge, or a 16-bit PNG at its own size. `null` when there's
+ * nothing to gain, or the browser cannot draw or encode it.
+ */
+export async function fitImageForAttachment(
   file: Blob,
   mimeType: string,
   quality: number,
   encode: EncodeCanvas,
 ): Promise<{ blob: Blob; imageSize: ImageSize } | null> {
-  const header = readImageDimensions(
-    new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer()),
+  const headerBytes = new Uint8Array(
+    await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer(),
   );
-  if (!header || !fitImageAttachmentSize(header)) return null;
+  const header = readImageDimensions(headerBytes);
+  if (!header || (!fitImageAttachmentSize(header) && !isSixteenBitPng(headerBytes))) return null;
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   try {
-    const imageSize = fitImageAttachmentSize(bitmap);
-    if (!imageSize) return null;
+    const scaledSize = fitImageAttachmentSize(bitmap);
+    const imageSize = scaledSize ?? { width: bitmap.width, height: bitmap.height };
     const colorSpace = await readImageColorSpace(file);
     const target = createCanvas(imageSize.width, imageSize.height, colorSpace);
     if (!target) return null;
     target.context.imageSmoothingQuality = "high";
     target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
     const blob = await encode(target.canvas, colorSpace, quality, mimeType);
-    return blob ? { blob, imageSize } : null;
+    // The canvas writes RGBA, so a 16-bit grayscale PNG can come out larger at 8 bits.
+    if (!blob || (!scaledSize && blob.size >= file.size)) return null;
+    return { blob, imageSize };
   } finally {
     bitmap.close();
   }

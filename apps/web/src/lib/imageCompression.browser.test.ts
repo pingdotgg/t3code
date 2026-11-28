@@ -13,12 +13,13 @@ async function makeImage(
   colorSpace: PredefinedColorSpace,
   fill: string,
   type: string,
+  { width = 2400, height = 1600, colorType = "unorm8" } = {},
 ): Promise<File> {
-  const canvas = new OffscreenCanvas(2400, 1600);
-  const context = canvas.getContext("2d", { colorSpace });
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext("2d", { colorSpace, colorType });
   if (!context) throw new Error("no 2d context");
   context.fillStyle = fill;
-  context.fillRect(0, 0, 2400, 1600);
+  context.fillRect(0, 0, width, height);
   const blob = await canvas.convertToBlob({ type, quality: 0.95 });
   return new File([blob], `shot.${type.slice(6)}`, { type });
 }
@@ -132,6 +133,23 @@ describe("prepareImageForAttachment color", () => {
     if (!result.ok) throw new Error(result.reason);
     expect(result.recompressed).toBe(true);
     expect(result.imageSize).toEqual({ width: 2000, height: 1333 });
+    await expectSameColors(result.file, source);
+  });
+
+  it("redraws a 16-bit Display P3 PNG at 8 bits per channel and keeps its colors", async () => {
+    const readBitDepth = async (png: Blob) => new Uint8Array(await png.arrayBuffer())[24];
+    const source = await makeImage("display-p3", "color(display-p3 0 1 0)", "image/png", {
+      width: 300,
+      height: 400,
+      colorType: "float16",
+    });
+    expect(await readBitDepth(source)).toBe(16);
+
+    const result = await prepareImageForAttachment(source, 20 * 1024 * 1024);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.imageSize).toEqual({ width: 300, height: 400 });
+    expect(result.file.type).toBe("image/png");
+    expect(await readBitDepth(result.file)).toBe(8);
     await expectSameColors(result.file, source);
   });
 

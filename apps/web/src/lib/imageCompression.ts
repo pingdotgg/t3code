@@ -10,7 +10,7 @@ import {
   createCanvas,
   type EncodeCanvas,
   encodeCanvasOnThisThread,
-  fitImageToMaxEdge,
+  fitImageForAttachment,
   iccProfileIsDisplayP3,
   type ImageSize,
   MAX_IMAGE_METADATA_BYTES,
@@ -468,7 +468,7 @@ export async function compressImageForStash(
   }
 }
 
-async function fitImageFileToMaxEdge(
+async function fitImageFileForAttachment(
   file: File,
 ): Promise<{ file: File; imageSize: ImageSize } | null> {
   const mimeType = downscalableImageMimeType(file.type);
@@ -476,7 +476,9 @@ async function fitImageFileToMaxEdge(
   try {
     const fitted =
       (await runInImageWorker({ kind: "fit", file, mimeType, quality: QUALITY_STEPS[0] })) ??
-      ({ value: await fitImageToMaxEdge(file, mimeType, QUALITY_STEPS[0], encodeCanvas) } as const);
+      ({
+        value: await fitImageForAttachment(file, mimeType, QUALITY_STEPS[0], encodeCanvas),
+      } as const);
     if (!fitted.value) return null;
     return {
       file: new File([fitted.value.blob], file.name, {
@@ -495,7 +497,7 @@ export async function compressImageToByteLimit(
   maxBytes: number,
   options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
-  const fitted = await fitImageFileToMaxEdge(file);
+  const fitted = await fitImageFileForAttachment(file);
   if (fitted && fitted.file.size <= maxBytes) {
     return { ok: true, file: fitted.file, recompressed: true, imageSize: fitted.imageSize };
   }
