@@ -969,6 +969,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         text: paste.text,
                         wouldExceedInputLimit,
                         canAttach: true,
+                        prompt: paste,
                       }) === "attachment"
                     ) {
                       if (canAttach) {

@@ -74,6 +74,8 @@ private final class ComposerContextAccessibilityElement: UIAccessibilityElement 
 private final class ComposerTextView: UITextView {
   private static let pastedImageDirectoryName = "t3-composer-paste"
   private static let stalePastedImageAge: TimeInterval = 60 * 60
+  /// PASTED_TEXT_CUMULATIVE_MIN_BYTES in client-runtime textPaste.ts.
+  private static let cumulativePasteMinBytes = 2 * 1024
   private static let readOnlyActions = Set([
     "cut:",
     "delete:",
@@ -270,8 +272,23 @@ private final class ComposerTextView: UITextView {
   private func shouldInterceptTextPaste(_ text: String) -> Bool {
     guard textPasteThresholdBytes > 0, !text.isEmpty else { return false }
     let pastedLength = (text as NSString).length
-    if pastedLength >= textPasteThresholdBytes || text.utf8.count >= textPasteThresholdBytes {
+    let pastedBytes = text.utf8.count
+    if pastedLength >= textPasteThresholdBytes || pastedBytes >= textPasteThresholdBytes {
       return true
+    }
+    // Mirrors pastedTextDisposition in client-runtime: stacked pastes fold too.
+    if pastedBytes >= Self.cumulativePasteMinBytes {
+      let keptBytes =
+        serializedText(in: NSRange(location: 0, length: selectedRange.location)).utf8.count +
+        serializedText(
+          in: NSRange(
+            location: NSMaxRange(selectedRange),
+            length: attributedText.length - NSMaxRange(selectedRange)
+          )
+        ).utf8.count
+      if keptBytes + pastedBytes >= textPasteThresholdBytes {
+        return true
+      }
     }
     // Chips occupy one display character but expand to their source in the
     // submitted message. Measure that source, including the replaced selection.

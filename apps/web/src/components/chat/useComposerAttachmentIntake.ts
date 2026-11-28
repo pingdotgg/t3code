@@ -473,6 +473,7 @@ export function useComposerAttachmentIntake(input: {
         bypassAutoAttachment,
         wouldExceedInputLimit,
         canAttach: true,
+        prompt: { value: promptRef.current, selection: selection ?? { start: 0, end: 0 } },
       }) === "attachment";
     if (!shouldFold) {
       return false;

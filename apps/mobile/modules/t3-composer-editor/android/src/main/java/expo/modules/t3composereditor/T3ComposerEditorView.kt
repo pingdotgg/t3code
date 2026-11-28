@@ -43,6 +43,9 @@ import org.json.JSONObject
 import kotlin.math.ceil
 import kotlin.math.max
 
+// PASTED_TEXT_CUMULATIVE_MIN_BYTES in client-runtime textPaste.ts.
+private const val CUMULATIVE_PASTE_MIN_BYTES = 2 * 1024
+
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   context,
   appContext
@@ -966,7 +969,7 @@ internal class SelectionAwareEditText(
     end: Int = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
   ): Boolean {
     val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
-    val shouldFold = foldLargeText && shouldFoldText(text)
+    val shouldFold = foldLargeText && (shouldFoldText(text) || foldsStackedText(text, start, end))
     val shouldIntercept = exceedsInputLimit || shouldFold
     if (shouldIntercept) {
       pasteTextListener?.invoke(text, start, end)
@@ -978,6 +981,15 @@ internal class SelectionAwareEditText(
   private fun shouldFoldText(text: String): Boolean =
     text.length >= textPasteThresholdBytes ||
       text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
+
+  // Mirrors pastedTextDisposition in client-runtime: stacked pastes fold too.
+  private fun foldsStackedText(text: String, start: Int, end: Int): Boolean {
+    val pastedBytes = text.toByteArray(Charsets.UTF_8).size
+    if (pastedBytes < CUMULATIVE_PASTE_MIN_BYTES) return false
+    val kept = editableText.subSequence(0, start).toString() +
+      editableText.subSequence(end, length()).toString()
+    return kept.toByteArray(Charsets.UTF_8).size + pastedBytes >= textPasteThresholdBytes
+  }
 
   // Match native paste's newlines, including empty items.
   // URI-backed clips stay native: coerceToText can read a provider synchronously.

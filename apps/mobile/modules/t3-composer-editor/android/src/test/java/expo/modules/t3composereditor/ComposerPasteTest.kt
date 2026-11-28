@@ -147,6 +147,25 @@ class ComposerPasteTest {
   }
 
   @Test
+  fun regularPasteFoldsWhenItStacksPastTheThreshold() {
+    val pasted = "x".repeat(20 * 1024)
+    clipboard.setPrimaryClip(ClipData.newPlainText("test", pasted))
+    editor.setText(pasted)
+    var intercepted: Pair<Int, Int>? = null
+    editor.pasteTextListener = { _, start, end -> intercepted = Pair(start, end) }
+
+    editor.setSelection(editor.length())
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(Pair(20 * 1024, 20 * 1024), intercepted)
+
+    // Replacing most of the prompt keeps the result under the threshold, so paste stays native.
+    intercepted = null
+    editor.setSelection(0, 19 * 1024)
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(null, intercepted)
+  }
+
+  @Test
   fun keyboardClipboardInsertFoldsAtTheUtf8Threshold() {
     val pasted = "é".repeat(16 * 1024)
     editor.setText("before old after")
