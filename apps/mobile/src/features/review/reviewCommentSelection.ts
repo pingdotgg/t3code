@@ -312,10 +312,24 @@ export function reviewCommentRangeText(rangeLabel: string, resolve: MessageResol
   const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
   return range === null
     ? rangeLabel
-    : resolve(msg("{start} to {end}", { $context: "a range of lines in a file or diff" }), {
-        start: range[1]!,
-        end: range[2]!,
-      });
+    : resolve(
+        msg("{start} to {end}", {
+          $context: "a range of lines in a file or diff",
+          start: range[1]!,
+          end: range[2]!,
+        }),
+      );
+}
+
+/** A review comment chip's stored "app.ts +3 to +5" label with its range in the UI language. */
+export function reviewCommentChipLabel(
+  label: string,
+  rangeLabel: string,
+  resolve: MessageResolver,
+): string {
+  return label.endsWith(` ${rangeLabel}`)
+    ? `${label.slice(0, -rangeLabel.length)}${reviewCommentRangeText(rangeLabel, resolve)}`
+    : label;
 }
 
 function parseReviewInlineComment(

@@ -16,6 +16,7 @@ import {
   setReviewCommentTarget,
   startReviewCommentRange,
   parseReviewCommentMessageSegments,
+  reviewCommentChipLabel,
   parseReviewInlineComments,
   type ReviewCommentTarget,
 } from "./reviewCommentSelection";
@@ -187,13 +188,14 @@ describe("review comment serialization", () => {
   });
 
   it("shows a review comment's line range in the app language", () => {
-    // The French catalogue's range text, keyed by source message like the real one.
+    // Like the real catalogue lookup: only an encoded message keeps the context its key needs.
     const french = ((message: string, options?: Record<string, unknown>) => {
-      const vars: Record<string, unknown> = { ...decodeOptions(message), ...options };
-      return (vars.$_source ?? message) === "{start} to {end}"
+      const vars = decodeOptions(message);
+      return vars?.$_source === "{start} to {end}" &&
+        vars.$context === "a range of lines in a file or diff"
         ? `${String(vars.start)} à ${String(vars.end)}`
         : mFallback(message, options);
-    }) as Parameters<typeof parseReviewCommentMessageSegments>[1];
+    }) as NonNullable<Parameters<typeof parseReviewCommentMessageSegments>[1]>;
     const [segment] = parseReviewCommentMessageSegments(
       [
         '<review_comment sectionId="section-1" sectionTitle="Working tree" filePath="src/app.ts" startIndex="0" endIndex="1" rangeLabel="+12 to +13">',
@@ -212,6 +214,9 @@ describe("review comment serialization", () => {
         kind: "review-comment",
         comment: expect.objectContaining({ rangeLabel: "+12 à +13" }),
       }),
+    );
+    expect(reviewCommentChipLabel("app.ts +12 to +13", "+12 to +13", french)).toBe(
+      "app.ts +12 à +13",
     );
   });
 
