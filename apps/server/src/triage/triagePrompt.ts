@@ -98,7 +98,19 @@ comes from this repo's \`main\` branch.
 
 ## 6. Check upstream
 
-Search existing issues in pingdotgg/t3code (use \`gh\`, or the public GitHub search
+First decide whether this is a bug or a feature request. A bug is T3 Code failing
+at something it is meant to do: a crash, an error, a hang, a regression, wrong
+output. A request for behaviour T3 Code does not have yet (a new option, a link, a
+shortcut, a different layout) is a feature request, even when the user calls it a
+bug or it came up while triaging one. When a session turns up both, handle each on
+its own.
+
+For a feature request, search Ideas discussions
+(https://github.com/pingdotgg/t3code/discussions/categories/ideas), not issues.
+Issues are for bugs: never file a feature request as an issue. Point the user to a
+matching discussion to upvote, or draft a new one for them to post there.
+
+For a bug, search existing issues in pingdotgg/t3code (use \`gh\`, or the public GitHub search
 API if \`gh\` is missing or not logged in). Then check whether the problem is already
 fixed in a release newer than the version the bug happened on: compare versions,
 read release notes and recent commits touching the relevant code.
@@ -110,7 +122,8 @@ launched).
 ## 7. Offer outcomes
 
 Present what you found and let the user choose: fix it now, file an issue, both, or
-neither. For fixes: propose the exact commands, explain what they do, and run them
+neither. Offer an issue only for a bug; a feature request goes to Ideas
+discussions (step 6). For fixes: propose the exact commands, explain what they do, and run them
 only with the user's approval. Prefer configuration and service-level fixes.
 
 Do not patch the T3 Code source as a fix. A good issue with strong repro steps
