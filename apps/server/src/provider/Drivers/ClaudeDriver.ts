@@ -185,7 +185,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Retain reports until the registry subscribes; end its listener on teardown.
     const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
     yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
-    const authenticationRejected = yield* SubscriptionRef.make(false);
+    // The account whose saved sign-in a model request last rejected.
+    const rejectedSignIn = yield* SubscriptionRef.make<
+      Pick<ServerProvider["auth"], "email" | "workspaceId"> | undefined
+    >(undefined);
     const authenticationUpdates = yield* Semaphore.make(1);
     const inheritedHome = processEnv.CLAUDE_CONFIG_DIR?.trim();
     const canReportSavedLogin =
@@ -194,8 +197,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         !inheritedHome ||
         path.isAbsolute(inheritedHome));
     const withModelAuthentication = (provider: ServerProvider): ServerProvider => {
+      const rejected = rejectedSignIn.value;
+      const differs = (a: string | undefined, b: string | undefined) =>
+        a !== undefined && b !== undefined && a.toLowerCase() !== b.toLowerCase();
       if (
-        !authenticationRejected.value ||
+        rejected === undefined ||
+        // Another account's rejection says nothing about the one now signed in.
+        differs(rejected.email, provider.auth.email) ||
+        differs(rejected.workspaceId, provider.auth.workspaceId) ||
         provider.status !== "ready" ||
         provider.auth.type === undefined ||
         provider.auth.type === "apiKey" ||
@@ -209,7 +218,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         status: "warning",
         auth: { ...provider.auth, status: "unknown" },
         modelsRetained: true,
-        message: "Claude rejected the saved sign-in. Run `claude auth login` and try again.",
+        // No probe can confirm a new sign-in, so this must stay true until a request succeeds.
+        message:
+          "Claude rejected the saved sign-in on the last request. Run `claude auth login`, then send a message to confirm.",
       };
     };
     const orchestrationAdapter = yield* createClaudeAdapterV2(
@@ -228,8 +239,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ? {
               onModelAuthentication: Effect.fn("ClaudeDriver.onModelAuthentication")(
                 function* (state, cwd) {
-                  const rejected = state === "rejected";
-                  if (authenticationRejected.value === rejected) return;
+                  if (state === "accepted" && rejectedSignIn.value === undefined) return;
                   if (
                     yield* hasClaudeAuthenticationOverride(
                       effectiveConfig,
@@ -238,7 +248,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                     )
                   )
                     return;
-                  yield* SubscriptionRef.set(authenticationRejected, rejected);
+                  const auth = (yield* readCurrentSnapshot)?.auth;
+                  yield* SubscriptionRef.set(
+                    rejectedSignIn,
+                    state === "rejected"
+                      ? { email: auth?.email, workspaceId: auth?.workspaceId }
+                      : undefined,
+                  );
                 },
                 (effect) => authenticationUpdates.withPermit(effect),
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -559,7 +575,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         refresh: snapshot.refresh.pipe(Effect.map(withModelAuthentication)),
         streamChanges: Stream.merge(
           snapshot.streamChanges.pipe(Stream.map(withModelAuthentication)),
-          SubscriptionRef.changes(authenticationRejected).pipe(Stream.mapEffect(() => getSnapshot)),
+          SubscriptionRef.changes(rejectedSignIn).pipe(
+            // The ref replays its value to each subscriber. Before the first check that would
+            // publish the placeholder over the cached status the registry is showing.
+            Stream.filterEffect(() =>
+              Effect.map(
+                snapshot.isAwaitingFirstCheck ?? Effect.succeed(false),
+                (awaiting) => !awaiting,
+              ),
+            ),
+            Stream.mapEffect(() => getSnapshot),
+          ),
         ),
       },
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
@@ -583,7 +609,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
         ),
       snapshotForCwd: (cwd: string) =>
-        getSnapshot.pipe(
+        snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
             probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
           ),

@@ -10163,6 +10163,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("reports the sign-in only from a result that reached the model", () =>
+    Effect.gen(function* () {
+      const done = makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000610",
+        result: "Done.",
+      });
+      const cases = [
+        {
+          result: makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000611",
+            result: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+            isError: true,
+            apiErrorStatus: 401,
+            terminalReason: "api_error",
+          }),
+          reported: ["rejected"],
+        },
+        { result: done, reported: ["accepted"] },
+        { result: { ...done, duration_api_ms: 0 }, reported: [] },
+        { result: { ...done, num_turns: 0, local_command: "rename" }, reported: [] },
+      ];
+      for (const [index, { result, reported }] of cases.entries()) {
+        const reports: string[] = [];
+        yield* Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            onModelAuthentication: (state) =>
+              Effect.sync(() => {
+                reports.push(state);
+              }),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-claude-sign-in-report-${index}`),
+              text: "Continue.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, result as SDKMessage);
+          yield* Queue.take(harness.terminalReceipts);
+        }).pipe(Effect.scoped);
+        assert.deepEqual(reports, reported);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const lastProviderTurn = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
     const event = events.findLast((candidate) => candidate.type === "provider_turn.updated");
     if (event?.type !== "provider_turn.updated") {
