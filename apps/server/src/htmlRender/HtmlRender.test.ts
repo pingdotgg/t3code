@@ -109,6 +109,7 @@ describe("HtmlRender", () => {
         "<div style='height:calc(100dvmax - 1rem)'></div>",
         "<style>main{block-size:100vb}</style>",
         "<div style='margin-top:-50vh'></div>",
+        "<style-guide style='height:100vh'><p>hi</p></style-guide>",
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
@@ -121,6 +122,9 @@ describe("HtmlRender", () => {
       );
       yield* htmlRender.prepare(
         "<p>Avoid 100vh here.</p><!-- <div style=\"height:100vh\"></div> --><script>const unit = '100vh';</script>",
+      );
+      yield* htmlRender.prepare(
+        "<!doctype html><html><body><style-guide><p>Avoid 100vh here.</p></style-guide></body></html>",
       );
       yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
     }).pipe(Effect.provide(layerTest)),
