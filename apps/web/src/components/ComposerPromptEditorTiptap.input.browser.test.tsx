@@ -1291,6 +1291,9 @@ describe("Markdown markers around styled text", () => {
     ) => cdp().send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
     const end = editor.state.doc.content.size - 1;
     const hidden = editor.state.doc.textContent;
+    // A press that focuses the editor starts ProseMirror's 20ms focus timer, which can
+    // take the first drag move's selection as already read and never dispatch it.
+    await focusAt(editor, "end");
     await mouse("mousePressed", point(end));
     for (const pos of [end - 2, "start bold wo".length + 1, "start bo".length + 1]) {
       await mouse("mouseMoved", point(pos));

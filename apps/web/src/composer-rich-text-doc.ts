@@ -1,4 +1,9 @@
-import { joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import {
+  joinBackward,
+  joinForward,
+  joinTextblockBackward,
+  joinTextblockForward,
+} from "@tiptap/pm/commands";
 import {
   Fragment,
   Mark,
@@ -480,12 +485,30 @@ const ComposerListItemExtension = ListItem.extend({
       space: { default: " " },
     };
   },
+  addCommands() {
+    return {
+      ...this.parent?.(),
+      // Tiptap's Cmd/Option/Shift+Backspace join backward, which would nest an item under the one above.
+      joinBackward:
+        () =>
+        ({ state, dispatch }) =>
+          (listItemTypeAt(state.selection.$from) !== null &&
+            joinTextblockBackward(state, dispatch)) ||
+          joinBackward(state, dispatch),
+      // Cmd/Option+Delete join forward, which would nest the next item under this one.
+      joinForward:
+        () =>
+        ({ state, dispatch }) =>
+          (listItemTypeAt(state.selection.$from) !== null && deleteAcrossList(state, dispatch)) ||
+          joinForward(state, dispatch),
+    };
+  },
   addKeyboardShortcuts() {
     return {
       ...withoutBlockChords(this.parent?.(), LIST_NESTING_KEYS),
       // Replacing Tiptap's Backspace drops its undoInputRule, which keeps a just-typed "+ " literal.
       Backspace: () => this.editor.commands.undoInputRule() || backspaceAcrossList(this.editor),
-      Delete: () => deleteAcrossList(this.editor),
+      Delete: () => deleteAcrossList(this.editor.state, this.editor.view.dispatch),
     };
   },
   // ProseMirror can reuse the parent list when only an item's marker changes.
@@ -1591,8 +1614,7 @@ function backspaceAcrossList(editor: Editor): boolean {
  * Tiptap's default would instead nest the next item, or a whole list, under
  * this one at its old indent.
  */
-function deleteAcrossList(editor: Editor): boolean {
-  const { state } = editor;
+function deleteAcrossList(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.isTextblock || $from.depth === 0) return false;
   if ($from.parentOffset !== $from.parent.content.size) return false;
@@ -1600,7 +1622,7 @@ function deleteAcrossList(editor: Editor): boolean {
   if (!next) return false;
   if (next.$from.parent.type.name === "codeBlock") return $from.parent.type.name !== "codeBlock";
   if (!listItemTypeAt($from) && !listItemTypeAt(next.$from)) return false;
-  return joinTextblockForward(state, editor.view.dispatch);
+  return joinTextblockForward(state, dispatch);
 }
 
 function listItemPrefix(item: ProseMirrorNode, empty: boolean): string {

@@ -108,8 +108,8 @@ export function csvPreviewDelimiter(text: string, stripBom = true) {
     second ||= record === 1;
     fieldStart = char === "," || char === ";";
   }
-  if (semicolons[0]! <= commas[0]!) return ",";
-  if (!second) return ";";
+  if (!second) return semicolons[0]! > commas[0]! ? ";" : ",";
+  if (semicolons[0] === 0) return ",";
   const consistentCommas = commas[0]! > 0 && commas[1] === commas[0];
   return semicolons[1] === semicolons[0] && !consistentCommas ? ";" : ",";
 }

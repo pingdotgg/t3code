@@ -164,6 +164,15 @@ describe("cloneUrlForProtocol", () => {
   });
 
   it("refuses rewrites that would guess wrong", () => {
+    for (const url of [
+      "https://host.example/team/repo.git#readme",
+      "https://host.example/team/repo.git?view=code",
+      "https://host.example?ref=/team/repo.git",
+      "https://host.example#ref/team/repo.git",
+    ]) {
+      expect(cloneUrlForProtocol(url, "ssh")).toBeNull();
+      expect(cloneUrlForProtocol(url, "https")).toBe(url);
+    }
     expect(cloneUrlForProtocol("https://host.example/team/repo%ZZ.git", "ssh")).toBeNull();
     expect(cloneUrlForProtocol("ssh://git@host.example:2222/a/b.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "ssh")).toBeNull();

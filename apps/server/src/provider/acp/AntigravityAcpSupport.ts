@@ -30,6 +30,7 @@ import {
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { TOOL_CALL, TOOL_SEARCH } from "../../mcp/McpToolExposure.ts";
@@ -530,7 +531,11 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       );
     }
     if (image) {
-      blocks.push({ type: "image", data: Buffer.from(bytes).toString("base64"), mimeType });
+      blocks.push({
+        type: "image",
+        data: Buffer.from(bytes).toString("base64"),
+        mimeType: imageMimeTypeFromBytes(bytes) ?? mimeType,
+      });
     } else if (audio) {
       blocks.push({ type: "audio", data: Buffer.from(bytes).toString("base64"), mimeType });
     } else {

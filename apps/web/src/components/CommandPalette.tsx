@@ -60,7 +60,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
@@ -104,6 +104,7 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -312,6 +313,7 @@ const SETTINGS_ACTION_VALUES: ReadonlySet<string> = new Set([
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
+const latestDraftProjectOpen = new Map<DraftId, symbol>();
 
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(
@@ -467,6 +469,7 @@ function OpenCommandPaletteDialog(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const router = useRouter();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
@@ -614,27 +617,69 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectDraftId] = useState(() =>
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
-  const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
+  const captureProjectOpen = () => {
+    const draftId = addProjectDraftId;
+    const request = Symbol();
+    if (draftId !== null) latestDraftProjectOpen.set(draftId, request);
+    let draftProjectChanged = false;
+    const assignment =
+      draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId);
+    // A draft can move away and back before this project is ready.
+    const unsubscribe =
+      draftId === null
+        ? undefined
+        : useComposerDraftStore.subscribe((state) => {
+            const draft = state.getDraftSession(draftId);
+            draftProjectChanged ||=
+              draft?.environmentId !== assignment?.environmentId ||
+              draft?.projectId !== assignment?.projectId;
+          });
+    return {
+      pathname: router.latestLocation.pathname,
+      isCurrent: () =>
+        !draftProjectChanged &&
+        (draftId === null || latestDraftProjectOpen.get(draftId) === request),
+      [Symbol.dispose]: () => {
+        unsubscribe?.();
+        if (draftId !== null && latestDraftProjectOpen.get(draftId) === request) {
+          latestDraftProjectOpen.delete(draftId);
+        }
+      },
+    };
+  };
+  const moveDraftToAddedProject = async (
+    project: EnvironmentProject,
+    pathnameAtSubmit: string,
+  ): Promise<boolean> => {
     if (addProjectDraftId === null || !moveDraftToProject(addProjectDraftId, project)) {
       return false;
     }
-    await navigate({ to: "/draft/$draftId", params: { draftId: addProjectDraftId } });
+    if (router.latestLocation.pathname === pathnameAtSubmit) {
+      await navigate({ to: "/draft/$draftId", params: { draftId: addProjectDraftId } });
+    }
     return true;
   };
   const openSyncedProject = async (
     projectRef: ScopedProjectRef,
     project: EnvironmentProject | null,
+    projectOpen: ReturnType<typeof captureProjectOpen>,
   ): Promise<void> => {
-    if (project !== null && (await moveDraftToAddedProject(project))) return;
-    await handleNewThread(projectRef);
+    if (!projectOpen.isCurrent()) return;
+    if (project !== null && (await moveDraftToAddedProject(project, projectOpen.pathname))) return;
+    if (router.latestLocation.pathname === projectOpen.pathname) {
+      await handleNewThread(projectRef);
+    }
   };
-  const openAddedProject = async (projectRef: ScopedProjectRef): Promise<void> => {
+  const openAddedProject = async (
+    projectRef: ScopedProjectRef,
+    projectOpen: ReturnType<typeof captureProjectOpen>,
+  ): Promise<void> => {
     // A moved draft is keyed from the project record, so wait for it to reach this client.
     const project =
       addProjectDraftId === null ? null : await waitForProject(projectRef, 3_000).catch(() => null);
-    await openSyncedProject(projectRef, project);
+    await openSyncedProject(projectRef, project, projectOpen);
   };
-  const createNewProject = useNewProject(openAddedProject);
+  const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
@@ -1060,6 +1105,10 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string, source: EventTarget | null): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
+    if (isRemoteProjectRepositoryStep && nextQuery !== query) {
+      cloneLookupGeneration.current += 1;
+      setIsRemoteProjectLookingUp(false);
+    }
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
     // A rewritten paste has no matching offsets, so its caret lands at the end.
     if (
@@ -2103,7 +2152,7 @@ function OpenCommandPaletteDialog(props: {
           input: { projectId: existing.id, archived: false },
         }).then((result) => reportProjectFailure(gt("Failed to unarchive project"), result));
       }
-      if (await moveDraftToAddedProject(existing)) {
+      if (await moveDraftToAddedProject(existing, router.latestLocation.pathname)) {
         closeProjectView();
         return;
       }
@@ -2149,6 +2198,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    using projectOpen = captureProjectOpen();
     const projectId = newProjectId();
     const createResult = await createProject({
       environmentId: input.environmentId,
@@ -2175,7 +2225,7 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const navigationResult = await settlePromise(() =>
-      openAddedProject(scopeProjectRef(input.environmentId, projectId)),
+      openAddedProject(scopeProjectRef(input.environmentId, projectId), projectOpen),
     );
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
@@ -2227,14 +2277,18 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     const closeProjectView = captureProjectViewClose();
+    using projectOpen = captureProjectOpen();
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
     const created = await settlePromise(() =>
-      createNewProject({
-        environmentId: newProjectFlow.environmentId,
-        name: newProjectName,
-        publishTo: newProjectPublishes ? newProjectPublishTarget : null,
-      }),
+      createNewProject(
+        {
+          environmentId: newProjectFlow.environmentId,
+          name: newProjectName,
+          publishTo: newProjectPublishes ? newProjectPublishTarget : null,
+        },
+        (projectRef, project) => openSyncedProject(projectRef, project, projectOpen),
+      ),
     );
     newProjectSubmittingRef.current = false;
     setIsCreatingNewProject(false);
@@ -2412,6 +2466,7 @@ function OpenCommandPaletteDialog(props: {
 
     const paletteAtStart = useCommandPaletteStore.getState();
     const flowGeneration = cloneLookupGeneration.current;
+    using projectOpen = captureProjectOpen();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
@@ -2459,7 +2514,9 @@ function OpenCommandPaletteDialog(props: {
     ).catch(() => null);
     const paletteAfterSync = useCommandPaletteStore.getState();
     if (paletteAfterSync.open || paletteAfterSync.session !== paletteAtStart.session) return;
-    const navigationResult = await settlePromise(() => openSyncedProject(projectRef, project));
+    const navigationResult = await settlePromise(() =>
+      openSyncedProject(projectRef, project, projectOpen),
+    );
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
       toastManager.add(

@@ -46,6 +46,7 @@ function createEditor(value: string, extra: Extensions = []) {
         listItem: false,
         orderedList: false,
         trailingNode: false,
+        listKeymap: false,
       }),
       ComposerCodeBlockExtension,
       ...ComposerBlockExtensions,
@@ -71,8 +72,13 @@ function expectViewMatchesMarkdown(editor: Editor) {
   expect(editor.state.doc.toString()).toBe(rebuilt.toString());
 }
 
-function press(value: string, spec: string) {
+function press(value: string, spec: string, caret?: number) {
   const editor = createEditor(value);
+  if (caret !== undefined) {
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, caret)),
+    );
+  }
   const event = chord(spec);
   const before = editor.state.doc;
   const handled = editor.extensionManager.plugins.some((plugin) =>
@@ -109,6 +115,35 @@ describe("Tiptap's block shortcuts", () => {
     const result = press(value, spec);
     expect(result.changed).toBe(false);
     expect(result.value).toBe(value);
+  });
+});
+
+describe("modified Backspace in a list", () => {
+  it.each(["1. a\n2. ", "- a\n- ", "- [ ] a\n- [ ] "])(
+    "Mod-Backspace removes the empty last item of %j",
+    (value) => {
+      expect(press(value, "Mod-Backspace").value).toBe(value.split("\n")[0]);
+    },
+  );
+
+  it("leaves an item with text before the caret to the browser", () => {
+    expect(press("1. a\n2. b", "Mod-Backspace").handled).toBe(false);
+  });
+});
+
+describe("modified Delete in a list", () => {
+  // Position 4 is the end of the first item's text.
+  it.each([
+    ["1. a\n2. b", "1. ab"],
+    ["- a\n- b", "- ab"],
+    ["- [ ] a\n- [ ] b", "- [ ] ab"],
+  ])("Mod-Delete joins the next item of %j like Delete does", (value, joined) => {
+    expect(press(value, "Delete", 4).value).toBe(joined);
+    expect(press(value, "Mod-Delete", 4).value).toBe(joined);
+  });
+
+  it("leaves Mod-Delete outside lists to the default, which removes a following rule", () => {
+    expect(press("a\n---\n```\nb\n```", "Mod-Delete", 2).value).toBe("a\n```\nb\n```");
   });
 });
 

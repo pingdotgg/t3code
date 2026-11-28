@@ -41,6 +41,7 @@ async function loadHooks(
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: { env: {}, argv },
+    Buffer,
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -120,6 +121,47 @@ describe("Pi project trust", () => {
     assert.equal(sent.length, notices * 2);
     for (const message of sent)
       assert.include(message, "for /repo because the folder is not trusted");
+  });
+});
+
+describe("Pi image media types", () => {
+  it("relabels a mislabelled image already in history before each model call", async () => {
+    const handlers = (await loadHooks()) as Map<
+      string,
+      (event: {
+        messages: ReadonlyArray<unknown>;
+      }) => { messages: ReadonlyArray<unknown> } | undefined
+    >;
+    const png = "iVBORw0KGgoAAAANSUhEUg==";
+    const jpeg = "/9j/4AAQSkZJRg==";
+    const history = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What colours are in this image?" },
+          { type: "image", data: png, mimeType: "image/jpeg" },
+          { type: "image", data: jpeg, mimeType: "image/jpeg" },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Provider error" }] },
+      { role: "user", content: [{ type: "text", text: "Say hi." }] },
+    ];
+
+    const result = handlers.get("context")!({ messages: history });
+
+    assert.deepEqual(result?.messages, [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What colours are in this image?" },
+          { type: "image", data: png, mimeType: "image/png" },
+          { type: "image", data: jpeg, mimeType: "image/jpeg" },
+        ],
+      },
+      history[1],
+      history[2],
+    ]);
+    assert.isUndefined(handlers.get("context")!({ messages: [history[1], history[2]] }));
   });
 });
 

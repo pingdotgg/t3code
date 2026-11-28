@@ -5,8 +5,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
+  claudeLocalSettingsDirectory,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
@@ -15,6 +17,22 @@ import {
 } from "./ClaudeHome.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
+  it.effect("finds the main checkout from a worktree whose name holds a line separator", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-local-" });
+      const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
+      const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature\u2028tools");
+      yield* fileSystem.makeDirectory(worktree, { recursive: true });
+      yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+      yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+
+      expect(yield* claudeLocalSettingsDirectory(worktree)).toBe(repo);
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
   describe("Claude home resolution", () => {
     it.effect("resolves configured Claude HOME and stamps continuation/cache keys with it", () =>
       Effect.gen(function* () {

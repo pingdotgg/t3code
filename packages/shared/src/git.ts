@@ -162,16 +162,19 @@ export function parseGitRemoteRepository(
   options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
   const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
-  const normalized = lowerCaseRemote(value, dropSuffix);
+  const normalized = lowerCaseRemote(value, (remote) => remote);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
-      const path = dropSuffix(canonicalRepositoryPath(url.pathname.replace(/\/+$/, "")));
+      const path = canonicalRepositoryPath(url.pathname.replace(/\/+$/, ""));
       const repositorySegments = path.split("/").filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
-        return { host: url.hostname, path: repositorySegments.join("/") };
+        return {
+          host: url.hostname,
+          path: dropSuffix(repositorySegments.join("/")).replace(/\/+$/, ""),
+        };
       }
     } catch {
       return null;
@@ -181,13 +184,13 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?((?:[^/\s]| )+(?:\/(?:[^/\s]| )+)+)$/i.exec(
         normalized,
       );
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  const path = canonicalRepositoryPath(scpPath);
+  const path = canonicalRepositoryPath(dropSuffix(scpPath).replace(/\/+$/, ""));
   if (!scpHost.startsWith("[")) return { host: scpHost, path };
   try {
     // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.

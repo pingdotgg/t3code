@@ -1,3 +1,4 @@
+import type { ClientSettings } from "@t3tools/contracts";
 import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -5,8 +6,15 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { act, render } from "../../../test/render";
+import {
+  __resetClientSettingsPersistenceForTests,
+  updateClientSettings,
+} from "../../hooks/useSettings";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { initializeI18n } from "../../i18n/initializeI18n";
 import { setActiveLocale } from "../../i18n/messages";
+import { startI18n, whenLocaleReady } from "../../i18n/runtime";
+import { ensureLocalApi } from "../../localApi";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
   getCustomThemes,
@@ -101,33 +109,16 @@ describe("ThemeImportDialog", () => {
     await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
   });
 
-  // The count uses the host locale, not the UI language.
-  const compact = (count: number) =>
-    new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
-      count,
-    );
-  it.each([
-    ["en", 1, "1 download"],
-    ["ru", 475_001, compact(475_001)],
-  ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
+  it("shows the singular label for one download", async () => {
     searchOpenVsxThemes.mockReset();
-    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
-    const translations = await getTranslationsSnapshot(locale);
-    using _locale = {
-      [Symbol.dispose]() {
-        // GTProvider leaves its locale in a cookie; this sets it back to English.
-        initializeI18n(() => {});
-      },
-    };
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount: 1 }]);
     await using _screen = await render(
-      <GTProvider locale={locale} translations={translations}>
-        <ThemeImportDialog
-          open
-          onOpenChange={() => {}}
-          onImported={() => true}
-          onImportedMany={() => {}}
-        />
-      </GTProvider>,
+      <ThemeImportDialog
+        open
+        onOpenChange={() => {}}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
     );
 
     // The entry button's name is translated, so it is found by its search icon.
@@ -138,13 +129,67 @@ describe("ThemeImportDialog", () => {
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
     // The download count is in the publisher's tooltip.
+    const tooltipText = () =>
+      document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
     await userEvent.hover(page.getByRole("searchbox"));
     await userEvent.hover(page.getByText("acme", { exact: true }));
-    await vi.waitFor(() =>
-      expect(document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "").toContain(
-        line,
-      ),
-    );
+    await vi.waitFor(() => expect(tooltipText()).toBe("1 download"));
+  });
+
+  it("reformats the shown download count when the app language changes", async () => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount: 1_200_000 }]);
+    const { persistence } = ensureLocalApi();
+    let savedSettings: ClientSettings | null = null;
+    using _readSettings = vi
+      .spyOn(persistence, "getClientSettings")
+      .mockImplementation(async () => savedSettings);
+    using _writeSettings = vi
+      .spyOn(persistence, "setClientSettings")
+      .mockImplementation(async (settings) => {
+        savedSettings = settings;
+      });
+    __resetClientSettingsPersistenceForTests();
+    const setLanguage = async (language: string) => {
+      await act(async () => {
+        await updateClientSettings({ language });
+        await whenLocaleReady();
+      });
+    };
+    // The download count is in the publisher's tooltip.
+    const tooltipText = () =>
+      document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
+    const hoverPublisher = async () => {
+      await userEvent.hover(page.getByRole("searchbox"));
+      await userEvent.hover(page.getByText("acme", { exact: true }));
+    };
+
+    try {
+      startI18n();
+      await setLanguage("en");
+      await using _screen = await render(
+        <I18nProvider>
+          <ThemeImportDialog
+            open
+            onOpenChange={() => {}}
+            onImported={() => true}
+            onImportedMany={() => {}}
+          />
+        </I18nProvider>,
+      );
+      await userEvent.fill(page.getByRole("searchbox"), "night");
+      await hoverPublisher();
+      await vi.waitFor(() => expect(tooltipText()).toBe("1.2M downloads"));
+
+      await setLanguage("ru");
+      await hoverPublisher();
+      await vi.waitFor(() => expect(tooltipText()).toMatch(/^Скачиваний: 1,2\s+млн$/));
+    } finally {
+      await setLanguage("en");
+      __resetClientSettingsPersistenceForTests();
+      // Restore the GT fallback locale for tests that render without an I18nProvider.
+      initializeI18n(() => {});
+    }
   });
 
   it("clears the search on Escape before closing the dialog", async () => {
