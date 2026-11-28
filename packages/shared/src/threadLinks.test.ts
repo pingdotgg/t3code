@@ -441,13 +441,89 @@ describe("thread links", () => {
     }
   });
 
+  it("titles the next paragraph's thread link after a block HTML comment", () => {
+    const link = "<t3-thread://v2/elsewhere/abc>";
+    const cases = [
+      ...[
+        ["", "", ""],
+        ["", "   ", ""],
+        ["> ", "> ", "> "],
+        ["> ", ">\t", "> "],
+        ["> ", ">\t ", "> "],
+        ["   > ", "   >\t", "   > "],
+        ...[1, 2, 3, 4].map((padding) => [
+          `-${" ".repeat(padding)}`,
+          " ".repeat(padding + 1),
+          " ".repeat(padding + 1),
+        ]),
+        ["-\t", "    ", "    "],
+        ["1.\t", "    ", "    "],
+      ].flatMap(([open, comment, after]) => [
+        `${open}Note \`\n${comment}<!-- comment -->\n${after}${link} \``,
+        `${open}Note \`\n${comment}<!-- \` -->\n${after}${link} \``,
+      ]),
+      `Note \`\n<!-- comment --> \`\n${link} \``,
+      `Note \`\n<!--\n\`\n-->\n${link} \``,
+      ...["\r", "\r\n"].map((newline) =>
+        ["Note `", "<!--", "`", "-->", "More `", `# ${link} \``].join(newline),
+      ),
+      `Note \`\n<!--\n\`\`\`\n-->\n${link} \``,
+      `> Note \`\n> <!--\n> \`\n> -->\n> ${link} \``,
+      `> Note \`\n> <!-- \`\n${link} \``,
+      `- <!-- \` -->\n  ${link} \``,
+      `- Note \`\n  <!--\n  \`\n  -->\n  ${link} \``,
+      `- Note \`\n  <!-- \`\n\n${link} \``,
+    ];
+    for (const source of cases) {
+      expect(threadLinkRefs(source, EnvironmentId.make("here"))).toEqual([ref("elsewhere", "abc")]);
+      expect(relabelThreadLinks(source, EnvironmentId.make("here"), () => "Design notes")).toBe(
+        source.replace(link, "[Design notes](t3-thread://v2/elsewhere/abc)"),
+      );
+    }
+  });
+
   it("keeps multiline code literal when a line only resembles a block boundary", () => {
     for (const markdown of [
-      ...["--- text", "== =", "-_*", "    ==="].map((line) => ["Use `example", line]),
+      ...[
+        "--- text",
+        "== =",
+        "-_*",
+        "    ===",
+        "    <!-- comment -->",
+        "\u00a0<!-- comment -->",
+        "text <!-- comment -->",
+      ].map((line) => ["Use `example", line]),
+      ["> Use `example", ">     <!-- comment -->"],
+      ["> Use `example", ">\u00a0<!-- comment -->"],
+      ["> Use `example", ">\t  <!-- comment -->"],
+      ["   > Use `example", "   >\t <!-- comment -->"],
+      ["> Use `example", ">\t  > <!-- comment -->"],
       ["> Use `example", ">     ---"],
       ["> Use `example", "==="],
     ]) {
       const source = [...markdown, "<t3-thread://v2/local/t1> end`"].join("\n");
+      expect(threadLinkRefs(source, local)).toEqual([]);
+      expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
+    }
+    for (const source of [
+      "<!-- ` -->\n`<t3-thread://v2/local/t1>`",
+      "```html\n<!--\n```\n`<t3-thread://v2/local/t1>`",
+      "```md\n\u00a0```\n<!--\n```\n`<t3-thread://v2/local/t1>`",
+      "- <!--\n\u00a0\u00a0line\n  `<t3-thread://v2/local/t1>`",
+      "> ```md\n>\t  ```\n> <!--\n> ```\n> `<t3-thread://v2/local/t1>`",
+      "> - ```md\n>\tline\n>   <!--\n>   ```\n>   `<t3-thread://v2/local/t1>`",
+      "> Use `example\n>\t  <!-- comment -->\n> <t3-thread://v2/local/t1> end`",
+      "-\tNote `\n        <!-- comment -->\n    <t3-thread://v2/local/t1> `",
+      "-     Note `\n      <!-- comment -->\n      <t3-thread://v2/local/t1> `",
+      "-     - Note `\n      <!-- comment -->\n      <t3-thread://v2/local/t1> `",
+      "1.     Note `\n       <!-- comment -->\n       <t3-thread://v2/local/t1> `",
+      "> -     Note `\n>       <!-- comment -->\n>       <t3-thread://v2/local/t1> `",
+      ...["script", "pre", "style", "textarea"].map(
+        (tag) => `<${tag}>\n<!--\n</${tag}>\n\n\`<t3-thread://v2/local/t1>\``,
+      ),
+      "> <script>\n> <!--\n> </script>\n\n`<t3-thread://v2/local/t1>`",
+      '- <SCRIPT type="text/javascript">\n  <!--\n  </SCRIPT>\n\n`<t3-thread://v2/local/t1>`',
+    ]) {
       expect(threadLinkRefs(source, local)).toEqual([]);
       expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
     }
