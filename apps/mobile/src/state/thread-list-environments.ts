@@ -4,6 +4,7 @@ import {
   type EnvironmentMachineKind,
   type ServerConfig,
   type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -11,6 +12,8 @@ export type ThreadListProvider = Pick<
   ServerProvider,
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
+
+export type ThreadListProjectOverrides = ServerSettings["projectSettingsOverrides"];
 
 const capabilityKeys = ["threadAutoSettleOptOut"] as const;
 
@@ -27,6 +30,7 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
         iconUrl,
       }),
     ),
+    projectOverrides: config.settings.projectSettingsOverrides,
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
     snoozePresets: config.settings.snoozePresets,
@@ -57,6 +61,7 @@ function sameProviders(
 
 function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnvironment>) {
   const providersByEnvironmentId = new Map<EnvironmentId, ReadonlyArray<ThreadListProvider>>();
+  const projectOverridesByEnvironmentId = new Map<EnvironmentId, ThreadListProjectOverrides>();
   const machineByEnvironmentId = new Map<EnvironmentId, EnvironmentMachineKind>();
   // Every protocol-2 server supports these thread actions; they only wait for its config.
   const loadedEnvironmentIds = new Set<EnvironmentId>();
@@ -65,9 +70,10 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
   for (const [
     id,
-    { providers, machineKind, capabilities, isConnected, snoozePresets },
+    { providers, projectOverrides, machineKind, capabilities, isConnected, snoozePresets },
   ] of environments) {
     providersByEnvironmentId.set(id, providers);
+    projectOverridesByEnvironmentId.set(id, projectOverrides);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
@@ -76,6 +82,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   }
   return {
     providersByEnvironmentId,
+    projectOverridesByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds: loadedEnvironmentIds,
     snoozeEnvironmentIds: loadedEnvironmentIds,
@@ -105,12 +112,19 @@ export function createThreadListEnvironmentsAtom(
       if (prior && sameProviders(prior.providers, selected.providers)) {
         selected.providers = prior.providers;
       }
+      if (
+        prior &&
+        JSON.stringify(prior.projectOverrides) === JSON.stringify(selected.projectOverrides)
+      ) {
+        selected.projectOverrides = prior.projectOverrides;
+      }
       if (prior && JSON.stringify(prior.snoozePresets) === JSON.stringify(selected.snoozePresets)) {
         selected.snoozePresets = prior.snoozePresets;
       }
       const unchanged =
         prior &&
         prior.providers === selected.providers &&
+        prior.projectOverrides === selected.projectOverrides &&
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&

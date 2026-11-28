@@ -259,6 +259,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
+    projectOverridesByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
@@ -269,7 +270,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
-  const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
+  const resolveProviderInstance = useThreadRowProviderInstanceResolver(
+    providersByEnvironmentId,
+    projectOverridesByEnvironmentId,
+  );
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
