@@ -59,7 +59,10 @@ export function Button(props: ButtonProps) {
       onAccessibilityAction={() => {
         if (!props.disabled && !props.loading) props.onPress();
       }}
-      style={props.fullWidth ? { width: "100%" } : { alignSelf: "flex-start" }}
+      style={[
+        props.fullWidth ? { width: "100%" } : { alignSelf: "flex-start" },
+        props.disabled && { opacity: 0.5 },
+      ]}
     >
       <View importantForAccessibility="no-hide-descendants">
         <NativeThemeHost
