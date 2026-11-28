@@ -805,17 +805,24 @@ function isBrowserOriginAllowed(
   if (origin === undefined) return true;
   if (request.headers["sec-fetch-site"] === "same-origin") return true;
   if (trustedOrigins.has(origin)) return true;
-  let originHost: string;
+  let originUrl: URL;
   try {
-    originHost = new URL(origin).host.toLowerCase();
+    originUrl = new URL(origin);
   } catch {
     return false;
   }
+  const originHost = originUrl.host.toLowerCase();
   if (originHost === "") return false;
-  return (
-    originHost === firstHeaderValue(request.headers.host) ||
-    originHost === firstHeaderValue(request.headers["x-forwarded-host"])
-  );
+  const matchesHost = (value: string | undefined) => {
+    const host = firstHeaderValue(value);
+    if (!host || /[\s\\/?#@]/.test(host)) return false;
+    try {
+      return new URL(`${originUrl.protocol}//${host}`).host.toLowerCase() === originHost;
+    } catch {
+      return false;
+    }
+  };
+  return matchesHost(request.headers.host) || matchesHost(request.headers["x-forwarded-host"]);
 }
 
 /** @public */
