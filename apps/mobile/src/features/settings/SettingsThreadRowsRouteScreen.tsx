@@ -1,55 +1,187 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   MOBILE_DEFAULT_STORED_LAYOUT,
-  SIDEBAR_ROW_ITEMS,
-  SIDEBAR_ROW_ITEM_FORMS,
-  findSidebarRowToken,
+  insertSidebarRowSpacer,
   isDefaultSidebarRowLayout,
-  moveSidebarRowToken,
   resolveSidebarRowLayout,
   setSidebarRowLineKept,
-  setSidebarRowTokenForm,
   storedSidebarRowLayout,
+  withoutSidebarRowItem,
   type SidebarRowLayout,
-  type SidebarRowLine,
 } from "@t3tools/client-runtime/thread-row-layout";
+import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useGT, useMessages } from "gt-react-native";
-import { View } from "react-native";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
-import { IconButton } from "../../components/ui/IconButton";
-import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { cn } from "../../lib/cn";
+import { relativeTime } from "../../lib/time";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { presentThreadPr } from "../../state/thread-pr-presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  ThreadRowLines,
+  useThreadRowMetrics,
+  type ThreadRowItemContent,
+} from "../threads/thread-list-v2-items";
+import { THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME } from "../threads/thread-list-v2-row-appearance";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { ThreadRowLayoutLanes } from "./ThreadRowLayoutLanes";
 
-const LINES = ["top", "middle", "bottom", "hidden"] as const;
+const SAMPLE_ENVIRONMENT_ID = EnvironmentId.make("thread-rows-sample");
+const SAMPLE_NOW = Date.parse("2026-01-02T12:00:00Z");
+const HOUR = 3_600_000;
 
-/** Every item of the layout in its line order. The thread list does not track terminals. */
-function itemsInOrder(layout: SidebarRowLayout) {
-  return LINES.flatMap((line) =>
-    layout[line].filter((token) => token.id !== "spacer" && token.id !== "terminals"),
+/** The built-in sample threads: one with every item, one with only a project and a title. */
+function useSampleContent() {
+  const gt = useGT();
+  const m = useMessages();
+  const metrics = useThreadRowMetrics();
+  const title = gt("Add dynamic workflows to mobile", { $context: "sample thread title" });
+  const full: ThreadRowItemContent = {
+    environmentId: SAMPLE_ENVIRONMENT_ID,
+    title,
+    titleClassName: "text-base font-t3-medium text-foreground",
+    project: {
+      title: "t3code",
+      projectIcon: { kind: "monogram", text: "T3", color: "blue" },
+      workspaceRoot: null,
+      faviconPath: null,
+    },
+    branch: "t3/mobile-workflows",
+    issues: [{ displayKey: "#41" }, { displayKey: "#42" }],
+    pr: presentThreadPr(
+      {
+        number: 18642,
+        title,
+        url: "https://example.com/pull/18642",
+        baseRef: "main",
+        headRef: "t3/mobile-workflows",
+        state: "merged",
+      },
+      null,
+      m,
+    ),
+    environmentLabel: gt("Studio Mac", { $context: "sample machine name" }),
+    environmentMachine: "laptop",
+    agents: {
+      instance: {
+        driverKind: ProviderDriverKind.make("codex"),
+        displayName: "Codex",
+        showBadge: false,
+      },
+      drivers: ["claudeAgent", "codex", "codex"],
+      iconUrl: null,
+      nameLabel: null,
+    },
+    timeLabel: relativeTime(new Date(SAMPLE_NOW - 3 * HOUR).toISOString(), SAMPLE_NOW, m),
+    metrics,
+    tone: {
+      text: "text-foreground-tertiary",
+      icon: "accent-foreground-tertiary",
+      mutedIcon: "accent-foreground-muted",
+      time: "text-foreground-tertiary",
+      providerSurfaceColor: undefined,
+    },
+  };
+  const sparse: ThreadRowItemContent = {
+    ...full,
+    title: gt("Quick question about the sidebar", { $context: "sample thread title" }),
+    branch: null,
+    issues: undefined,
+    pr: null,
+    environmentLabel: null,
+    agents: null,
+    timeLabel: relativeTime(new Date(SAMPLE_NOW - 48 * HOUR).toISOString(), SAMPLE_NOW, m),
+  };
+  return { full, sparse };
+}
+
+function HeightChoice(props: {
+  readonly label: string;
+  readonly sameHeight: boolean;
+  readonly selected: boolean;
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+}) {
+  const bar = (width: number, className?: string) => (
+    <View className={cn("h-1 rounded-sm", className)} style={{ width: `${width}%` }} />
+  );
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityLabel={props.label}
+      accessibilityState={{ checked: props.selected, disabled: props.disabled }}
+      disabled={props.disabled}
+      onPress={props.onPress}
+      className={cn(
+        "flex-1 justify-between gap-3 rounded-[22px] border-2 bg-grouped-card p-3 active:opacity-70",
+        props.selected ? "border-primary" : "border-transparent",
+      )}
+    >
+      <View className="gap-1 rounded-xl bg-screen p-2">
+        <View className="gap-1 rounded-md bg-subtle px-2 py-[7px]">
+          {bar(40, "bg-foreground-tertiary")}
+          {bar(85, "bg-foreground-secondary")}
+          {bar(65, "bg-foreground-tertiary")}
+        </View>
+        <View className="gap-1 rounded-md bg-subtle px-2 py-[7px]">
+          {bar(40, "bg-foreground-tertiary")}
+          {bar(70, "bg-foreground-secondary")}
+          {/* A kept line stays empty, so this card keeps the others' height. */}
+          {props.sameHeight ? bar(65) : null}
+        </View>
+        <View className="gap-1 rounded-md bg-subtle px-2 py-[7px]">
+          {bar(40, "bg-foreground-tertiary")}
+          {bar(80, "bg-foreground-secondary")}
+          {bar(55, "bg-foreground-tertiary")}
+        </View>
+      </View>
+      <View className="flex-row items-center gap-2 px-0.5">
+        {props.selected ? (
+          <View className="size-5 items-center justify-center rounded-full bg-primary">
+            <SymbolView name="checkmark" size={12} tintColorClassName="accent-primary-foreground" />
+          </View>
+        ) : (
+          <View className="size-5 rounded-full border-[1.5px] border-foreground-tertiary" />
+        )}
+        <Text
+          className={cn(
+            "shrink",
+            props.selected
+              ? "font-t3-bold text-foreground"
+              : "font-t3-medium text-foreground-muted",
+          )}
+        >
+          {props.label}
+        </Text>
+      </View>
+    </Pressable>
   );
 }
 
 export function SettingsThreadRowsRouteScreen() {
   const gt = useGT();
-  const m = useMessages();
   const insets = useSafeAreaInsets();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const save = useAtomCommand(saveMobilePreferences);
+  const sample = useSampleContent();
+  const [dragging, setDragging] = useState(false);
   const layout = resolveSidebarRowLayout(
     AsyncResult.isSuccess(preferences) ? (preferences.value.threadRowLayout ?? {}) : {},
     MOBILE_DEFAULT_STORED_LAYOUT,
   );
-  // Each edit reads the newest saved layout, so quick taps never undo one another.
+  // The thread list does not track terminals, so the preview leaves them out as the list does.
+  const rowLayout = withoutSidebarRowItem(layout, "terminals");
+  // Each edit reads the newest saved layout, so quick changes never undo one another.
   const edit = (change: (current: SidebarRowLayout) => SidebarRowLayout) => {
     void save({
       transform: (current) => ({
@@ -62,138 +194,108 @@ export function SettingsThreadRowsRouteScreen() {
       }),
     });
   };
-  const lineLabels: Record<SidebarRowLine, string> = {
-    top: gt("Top", { $context: "thread row line" }),
-    middle: gt("Middle", { $context: "thread row line" }),
-    bottom: gt("Bottom", { $context: "thread row line" }),
-    hidden: gt("Hidden", { $context: "thread row item that is not shown" }),
-  };
-  const fixed = layout.keepLines.length > 0;
+  const sameHeight = layout.keepLines.length > 0;
+  const setSameHeight = (value: boolean) =>
+    edit((current) =>
+      setSidebarRowLineKept(setSidebarRowLineKept(current, "middle", value), "bottom", value),
+    );
 
   return (
     <SettingsScreen title={gt("Thread rows")}>
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerClassName="gap-4 px-5 pt-4"
+        contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        scrollEnabled={!dragging}
       >
-        <Text className="px-2 text-sm text-foreground-muted">
-          {gt(
-            "Choose what each thread in the list shows, and on which line. Saved on this device.",
-          )}
-        </Text>
-        <SettingsSection title={gt("Height")}>
-          {[false, true].map((value, index) => (
-            <ListChoiceRow
-              key={String(value)}
-              label={value ? gt("Same for every thread") : gt("Fit content")}
-              description={
-                value
-                  ? gt("Lines stay even when a thread has nothing for them.")
-                  : gt("A line with nothing to show folds away.")
-              }
-              selected={fixed === value}
-              separated={index > 0}
+        <SettingsSection
+          title={gt("Preview", { $context: "sample of how thread rows look" })}
+          trailing={
+            <Text textRole="footnote" className="px-2 text-foreground-tertiary">
+              {gt("Sample threads")}
+            </Text>
+          }
+        >
+          <View pointerEvents="none">
+            {[sample.full, sample.sparse].map((content, index) => (
+              <View
+                key={content.title}
+                className={cn(
+                  THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+                  index > 0 && "border-t border-border-subtle",
+                )}
+              >
+                <ThreadRowLines content={content} layout={rowLayout} />
+              </View>
+            ))}
+          </View>
+        </SettingsSection>
+        <SettingsSection
+          title={gt("Layout", { $context: "arrangement of items in a thread row" })}
+          trailing={
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={gt("Add spacer")}
               disabled={!ready}
               onPress={() =>
-                edit((current) =>
-                  setSidebarRowLineKept(
-                    setSidebarRowLineKept(current, "middle", value),
-                    "bottom",
-                    value,
-                  ),
+                edit(
+                  (current) =>
+                    insertSidebarRowSpacer(current, "bottom", Number.POSITIVE_INFINITY).layout,
                 )
               }
+              className="-my-4 flex-row items-center gap-1 px-2 py-4 active:opacity-60"
+              style={{ opacity: ready ? 1 : 0.4 }}
+            >
+              <SymbolView name="plus" size={14} tintColorClassName="accent-primary-text" />
+              <Text className="font-t3-medium text-primary-text">
+                {gt("Spacer", { $context: "flexible empty space in a layout" })}
+              </Text>
+            </Pressable>
+          }
+          footer={gt(
+            "Touch and hold an item to see its name and drag it to another line. Drag it to Hidden to hide it.",
+          )}
+        >
+          <ThreadRowLayoutLanes
+            layout={layout}
+            disabled={!ready}
+            edit={edit}
+            sample={sample.full}
+            onDragActiveChange={setDragging}
+          />
+        </SettingsSection>
+        <View className="gap-2">
+          <Text textRole="footnote" className="px-2 font-t3-medium text-foreground-muted">
+            {gt("Row height")}
+          </Text>
+          <View className="flex-row gap-2.5">
+            <HeightChoice
+              label={gt("Fit each thread")}
+              sameHeight={false}
+              selected={!sameHeight}
+              disabled={!ready}
+              onPress={() => setSameHeight(false)}
             />
-          ))}
-        </SettingsSection>
-        <SettingsSection title={gt("Items")}>
-          {itemsInOrder(layout).map((token, index) => {
-            const found = findSidebarRowToken(layout, token.key);
-            if (!found) return null;
-            const label = m(
-              SIDEBAR_ROW_ITEMS.find((item) => item.id === token.id)?.label ??
-                SIDEBAR_ROW_ITEMS[0].label,
-            );
-            const lineLength = layout[found.line].length;
-            const forms = SIDEBAR_ROW_ITEM_FORMS[token.id];
-            const lineOptions = LINES.filter((line) => token.id !== "title" || line !== "hidden");
-            return (
-              <View
-                key={token.key}
-                className={
-                  index > 0 ? "gap-2 border-t border-border-subtle px-4 py-3" : "gap-2 px-4 py-3"
-                }
-              >
-                <View className="flex-row items-center gap-2">
-                  <Text
-                    className={found.line === "hidden" ? "flex-1 text-foreground-muted" : "flex-1"}
-                  >
-                    {label}
-                  </Text>
-                  <IconButton
-                    icon="arrow.up"
-                    accessibilityLabel={gt("Move {item} earlier", { item: label })}
-                    disabled={!ready || found.line === "hidden" || found.index === 0}
-                    onPress={() =>
-                      edit((current) =>
-                        moveSidebarRowToken(current, token.key, found.line, found.index - 1),
-                      )
-                    }
-                  />
-                  <IconButton
-                    icon="arrow.down"
-                    accessibilityLabel={gt("Move {item} later", { item: label })}
-                    disabled={!ready || found.line === "hidden" || found.index === lineLength - 1}
-                    onPress={() =>
-                      edit((current) =>
-                        moveSidebarRowToken(current, token.key, found.line, found.index + 1),
-                      )
-                    }
-                  />
-                </View>
-                <SegmentedControl
-                  size="compact"
-                  variant="card"
-                  options={lineOptions.map((line) => ({ value: line, label: lineLabels[line] }))}
-                  selected={found.line}
-                  onSelect={(line) => {
-                    if (!ready || line === found.line) return;
-                    edit((current) =>
-                      moveSidebarRowToken(current, token.key, line, Number.POSITIVE_INFINITY),
-                    );
-                  }}
-                />
-                {forms && found.line !== "hidden" ? (
-                  <SegmentedControl
-                    size="compact"
-                    variant="card"
-                    options={forms.map((form) => ({
-                      value: form,
-                      label:
-                        form === "wide"
-                          ? gt("Wide", { $context: "icon and name" })
-                          : gt("Compact", { $context: "icon only" }),
-                    }))}
-                    selected={token.form ?? forms[0]!}
-                    onSelect={(form) => {
-                      if (ready)
-                        edit((current) => setSidebarRowTokenForm(current, token.key, form));
-                    }}
-                  />
-                ) : null}
-              </View>
-            );
-          })}
-        </SettingsSection>
-        <Button
-          label={gt("Reset to default")}
-          tone="text"
-          disabled={!ready || isDefaultSidebarRowLayout(layout, MOBILE_DEFAULT_STORED_LAYOUT)}
-          onPress={() => {
-            void save({ threadRowLayout: {} });
-          }}
-        />
+            <HeightChoice
+              label={gt("Same height", { $context: "every thread row has the same height" })}
+              sameHeight
+              selected={sameHeight}
+              disabled={!ready}
+              onPress={() => setSameHeight(true)}
+            />
+          </View>
+        </View>
+        <View className="rounded-full bg-grouped-card">
+          <Button
+            label={gt("Reset to default")}
+            tone="text"
+            fullWidth
+            disabled={!ready || isDefaultSidebarRowLayout(layout, MOBILE_DEFAULT_STORED_LAYOUT)}
+            onPress={() => {
+              void save({ threadRowLayout: {} });
+            }}
+          />
+        </View>
       </ScreenScrollView>
     </SettingsScreen>
   );
