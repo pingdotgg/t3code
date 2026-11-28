@@ -845,6 +845,11 @@ const decodeTurnApprovalPolicy = Schema.decodeUnknownEffect(
 const decodeTurnSandboxPolicy = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__SandboxPolicy, Schema.Null]),
 );
+/** The effort `turn/start` sends for a selection. */
+const codexSelectionEffort = (selection: ModelSelection): string | undefined =>
+  getModelSelectionStringOptionValue(selection, "reasoningEffort") ??
+  codexDefaultReasoningEffortOverride(selection.model);
+
 const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__ReasoningEffort, Schema.Null]),
 );
@@ -954,9 +959,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             ],
           }
         : baseSandboxPolicy;
-    const selectedEffort =
-      getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
-      codexDefaultReasoningEffortOverride(input.modelSelection.model);
+    const selectedEffort = codexSelectionEffort(input.modelSelection);
     const effort =
       selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
     // ChatGPT subscription sharing rejects service tiers.
@@ -1448,7 +1451,8 @@ function failureResetAt(
 interface ActiveCodexTurnContext {
   promptPending?: boolean;
   hookStopReason?: string;
-  appliedServiceTier?: string;
+  /** The speed and effort Codex accepted after this turn started; a goal's turns share one. */
+  accepted?: { serviceTier?: string; effort?: string };
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -5596,6 +5600,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
+              // Its input is the run's first selection; Codex runs it on what it accepted since.
+              // Shared, so an update still awaiting its reply reaches this turn too.
+              next.accepted = goalHold.context.accepted ??= {};
               const goalRun = continuedRuns.get(goalHold.context.providerTurnId) ?? [
                 goalHold.context,
               ];
@@ -7820,22 +7827,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }),
                     );
                     if (!claimed) return;
+                    // A speed or effort changed during the failed attempt outlives the retry.
+                    const { serviceTier, effort } = context.accepted ?? {};
                     // Notifications before the RPC response also take the terminalization permit.
                     yield* startNativeTurn(
                       {
                         ...context.input,
-                        // A speed changed during the failed attempt outlives the retry.
-                        ...(context.appliedServiceTier === undefined
+                        ...(serviceTier === undefined && effort === undefined
                           ? {}
                           : {
                               modelSelection: {
                                 ...context.input.modelSelection,
                                 options: [
-                                  ...(context.input.modelSelection.options ?? []).filter(
-                                    (option) =>
-                                      option.id !== "serviceTier" && option.id !== "fastMode",
+                                  ...(context.input.modelSelection.options ?? []).filter((option) =>
+                                    option.id === "reasoningEffort"
+                                      ? effort === undefined
+                                      : serviceTier === undefined ||
+                                        (option.id !== "serviceTier" && option.id !== "fastMode"),
                                   ),
-                                  { id: "serviceTier", value: context.appliedServiceTier },
+                                  ...(serviceTier === undefined
+                                    ? []
+                                    : [{ id: "serviceTier", value: serviceTier }]),
+                                  ...(effort === undefined
+                                    ? []
+                                    : [{ id: "reasoningEffort", value: effort }]),
                                 ],
                               },
                             }),
@@ -8515,7 +8530,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         };
 
         // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
-        const applyServiceTier = Effect.fn("CodexAdapterV2.applyServiceTier")(function* (
+        const applyThreadSettings = Effect.fn("CodexAdapterV2.applyThreadSettings")(function* (
           threadId: string,
           modelSelection: ModelSelection | undefined,
         ) {
@@ -8523,22 +8538,59 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             adapterOptions.resolveRuntime === undefined
               ? getCodexServiceTierOptionValue(modelSelection)
               : undefined;
-          if (serviceTier === undefined) return;
+          // A capacity retry copies its turn's settings before its next turn registers, so a pick
+          // made in between waits for that turn.
+          const retrying = capacityContinuations.get(threadId)?.context.capacityRetryPending;
+          const retried = retrying === undefined ? undefined : yield* Deferred.await(retrying);
+          // Between goal turns no turn is active; the held one stands in for the next.
+          const held = goalHolds.get(threadId)?.context;
+          const standIns = [held, retried].filter((turn) => turn !== undefined);
+          const turns = [
+            ...Array.from((yield* Ref.get(activeTurns)).values()).filter(
+              (turn) =>
+                !standIns.includes(turn) &&
+                turn.providerThread.nativeThreadRef?.nativeId === threadId,
+            ),
+            ...standIns,
+          ];
+          // An effort picked with another model waits for the turn that starts that model.
+          const effortTurns = turns.filter(
+            (turn) => turn.input.modelSelection.model === modelSelection?.model,
+          );
+          const selectedEffort =
+            modelSelection === undefined ? undefined : codexSelectionEffort(modelSelection);
+          const effort =
+            selectedEffort !== undefined &&
+            effortTurns.some(
+              (turn) =>
+                (turn.accepted?.effort ?? codexSelectionEffort(turn.input.modelSelection)) !==
+                selectedEffort,
+            )
+              ? ((yield* decodeTurnReasoningEffort(selectedEffort).pipe(
+                  Effect.orElseSucceed(() => null),
+                )) ?? undefined)
+              : undefined;
+          if (serviceTier === undefined && effort === undefined) return;
           const applied = yield* client
-            .request("thread/settings/update", { threadId, serviceTier })
+            .request("thread/settings/update", {
+              threadId,
+              ...(serviceTier === undefined ? {} : { serviceTier }),
+              ...(effort === undefined ? {} : { effort }),
+            })
             .pipe(
               Effect.as(true),
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.codex-service-tier-update-failed", {
+                Effect.logWarning("orchestration-v2.codex-thread-settings-update-failed", {
                   cause,
                 }).pipe(Effect.as(false)),
               ),
             );
           if (!applied) return;
-          for (const turn of (yield* Ref.get(activeTurns)).values()) {
-            if (turn.providerThread.nativeThreadRef?.nativeId === threadId) {
-              turn.appliedServiceTier = serviceTier;
-            }
+          if (serviceTier !== undefined) {
+            for (const turn of turns) (turn.accepted ??= {}).serviceTier = serviceTier;
+          }
+          if (effort !== undefined) {
+            for (const turn of effortTurns) (turn.accepted ??= {}).effort = effort;
           }
         });
 
@@ -8850,7 +8902,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              yield* applyServiceTier(threadId, turnInput.modelSelection);
+              yield* applyThreadSettings(threadId, turnInput.modelSelection);
               const codexInput = yield* toCodexInput(turnInput);
               // turn/steer takes no additionalContext, so notes the thread has not been sent go
               // as quoted user input, the way restoreAdditionalContext resends them.
@@ -8910,7 +8962,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             modelSelection,
           }) {
             const threadId = providerThread.nativeThreadRef?.nativeId;
-            if (threadId != null) yield* applyServiceTier(threadId, modelSelection);
+            if (threadId != null) yield* applyThreadSettings(threadId, modelSelection);
           }),
           // Dropping this connection's subscription lets the shared app-server
           // shut the native thread (and its MCP servers) down once it is idle.

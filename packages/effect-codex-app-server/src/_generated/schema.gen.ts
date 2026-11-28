@@ -50869,10 +50869,12 @@ export const ServerRequest__CommandExecutionApprovalDecision = Schema.Union(
 export type ThreadSettingsUpdateParams = {
   readonly threadId: string;
   readonly serviceTier?: string | null;
+  readonly effort?: string | null;
 };
 export const ThreadSettingsUpdateParams = Schema.Struct({
   threadId: Schema.String,
   serviceTier: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  effort: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 }).annotate({ title: "ThreadSettingsUpdateParams" });
 
 export type ThreadSettingsUpdateResponse = { readonly [x: string]: Schema.Json };

@@ -80,6 +80,9 @@ const ManualSchemas: Record<string, Schema.Json> = {
       serviceTier: {
         anyOf: [{ type: "string" }, { type: "null" }],
       },
+      effort: {
+        anyOf: [{ type: "string" }, { type: "null" }],
+      },
     },
     required: ["threadId"],
   },

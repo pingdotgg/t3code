@@ -2433,17 +2433,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each([
-    { codex: "accepts", reply: { result: {} } },
-    { codex: "rejects", reply: { error: { code: -32601, message: "Method not found" } } },
+    { setting: "service tier", codex: "accepts", reply: { result: {} } },
+    {
+      setting: "service tier",
+      codex: "rejects",
+      reply: { error: { code: -32601, message: "Method not found" } },
+    },
+    { setting: "effort", codex: "accepts", reply: { result: {} } },
   ] as const)(
-    "a steer that changes the service tier still steers when Codex $codex the settings update",
-    ({ codex, reply }) =>
+    "a steer that changes the $setting still steers when Codex $codex the settings update",
+    ({ setting, codex, reply }) =>
       Effect.gen(function* () {
-        const nativeThreadId = `steer-tier-thread-${codex}`;
-        const nativeTurnId = `steer-tier-turn-${codex}`;
+        const scenario = `steer-${setting.replace(" ", "-")}-${codex}`;
+        const nativeThreadId = `${scenario}-thread`;
+        const nativeTurnId = `${scenario}-turn`;
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
-            scenario: `steer-service-tier-${codex}`,
+            scenario,
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
               {
@@ -2452,7 +2458,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 frame: {
                   id: 4,
                   method: "thread/settings/update",
-                  params: { threadId: nativeThreadId, serviceTier: "fast" },
+                  params: {
+                    threadId: nativeThreadId,
+                    ...(setting === "effort" ? { effort: "high" } : { serviceTier: "fast" }),
+                  },
                 },
               },
               { type: "emit_inbound", frame: { id: 4, ...reply } },
@@ -2508,7 +2517,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           providerTurnId,
           modelSelection: {
             ...CODEX_TEST_MODEL_SELECTION,
-            options: [{ id: "serviceTier", value: "fast" }],
+            options: [
+              setting === "effort"
+                ? { id: "reasoningEffort", value: "high" }
+                : { id: "serviceTier", value: "fast" },
+            ],
           },
           message: { ...turnInput.message, text: "Hurry up." },
         });
@@ -2618,23 +2631,55 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("a speed change with no message updates Codex's next-turn settings", () =>
+  it.effect.each([
+    {
+      title: "a speed change with no message updates Codex's next-turn settings",
+      pick: "speed",
+      model: CODEX_TEST_MODEL_SELECTION.model,
+      option: { id: "serviceTier", value: "default" },
+      sent: { serviceTier: "default" },
+    },
+    {
+      title: "an effort change with no message updates Codex's next-turn settings",
+      pick: "effort",
+      model: CODEX_TEST_MODEL_SELECTION.model,
+      option: { id: "reasoningEffort", value: "high" },
+      sent: { effort: "high" },
+    },
+    // The running turn's model may not offer the other model's effort.
+    {
+      title: "an effort picked with another model and no message waits for that model's turn",
+      pick: "effort-other-model",
+      model: "gpt-5.5",
+      option: { id: "reasoningEffort", value: "high" },
+      sent: undefined,
+    },
+  ] as const)("$title", (row) =>
     Effect.gen(function* () {
-      const nativeThreadId = "picker-tier-thread";
-      const nativeTurnId = "picker-tier-turn";
+      const scenario = `picker-${row.pick}`;
+      const nativeThreadId = `${scenario}-thread`;
+      const nativeTurnId = `${scenario}-turn`;
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
-          scenario: "picker-service-tier",
+          scenario,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
+            // The rename holds the turn open, so a settings update sent before it would fail here.
             {
               type: "expect_outbound",
-              label: "thread/settings/update",
-              frame: {
-                id: 4,
-                method: "thread/settings/update",
-                params: { threadId: nativeThreadId, serviceTier: "default" },
-              },
+              label: row.sent === undefined ? "thread/name/set" : "thread/settings/update",
+              frame:
+                row.sent === undefined
+                  ? {
+                      id: 4,
+                      method: "thread/name/set",
+                      params: { threadId: nativeThreadId, name: "Renamed" },
+                    }
+                  : {
+                      id: 4,
+                      method: "thread/settings/update",
+                      params: { threadId: nativeThreadId, ...row.sent },
+                    },
             },
             { type: "emit_inbound", frame: { id: 4, result: {} } },
             {
@@ -2655,7 +2700,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("picker-tier-attempt"),
+          attemptId: RunAttemptId.make(`${scenario}-attempt`),
           text: "Work.",
         }),
       );
@@ -2672,10 +2717,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           providerThread: harness.providerThread,
           modelSelection: {
             ...CODEX_TEST_MODEL_SELECTION,
-            options: [{ id: "serviceTier", value: "default" }],
+            model: row.model,
+            options: [row.option],
           },
         }) ?? Effect.void
       );
+      if (row.sent === undefined) {
+        yield* harness.runtime.applyThreadTitle!({
+          providerThread: harness.providerThread,
+          title: "Renamed",
+        });
+      }
       yield* harness.firstTerminal;
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
     }).pipe(
@@ -5834,6 +5886,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "steer",
     "start-fails",
     "keep-changed-tier",
+    "keep-changed-effort",
+    "pick-starting",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.gen(function* () {
       const scenario = `capacity-${outcome}`;
@@ -5876,9 +5930,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         nativeTurnId: nativeTurnId(0),
         prompt,
       });
-      // A speed picked while the first attempt runs; the retry must not send the old one.
+      // A speed or effort picked while the first attempt runs; the retry must not send the old one.
       const changedTier = outcome === "keep-changed-tier" ? "fast" : undefined;
-      if (changedTier !== undefined) {
+      const changedEffort = outcome === "keep-changed-effort" ? "high" : undefined;
+      const changedSetting = changedTier !== undefined || changedEffort !== undefined;
+      if (changedSetting) {
         entries.push(
           {
             type: "expect_outbound",
@@ -5886,7 +5942,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             frame: {
               id: 4,
               method: "thread/settings/update",
-              params: { threadId: nativeThreadId, serviceTier: changedTier },
+              params: {
+                threadId: nativeThreadId,
+                ...(changedTier === undefined ? {} : { serviceTier: changedTier }),
+                ...(changedEffort === undefined ? {} : { effort: changedEffort }),
+              },
             },
           },
           { type: "emit_inbound", frame: { id: 4, result: {} } },
@@ -5914,7 +5974,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const retries = outcome === "exhaust" ? 5 : outcome === "stop" ? 0 : 1;
       const steeredText = "Use the smaller change.";
       for (let attempt = 1; attempt <= retries; attempt++) {
-        const startId = 3 + attempt + (renamedBeforeRetry || changedTier !== undefined ? 1 : 0);
+        const startId = 3 + attempt + (renamedBeforeRetry || changedSetting ? 1 : 0);
         const start = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: nativeTurnId(attempt),
@@ -5944,8 +6004,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   approvalsReviewer: "user",
                   sandboxPolicy: { type: "dangerFullAccess" },
                   summary: "auto",
-                  collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
+                  collaborationMode: {
+                    mode: "default",
+                    settings: {
+                      model: "gpt-5.4",
+                      ...(changedEffort === undefined ? {} : { reasoning_effort: changedEffort }),
+                    },
+                  },
                   ...(changedTier === undefined ? {} : { serviceTier: changedTier }),
+                  ...(changedEffort === undefined ? {} : { effort: changedEffort }),
                 },
               },
             });
@@ -6005,10 +6072,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }
           }
         }
+        if (outcome === "pick-starting") {
+          // Picked after the retry copied the old selection, so it goes out once the turn exists.
+          entries.push(
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 5,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, effort: "high" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 5, result: {} } },
+          );
+        }
         if (outcome === "exhaust") entries.push(...failureEntries(attempt));
         if (
           outcome === "recover" ||
+          outcome === "pick-starting" ||
           outcome === "keep-changed-tier" ||
+          outcome === "keep-changed-effort" ||
           outcome === "completion-only" ||
           outcome === "started-first" ||
           outcome === "stop-starting"
@@ -6067,6 +6151,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const milestones = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const starts: Array<unknown> = [];
       const retryStarted = yield* Deferred.make<void>();
+      const testScope = yield* Effect.scope;
+      let pickWhileStarting: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> =
+        Effect.void;
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({ scenario, entries }),
         (event) =>
@@ -6081,6 +6168,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             if (method === "turn/start") {
               starts.push(params);
               if (starts.length === 2) yield* Deferred.succeed(retryStarted, undefined);
+              // The retry's turn/start has not gone out yet, so no turn is registered.
+              if (starts.length === 2) {
+                yield* pickWhileStarting.pipe(
+                  Effect.ignore,
+                  Effect.forkIn(testScope, { startImmediately: true }),
+                );
+              }
             }
           }),
       );
@@ -6091,8 +6185,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         attemptId: RunAttemptId.make(scenario),
         text: prompt,
       });
+      if (outcome === "pick-starting") {
+        pickWhileStarting = harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+      }
       yield* harness.runtime.startTurn(turnInput);
-      if (changedTier !== undefined) {
+      if (changedSetting) {
         yield* harness.until(() =>
           harness.events.some(
             (event) =>
@@ -6105,7 +6208,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             providerThread: harness.providerThread,
             modelSelection: {
               ...CODEX_TEST_MODEL_SELECTION,
-              options: [{ id: "serviceTier", value: changedTier }],
+              options: [
+                changedEffort === undefined
+                  ? { id: "serviceTier", value: changedTier ?? "" }
+                  : { id: "reasoningEffort", value: changedEffort },
+              ],
             },
           }) ?? Effect.void
         );
@@ -6187,7 +6294,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(
         terminal?.status,
         outcome === "recover" ||
+          outcome === "pick-starting" ||
           outcome === "keep-changed-tier" ||
+          outcome === "keep-changed-effort" ||
           outcome === "completion-only" ||
           outcome === "steer" ||
           outcome === "started-first" ||
@@ -13491,6 +13600,131 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+    );
+
+    it.effect.each([
+      { picked: "during a goal turn" },
+      { picked: "between goal turns" },
+      // Codex starts the next goal turn before it answers the pick.
+      { picked: "as the next goal turn starts" },
+    ] as const)(
+      "an effort picked $picked reaches Codex, and the next goal turn can change it back",
+      ({ picked }) =>
+        Effect.gen(function* () {
+          const prompt = "Keep going";
+          const firstPick = request(
+            4,
+            "thread/settings/update",
+            { threadId: nativeThreadId, effort: "high" },
+            {},
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: `goal-effort-${picked.replaceAll(" ", "-")}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "goal-turn-1",
+                prompt,
+                effort: "low",
+              }),
+              notification("goal active", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn-1",
+                goal: codexGoal("active", 10),
+              }),
+              ...(picked === "during a goal turn" ? firstPick : []),
+              notification("first turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+              }),
+              notification("goal accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: null,
+                goal: codexGoal("active", 11),
+              }),
+              ...(picked === "between goal turns" ? firstPick : []),
+              ...(picked === "as the next goal turn starts" ? firstPick.slice(0, 1) : []),
+              notification("continuation", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+              }),
+              ...(picked === "as the next goal turn starts" ? firstPick.slice(1) : []),
+              // The continuation's input still says low; Codex runs it on high.
+              ...request(
+                5,
+                "thread/settings/update",
+                { threadId: nativeThreadId, effort: "low" },
+                {},
+              ),
+              notification("goal complete", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn-2",
+                goal: codexGoal("complete", 1200),
+              }),
+              notification("continuation done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "completed" }),
+              }),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const selection = (effort: string) => ({
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: effort }],
+          });
+          const pick = (effort: string) =>
+            harness.runtime.applyModelSelection!({
+              providerThread: harness.providerThread,
+              modelSelection: selection(effort),
+            });
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("goal-effort-attempt"),
+              text: prompt,
+            }),
+            modelSelection: selection("low"),
+          });
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.goal?.tokensUsed ===
+                  (picked === "during a goal turn" ? 10 : 11),
+            ),
+          );
+          yield* pick("high");
+          const secondTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId: "goal-turn-2",
+          });
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.id === secondTurnId &&
+                event.providerTurn.status === "running",
+            ),
+          );
+          yield* pick("low");
+          yield* harness.firstTerminal;
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+            [[secondTurnId, "completed"]],
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
     );
 
     it.effect("rejects an oversized /goal objective before any goal request", () =>
