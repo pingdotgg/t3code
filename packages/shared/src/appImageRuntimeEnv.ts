@@ -21,7 +21,12 @@ function normalizePosixPath(value: string): NormalizedPosixPath {
 
 function isPathSegmentUnderAppDir(segment: string, appDir: NormalizedPosixPath): boolean {
   const normalized = normalizePosixPath(segment);
-  if (normalized.absolute !== appDir.absolute || normalized.parts.length < appDir.parts.length) {
+  // Where ".." lands depends on symlinks, so such an entry may point outside the mount; keep it.
+  if (
+    normalized.absolute !== appDir.absolute ||
+    normalized.parts.length < appDir.parts.length ||
+    normalized.parts.includes("..")
+  ) {
     return false;
   }
   return appDir.parts.every((part, index) => normalized.parts[index] === part);
