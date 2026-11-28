@@ -58,6 +58,8 @@ type AntigravityTextRuntime = Pick<
 
 export interface AntigravityTextGenerationOptions {
   readonly profileDirectory: string;
+  /** Isolated auth-only helper profile directory checked for hooks/MCPs; defaults to `profileDirectory`. */
+  readonly helperProfileDirectory?: string;
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly makeRuntime: (
     cwd: string,
@@ -137,10 +139,9 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     return true;
   });
 
-  const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-  );
+  const available = isAntigravityTextGenerationAvailable(
+    options.helperProfileDirectory ?? options.profileDirectory,
+  ).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
 
   const runAntigravityJson = Effect.fn("AntigravityTextGeneration.runJson")(
     function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
@@ -160,7 +161,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         let sessionId: string | undefined;
         yield* Effect.addFinalizer(() =>
           removeAntigravitySessionFiles({
-            profileDirectory: options.profileDirectory,
+            profileDirectory: options.helperProfileDirectory ?? options.profileDirectory,
             sessionId,
             cwd,
           }).pipe(

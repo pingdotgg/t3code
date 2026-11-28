@@ -32,7 +32,9 @@ import {
   makeAntigravityStdoutTransform,
   antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
+  prepareAntigravityHelperProfile,
   prepareAntigravityProfile,
+  resolveAntigravityHelperProfileDirectory,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -901,6 +903,104 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         }).pipe(Effect.result);
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
+      }
+    }),
+  );
+
+  it.effect(
+    "prepares an auth-only helper profile with empty config, real antigravity-acp dir, and linked auth files",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const realAcpDir = path.join(profileDirectory, "antigravity-acp");
+        yield* fs.makeDirectory(path.join(realAcpDir, "plugin_data", "notion"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(realAcpDir, "plugin_data", "notion", "keep.txt"),
+          "keep",
+        );
+        yield* fs.writeFileString(path.join(realAcpDir, "antigravity-oauth-token"), "tok");
+
+        // Legacy directory symlink at <helper>/antigravity-acp must be migrated to a real directory.
+        const expectedHelper = resolveAntigravityHelperProfileDirectory(path, profileDirectory);
+        yield* fs.makeDirectory(expectedHelper, { recursive: true });
+        yield* fs.symlink(realAcpDir, path.join(expectedHelper, "antigravity-acp"));
+
+        const helperProfile = yield* prepareAntigravityHelperProfile({
+          profileDirectory,
+          runtimeExecutablePath: process.execPath,
+        });
+        expect(helperProfile.geminiHome).toBe(expectedHelper);
+        expect(helperProfile.acpDirectory).toBe(path.join(expectedHelper, "antigravity-acp"));
+        expect(yield* fs.readDirectory(path.join(expectedHelper, "config"))).toEqual([]);
+        expect(yield* fs.exists(path.join(helperProfile.acpDirectory, "settings.json"))).toBe(true);
+        // Helper antigravity-acp must NOT be a symlink to the real directory (protects plugin_data/).
+        expect(yield* fs.exists(path.join(helperProfile.acpDirectory, "plugin_data"))).toBe(false);
+        expect(
+          yield* fs.readLink(path.join(helperProfile.acpDirectory, "antigravity-oauth-token")),
+        ).toBe(path.join(realAcpDir, "antigravity-oauth-token"));
+
+        // Removing the real token (logout) removes the stale helper auth link on next prepare.
+        yield* fs.remove(path.join(realAcpDir, "antigravity-oauth-token"));
+        yield* prepareAntigravityHelperProfile({
+          profileDirectory,
+          runtimeExecutablePath: process.execPath,
+        });
+        expect(
+          yield* fs.exists(path.join(helperProfile.acpDirectory, "antigravity-oauth-token")),
+        ).toBe(false);
+
+        const spawn = buildAntigravityAcpSpawnInput({
+          installation: { executablePath: "/opt/antigravity/bin/agy" },
+          profile: helperProfile,
+          cwd: temporaryDirectory,
+        });
+        expect(spawn.args).toEqual([
+          "acp",
+          "--gemini-dir",
+          expectedHelper,
+          "--app-data-dir",
+          "antigravity-acp",
+        ]);
+        expect(spawn.env?.GEMINI_HOME).toBe(expectedHelper);
+      }),
+  );
+
+  it.effect("accepts concurrent helper preparations sharing the same profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const profileDirectory = path.join(temporaryDirectory, "profile");
+      const realAcpDir = path.join(profileDirectory, "antigravity-acp");
+      yield* fs.makeDirectory(realAcpDir, { recursive: true });
+      for (const fileName of ["antigravity-oauth-token", "acp_token.json", "installation_id"]) {
+        yield* fs.writeFileString(path.join(realAcpDir, fileName), fileName);
+      }
+
+      const expectedHelper = resolveAntigravityHelperProfileDirectory(path, profileDirectory);
+      yield* fs.makeDirectory(expectedHelper, { recursive: true });
+      yield* fs.symlink(realAcpDir, path.join(expectedHelper, "antigravity-acp"));
+
+      const profiles = yield* Effect.all(
+        Array.from({ length: 6 }, () =>
+          prepareAntigravityHelperProfile({
+            profileDirectory,
+            runtimeExecutablePath: process.execPath,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      expect(profiles).toHaveLength(6);
+      for (const fileName of ["antigravity-oauth-token", "acp_token.json", "installation_id"]) {
+        expect(yield* fs.readLink(path.join(expectedHelper, "antigravity-acp", fileName))).toBe(
+          path.join(realAcpDir, fileName),
+        );
       }
     }),
   );

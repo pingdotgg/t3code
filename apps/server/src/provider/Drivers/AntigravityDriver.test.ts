@@ -361,15 +361,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           h.first.executablePath,
           h.second.executablePath,
         ]);
+        const helperProfileDirectory = `${h.profileDirectory}-helper`;
         for (const launch of agentLaunches) {
           expect(launch.args).toEqual([
             "acp",
             "--gemini-dir",
-            h.profileDirectory,
+            helperProfileDirectory,
             "--app-data-dir",
             "antigravity-acp",
           ]);
-          expect(launch.profileDirectory).toBe(h.profileDirectory);
+          expect(launch.profileDirectory).toBe(helperProfileDirectory);
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);
         }
@@ -395,6 +396,22 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             .map((request) => request.params?.mcpServers),
         ).toEqual([[], []]);
         yield* h.assertClosed;
+        // User MCPs/hooks in the real profile must not disable or run inside the isolated helper.
+        const profileConfigDir = h.path.join(h.profileDirectory, "config");
+        yield* h.fs.makeDirectory(profileConfigDir, { recursive: true });
+        yield* h.fs.writeFileString(
+          h.path.join(profileConfigDir, "mcp_config.json"),
+          '{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp"}}}',
+        );
+        yield* h.fs.writeFileString(
+          h.path.join(profileConfigDir, "hooks.json"),
+          '{"default":{"PreInvocation":[{"command":"echo nope"}]}}',
+        );
+        const snapshotWithProfileConfig = yield* h.instance.snapshot.getSnapshot;
+        expect(snapshotWithProfileConfig.supportsTextGeneration).toBe(true);
+        const launchesBeforeTextGen = h.launches.filter(
+          (launch) => launch.tempDirectory !== undefined,
+        ).length;
         yield* h.instance.textGeneration
           .generateThreadTitle({
             cwd: h.profileDirectory,
@@ -402,6 +419,12 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
           })
           .pipe(Effect.ignore);
+        const launchesAfterTextGen = h.launches.filter(
+          (launch) => launch.tempDirectory !== undefined,
+        );
+        expect(launchesAfterTextGen[launchesBeforeTextGen]?.profileDirectory).toBe(
+          helperProfileDirectory,
+        );
         const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-chat-" });
         const threadId = ThreadId.make("thread-antigravity-capabilities");
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -417,6 +440,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           runtimePolicy,
         });
         yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        const chatLaunch = h.launches.filter((launch) => launch.tempDirectory !== undefined).at(-1);
+        expect(chatLaunch?.profileDirectory).toBe(h.profileDirectory);
 
         const helper = {
           fs: { readTextFile: false, writeTextFile: false },

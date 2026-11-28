@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
@@ -391,13 +392,21 @@ const copyAntigravityUserConfigFiles = Effect.fn("copyAntigravityUserConfigFiles
   },
 );
 
-export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
+/** Sibling directory used for auth-only helper processes (title generation, model refresh). */
+export function resolveAntigravityHelperProfileDirectory(
+  path: Path.Path,
+  profileDirectory: string,
+): string {
+  return `${path.resolve(profileDirectory)}-helper`;
+}
+
+const prepareAntigravityProfileBase = Effect.fn("prepareAntigravityProfileBase")(function* (input: {
   readonly profileDirectory: string;
+  readonly geminiHome?: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly runtimeExecutablePath?: string;
   readonly platform?: NodeJS.Platform;
   readonly auth?: AntigravityAuthConfig;
-  readonly userHome?: string;
   readonly tempDirectory?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
@@ -405,13 +414,6 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = input.platform ?? (yield* HostProcess.Platform);
-  const userHome =
-    input.userHome ??
-    resolveAntigravityUserHome(
-      platform,
-      input.baseEnv ?? process.env,
-      yield* HostProcess.HomeDirectory,
-    );
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
     (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
@@ -439,9 +441,11 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     );
   }
 
-  const geminiHome = path.resolve(input.profileDirectory);
+  const realProfileDirectory = path.resolve(input.profileDirectory);
+  const realAcpDirectory = path.join(realProfileDirectory, "antigravity-acp");
+  const geminiHome = input.geminiHome ? path.resolve(input.geminiHome) : realProfileDirectory;
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
-  const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
+  const tempDirectory = input.tempDirectory ?? path.join(realAcpDirectory, "tmp");
   let caBundlePath: string | undefined;
   if (platform === "linux") {
     // Bundled Python may look for certificates at paths absent on this distribution.
@@ -467,7 +471,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     platform,
     geminiHome,
     acpDirectory,
-    tokenPath: path.join(acpDirectory, "acp_token.json"),
+    tokenPath: path.join(realAcpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
     ...(caBundlePath === undefined ? {} : { caBundlePath }),
@@ -512,7 +516,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
+  for (const directory of [realProfileDirectory, realAcpDirectory, tempDirectory]) {
     yield* fs
       .makeDirectory(directory, { recursive: true, mode: 0o700 })
       .pipe(
@@ -530,19 +534,200 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
-  yield* fs
-    .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
-    .pipe(
-      Effect.mapError(() =>
-        authSupportError("The Antigravity profile settings could not be written."),
-      ),
+  yield* writeFileStringAtomically({
+    filePath: path.join(realAcpDirectory, "settings.json"),
+    contents: antigravityProfileSettings(auth),
+  }).pipe(
+    Effect.mapError(() =>
+      authSupportError("The Antigravity profile settings could not be written."),
+    ),
+  );
+  return { profile, platform, realProfileDirectory, realAcpDirectory };
+});
+
+export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
+  readonly profileDirectory: string;
+  readonly baseEnv?: NodeJS.ProcessEnv;
+  readonly runtimeExecutablePath?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly auth?: AntigravityAuthConfig;
+  readonly userHome?: string;
+  readonly tempDirectory?: string;
+}) {
+  const { profile, platform } = yield* prepareAntigravityProfileBase(input);
+  const userHome =
+    input.userHome ??
+    resolveAntigravityUserHome(
+      platform,
+      input.baseEnv ?? process.env,
+      yield* HostProcess.HomeDirectory,
     );
-  yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
+  yield* linkAntigravityUserConfig({
+    profileDirectory: profile.geminiHome,
+    userHome,
+    platform,
+  });
   if (platform === "win32") {
-    yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
+    yield* copyAntigravityUserConfigFiles({ profileDirectory: profile.geminiHome, userHome });
   }
   return profile;
 });
+
+const lstatOrUndefined = (targetPath: string) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.lstat(targetPath),
+    catch: (cause) => new AntigravitySkillLinkError({ link: targetPath, cause }),
+  }).pipe(Effect.orElseSucceed(() => undefined));
+
+const HELPER_SHARED_AUTH_FILES = [
+  "antigravity-oauth-token",
+  "acp_token.json",
+  "installation_id",
+] as const;
+
+/**
+ * Auth-only helper profile with an empty `config/` directory and a real, isolated
+ * `antigravity-acp/` directory containing only links/copies of the profile's auth files so
+ * title generation and model refresh never connect to user MCPs/hooks or delete `plugin_data/`.
+ */
+export const prepareAntigravityHelperProfile = Effect.fn("prepareAntigravityHelperProfile")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly baseEnv?: NodeJS.ProcessEnv;
+    readonly runtimeExecutablePath?: string;
+    readonly platform?: NodeJS.Platform;
+    readonly auth?: AntigravityAuthConfig;
+    readonly tempDirectory?: string;
+  }) {
+    const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const helperDirectory = resolveAntigravityHelperProfileDirectory(path, input.profileDirectory);
+    const { profile, platform, realAcpDirectory } = yield* prepareAntigravityProfileBase({
+      ...input,
+      geminiHome: helperDirectory,
+    });
+    const helperConfigDirectory = path.join(helperDirectory, "config");
+    const helperAcpDirectory = profile.acpDirectory;
+
+    // Migrate any earlier directory symlink to a real directory so helper runs never touch real plugin_data/ or mcp/.
+    const existingAcpStat = yield* lstatOrUndefined(helperAcpDirectory);
+    if (existingAcpStat?.isSymbolicLink()) {
+      yield* fs.remove(helperAcpDirectory, { force: true }).pipe(
+        Effect.catch(() =>
+          Effect.gen(function* () {
+            const currentAcpStat = yield* lstatOrUndefined(helperAcpDirectory);
+            if (currentAcpStat === undefined || currentAcpStat.isDirectory()) {
+              return;
+            }
+            return yield* authSupportError(
+              "The legacy Antigravity helper auth link could not be replaced.",
+            );
+          }),
+        ),
+      );
+    }
+
+    for (const directory of [helperDirectory, helperConfigDirectory, helperAcpDirectory]) {
+      yield* fs
+        .makeDirectory(directory, { recursive: true, mode: 0o700 })
+        .pipe(
+          Effect.mapError(() =>
+            authSupportError("The Antigravity helper profile directory could not be created."),
+          ),
+        );
+      if (platform !== "win32") {
+        yield* fs
+          .chmod(directory, 0o700)
+          .pipe(
+            Effect.mapError(() =>
+              authSupportError(
+                "The Antigravity helper profile directory permissions could not be set.",
+              ),
+            ),
+          );
+      }
+    }
+
+    yield* writeFileStringAtomically({
+      filePath: path.join(helperAcpDirectory, "settings.json"),
+      contents: antigravityProfileSettings(auth),
+    }).pipe(
+      Effect.mapError(() =>
+        authSupportError("The Antigravity helper profile settings could not be written."),
+      ),
+    );
+
+    for (const fileName of HELPER_SHARED_AUTH_FILES) {
+      const sourcePath = path.join(realAcpDirectory, fileName);
+      const targetPath = path.join(helperAcpDirectory, fileName);
+      const sourceExists = yield* fs.exists(sourcePath).pipe(Effect.orElseSucceed(() => false));
+      const targetStat = yield* lstatOrUndefined(targetPath);
+      if (!sourceExists) {
+        if (targetStat !== undefined) {
+          yield* fs
+            .remove(targetPath, { force: true })
+            .pipe(
+              Effect.mapError(() =>
+                authSupportError("Stale Antigravity helper auth file could not be removed."),
+              ),
+            );
+        }
+        continue;
+      }
+      if (platform === "win32") {
+        yield* fs
+          .copyFile(sourcePath, targetPath)
+          .pipe(
+            Effect.mapError(() =>
+              authSupportError("The Antigravity helper auth file could not be copied."),
+            ),
+          );
+      } else {
+        const readResolvedLink = () =>
+          fs.readLink(targetPath).pipe(
+            Effect.map((value) => path.resolve(path.dirname(targetPath), value)),
+            Effect.orElseSucceed((): string | undefined => undefined),
+          );
+        const existingLink = targetStat?.isSymbolicLink() ? yield* readResolvedLink() : undefined;
+        if (existingLink !== sourcePath) {
+          if (targetStat !== undefined) {
+            yield* fs
+              .remove(targetPath, { force: true })
+              .pipe(
+                Effect.mapError(() =>
+                  authSupportError("The Antigravity helper auth file could not be replaced."),
+                ),
+              );
+          }
+          yield* Effect.tryPromise({
+            try: () => NodeFSP.symlink(sourcePath, targetPath, "file"),
+            catch: (cause) => new AntigravitySkillLinkError({ link: targetPath, cause }),
+          }).pipe(
+            Effect.catch(({ cause }) =>
+              Effect.gen(function* () {
+                if (
+                  typeof cause === "object" &&
+                  cause !== null &&
+                  "code" in cause &&
+                  cause.code === "EEXIST" &&
+                  (yield* readResolvedLink()) === sourcePath
+                ) {
+                  return;
+                }
+                return yield* authSupportError(
+                  "The Antigravity helper auth file could not be linked.",
+                );
+              }),
+            ),
+          );
+        }
+      }
+    }
+
+    return profile;
+  },
+);
 
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: { readonly executablePath: string };
