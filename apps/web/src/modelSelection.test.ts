@@ -1053,6 +1053,24 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("keeps the Antigravity thinking level saved for text generation while its descriptor is missing", () => {
+    const instanceId = ProviderInstanceId.make("antigravity");
+    const antigravity = provider({
+      provider: ProviderDriverKind.make("antigravity"),
+      instanceId,
+      models: ["gemini-4-carbon"],
+    });
+    const options = [{ id: "thought_level", value: "high" }];
+    const settings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: createModelSelection(instanceId, "gemini-4-carbon", options),
+    };
+
+    expect(resolveAppModelSelectionState(settings, [antigravity])).toEqual(
+      createModelSelection(instanceId, "gemini-4-carbon", options),
+    );
+  });
+
   it("excludes customized extension models while preserving unknown custom and thread models", () => {
     const pi = provider({
       provider: ProviderDriverKind.make("pi"),

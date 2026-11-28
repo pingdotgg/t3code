@@ -97,6 +97,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
+import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
 import {
@@ -2161,6 +2162,85 @@ describe("composerDraftStore per-model sticky options", () => {
 describe("composerDraftStore sticky composer settings", () => {
   beforeEach(() => {
     resetComposerDraftStore();
+  });
+
+  describe("Antigravity thinking level with a missing descriptor", () => {
+    const provider = ProviderDriverKind.make("antigravity");
+    const instanceId = defaultInstanceIdForDriver(provider);
+    const carbon = "gemini-4-carbon";
+    const otherModel = "other-antigravity-model";
+    const high = toSelections({ thought_level: "high" });
+    const draftId = DraftId.make("antigravity-current-draft");
+    const freshDraftId = DraftId.make("antigravity-fresh-draft");
+
+    const pickModel = (model: string) => {
+      const store = useComposerDraftStore.getState();
+      const selection = createModelSelection(
+        instanceId,
+        model,
+        store.stickyOptionsByModelByProvider[instanceId]?.[model],
+      );
+      store.setModelSelection(draftId, selection, { explicit: true, replaceOptions: true });
+      store.setStickyModelSelection(selection);
+    };
+
+    const chooseHigh = (model: string) => {
+      pickModel(model);
+      useComposerDraftStore.getState().setProviderModelOptions(draftId, provider, high, {
+        instanceId,
+        model,
+        persistSticky: true,
+      });
+    };
+
+    const dispatchOptions = (target: DraftId, model: string) => {
+      const store = useComposerDraftStore.getState();
+      const selection = store.draftsByThreadKey[target]?.modelSelectionByProvider[instanceId];
+      expect(selection?.model).toBe(model);
+      const input = {
+        provider,
+        model,
+        models: [{ slug: model, name: model, isCustom: false, capabilities: {} }],
+        modelOptions: selection?.options,
+        modelOwnedOptions: store.stickyOptionsByModelByProvider[instanceId]?.[model],
+      };
+      return getComposerProviderState(input).modelOptionsForDispatch;
+    };
+
+    it("omits Carbon's High after switching to another model in the current and fresh drafts", () => {
+      chooseHigh(carbon);
+      pickModel(otherModel);
+      useComposerDraftStore.getState().applyStickyState(freshDraftId);
+
+      expect(draftByKey(freshDraftId)?.modelSelectionByProvider[instanceId]?.options).toEqual(high);
+      expect(dispatchOptions(draftId, otherModel)).toBeUndefined();
+      expect(dispatchOptions(freshDraftId, otherModel)).toBeUndefined();
+    });
+
+    it("keeps Carbon's own High in the current draft, after reload, and in a fresh draft", () => {
+      chooseHigh(carbon);
+      expect(dispatchOptions(draftId, carbon)).toEqual(high);
+
+      const persisted = JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      );
+      const merge = useComposerDraftStore.persist.getOptions().merge!;
+      useComposerDraftStore.setState(merge(persisted, useComposerDraftStore.getInitialState()));
+
+      expect(dispatchOptions(draftId, carbon)).toEqual(high);
+      useComposerDraftStore.getState().applyStickyState(freshDraftId);
+      expect(dispatchOptions(freshDraftId, carbon)).toEqual(high);
+    });
+
+    it("keeps the other model's own remembered High after switching back to it", () => {
+      chooseHigh(otherModel);
+      pickModel(carbon);
+      pickModel(otherModel);
+      useComposerDraftStore.getState().applyStickyState(freshDraftId);
+
+      expect(dispatchOptions(draftId, otherModel)).toEqual(high);
+      expect(dispatchOptions(freshDraftId, otherModel)).toEqual(high);
+    });
   });
 
   it("preserves sticky provider options when model selection omits options", () => {

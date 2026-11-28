@@ -359,6 +359,7 @@ export function resolveMultipleModelTargets(input: {
   readonly messageText: string;
 }): Array<MultipleModelTarget | { readonly error: string }> {
   const { messageText } = input;
+  const { stickyOptionsByModelByProvider } = useComposerDraftStore.getState();
   return input.selections.map((selection) => {
     const provider = input.providerInstanceEntries.find(
       (entry) => entry.instanceId === selection.instanceId,
@@ -373,6 +374,7 @@ export function resolveMultipleModelTargets(input: {
       model: selection.model,
       models: provider.models,
       modelOptions: selection.options,
+      modelOwnedOptions: stickyOptionsByModelByProvider[selection.instanceId]?.[selection.model],
       promptInjectionState: getComposerPromptInjectionState(messageText),
     });
     return {

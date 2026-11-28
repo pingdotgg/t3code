@@ -399,3 +399,65 @@ describe("getComposerReasoningStep", () => {
     }
   });
 });
+
+describe("Antigravity thinking level dispatch", () => {
+  const provider = ProviderDriverKind.make("antigravity");
+  const model = "gemini-4-carbon";
+  const state = (
+    current: "medium" | "high" | undefined,
+    explicit?: "medium" | "high",
+    remembered?: "medium" | "high",
+  ) =>
+    getComposerProviderState({
+      provider,
+      model,
+      models: [
+        {
+          slug: model,
+          name: "Gemini 4 Carbon",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors:
+              current === undefined
+                ? []
+                : [
+                    {
+                      ...selectDescriptor("thought_level", [
+                        { id: "medium", label: "Medium" },
+                        { id: "high", label: "High" },
+                      ]),
+                      role: "reasoning",
+                      currentValue: current,
+                    },
+                  ],
+          },
+        },
+      ],
+      modelOptions: explicit === undefined ? undefined : selections(["thought_level", explicit]),
+      modelOwnedOptions:
+        remembered === undefined ? undefined : selections(["thought_level", remembered]),
+    });
+
+  it("preserves explicit High when the advertised options are temporarily absent", () => {
+    expect(state(undefined, "high", "high").modelOptionsForDispatch).toEqual(
+      selections(["thought_level", "high"]),
+    );
+    expect(state(undefined, "medium", "medium").modelOptionsForDispatch).toEqual(
+      selections(["thought_level", "medium"]),
+    );
+  });
+
+  it("dispatches explicit High over an advertised Medium", () => {
+    expect(state("medium", "high").modelOptionsForDispatch).toEqual(
+      selections(["thought_level", "high"]),
+    );
+  });
+
+  it("does not dispatch a thinking level the user has not chosen", () => {
+    expect(state("high").promptEffort).toBe("high");
+    expect(state("high").modelOptionsForDispatch).toBeUndefined();
+    expect(state("medium").promptEffort).toBe("medium");
+    expect(state("medium").modelOptionsForDispatch).toBeUndefined();
+    expect(state(undefined).modelOptionsForDispatch).toBeUndefined();
+  });
+});

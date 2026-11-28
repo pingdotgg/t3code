@@ -30,6 +30,7 @@ type ComposerProviderStateInput = {
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  modelOwnedOptions?: ReadonlyArray<ProviderOptionSelection> | undefined;
   includePlanAgent?: boolean | undefined;
 };
 
@@ -111,6 +112,25 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
       descriptor.type === "select",
   );
+  let modelOptionsForDispatch = buildExplicitProviderOptionSelectionsFromDescriptors(
+    descriptors,
+    selections,
+  );
+  if (provider === "antigravity" && !descriptors.some(({ id }) => id === "thought_level")) {
+    // Sticky selections can carry options from another model.
+    const chosenLevel = selections?.find(({ id }) => id === "thought_level")?.value;
+    if (
+      typeof chosenLevel === "string" &&
+      input.modelOwnedOptions?.some(
+        ({ id, value }) => id === "thought_level" && value === chosenLevel,
+      )
+    ) {
+      modelOptionsForDispatch = [
+        ...(modelOptionsForDispatch ?? []),
+        { id: "thought_level", value: chosenLevel },
+      ];
+    }
+  }
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
   const ultrathinkActive =
@@ -120,10 +140,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
-      selections,
-    ),
+    modelOptionsForDispatch,
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",
