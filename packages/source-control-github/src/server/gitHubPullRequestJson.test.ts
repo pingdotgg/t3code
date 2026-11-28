@@ -938,7 +938,20 @@ describe("review thread decoding", () => {
                         committedDate: "2026-07-05T00:00:00Z",
                         additions: 18,
                         deletions: 7,
-                        authors: { nodes: [{ name: "Julius", user: { login: "julius" } }] },
+                        authors: {
+                          nodes: [
+                            {
+                              name: "Julius",
+                              avatarUrl: "https://avatars/commit",
+                              user: { login: "julius", avatarUrl: "https://avatars/profile" },
+                            },
+                            {
+                              name: "Co-author",
+                              avatarUrl: "https://avatars/unlinked",
+                              user: null,
+                            },
+                          ],
+                        },
                       },
                     },
                     {
@@ -962,7 +975,10 @@ describe("review thread decoding", () => {
         oid: "abc123",
         messageHeadline: "Ship the timeline",
         committedDate: "2026-07-05T00:00:00Z",
-        authors: [{ login: "julius", name: "Julius", avatarUrl: null }],
+        authors: [
+          { login: "julius", name: "Julius", avatarUrl: "https://avatars/profile" },
+          { login: "Co-author", name: "Co-author", avatarUrl: "https://avatars/unlinked" },
+        ],
       },
       {
         oid: "def456",

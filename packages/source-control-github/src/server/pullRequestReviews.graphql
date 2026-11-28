@@ -192,6 +192,7 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
                 avatarUrl
                 user {
                   login
+                  avatarUrl
                 }
               }
             }
