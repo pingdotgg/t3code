@@ -447,7 +447,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     String(
       record(metadata.language_info).name ||
         kernelspec.language ||
-        (kernelspec.name === "python3" && "python") ||
+        (typeof kernelspec.name === "string" &&
+          kernelspec.name.toLowerCase() === "python3" &&
+          "python") ||
         "",
     )
       .replaceAll(/[^a-z\d+#-]/gi, "")
