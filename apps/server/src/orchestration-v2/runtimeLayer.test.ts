@@ -1396,6 +1396,160 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
+  it.effect.each([
+    { name: "only after the active Claude cache expires", type: "cache" },
+    { name: "only after the previous Claude compaction failed", type: "compaction" },
+  ] as const)("compacts on return $name", (scenario) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`return-compaction-${scenario.type}-thread`);
+      const selection = { instanceId: claudeInstanceId, model: "claude-opus-5-5" };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Return compaction cache",
+        modelSelection: selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:first`),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        messageId: MessageId.make(`${threadId}:first`),
+        text: scenario.type === "cache" ? "Continue work." : "/compact keep the plan",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const now = yield* DateTime.now;
+      const compaction = {
+        id: TurnItemId.make(`${threadId}:compaction`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId: run.providerThreadId!,
+        providerTurnId: ProviderTurnId.make(`${threadId}:turn`),
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "compaction" as const,
+        driver: claudeDriver,
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+          {
+            id: EventId.make(`${threadId}:usage`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: ProviderTurnId.make(`${threadId}:turn`),
+              providerThreadId: run.providerThreadId!,
+              nodeId: run.rootNodeId!,
+              runAttemptId: run.activeAttemptId,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+              tokenUsage: {
+                usedTokens: 250_000,
+                updatedAt: DateTime.formatIso(now),
+                promptCacheExpiresAt: DateTime.formatIso(
+                  DateTime.add(now, { minutes: scenario.type === "cache" ? 1 : -1 }),
+                ),
+              },
+            },
+          },
+          ...(scenario.type === "compaction"
+            ? [
+                {
+                  id: EventId.make(`${threadId}:compaction-completed`),
+                  type: "turn-item.updated" as const,
+                  threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: compaction,
+                },
+              ]
+            : []),
+        ],
+      });
+
+      const states =
+        scenario.type === "cache"
+          ? ([
+              ["warm", false],
+              ["expired", true],
+            ] as const)
+          : ([
+              ["completed", false],
+              ["failed", true],
+            ] as const);
+      for (const [state, compacts] of states) {
+        const messageId = MessageId.make(`${threadId}:${state}`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${state}`),
+          createdBy: "user",
+          creationSource: "mobile",
+          threadId,
+          messageId,
+          text: "/compact",
+          attachments: [],
+          idleCompaction: "onReturn",
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          projection.messages.some((message) => message.id === messageId),
+          compacts,
+        );
+        assert.lengthOf(projection.runs, compacts ? 2 : 1);
+        if (state === "warm") yield* TestClock.adjust("2 minutes");
+        if (state === "completed") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:compaction-failed`),
+                type: "turn-item.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...compaction, status: "failed" },
+              },
+            ],
+          });
+        }
+      }
+    }),
+  );
+
   const seedFailingRollbackThread = (name: string) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

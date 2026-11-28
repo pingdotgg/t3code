@@ -44,3 +44,6 @@ export function claudeResumeCompactionAge(questionAnswer: {
  * idleCompaction default of 200K.
  */
 export const COMPACTION_SUGGESTION_MIN_TOKENS = 200_000;
+
+/** How long a Claude prompt cache counts as warm when a usage report names no TTL: the 1h cache plus slack. */
+export const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;

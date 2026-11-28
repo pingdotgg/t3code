@@ -9,6 +9,7 @@ import {
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import {
+  CLAUDE_RESUME_COMPACTION_FALLBACK_MS,
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
@@ -17,9 +18,6 @@ import * as DateTime from "effect/DateTime";
 
 import { resolvePendingHandoff } from "../handoff.ts";
 import type { ThreadStructure, ThreadStructureTurnItem } from "./models.ts";
-
-// Fallback TTL: Claude's 1h cache plus slack.
-const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 // A typed `/compact`, with or without instructions, is already the compaction. Queueing a
 // bare one ahead of it would run an uninstructed compaction first and charge for two.

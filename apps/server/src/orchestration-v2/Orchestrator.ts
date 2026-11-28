@@ -209,6 +209,7 @@ import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { latestIdleCompactionRun, returnCompactionIsMoot } from "./IdleCompaction.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   endOrphanedNativeSubagent,
@@ -7355,6 +7356,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return thread;
   });
 
+  // The completed compaction items of the thread's latest started run, which command reads skip.
+  const latestRunCompactions = (
+    threadId: ThreadId,
+    projection: OrchestrationV2ThreadProjection,
+  ) => {
+    const run = latestIdleCompactionRun(projection.runs);
+    return run === null
+      ? Effect.succeed<ReadonlyArray<OrchestrationV2TurnItem>>([])
+      : projectionStore
+          .getThreadRecords(threadId, ["turnItems"], {
+            turnItemRunId: run.id,
+            turnItemTypes: ["compaction"],
+            turnItemStatuses: ["completed"],
+          })
+          .pipe(
+            Effect.map(({ turnItems }) => turnItems),
+            Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+          );
+  };
+
   const dispatchMessage = Effect.fn("Orchestrator.dispatchMessage")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -7529,11 +7550,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
-    // The service checked idleness before this command; a run or a delegated result that landed
-    // since makes the thread busy, and that turn refreshes the cache anyway.
+    // The service, or a client on return, checked idleness before this command; a run or a
+    // delegated result that landed since makes the thread busy, and that turn refreshes the cache
+    // anyway. A client's copy can also miss a compaction or a turn that left the cache warm. A
+    // restart's rerun of a compaction keeps its place ahead of the message queued behind it.
+    const returnCompaction =
+      command.idleCompaction === "onReturn" && command.restartContinuationOfRunId === undefined;
     if (
-      command.idleCompaction === "beforeCacheExpires" &&
-      projection.runs.some(
+      (command.idleCompaction === "beforeCacheExpires" || returnCompaction) &&
+      (projection.runs.some(
         (run) =>
           run.status === "queued" ||
           isActiveRun(run) ||
@@ -7542,7 +7567,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             !projection.messages.some(
               (message) => message.id === run.delegatedCompletion?.delivery?.messageId,
             )),
-      )
+      ) ||
+        (returnCompaction &&
+          returnCompactionIsMoot(
+            // The command projection reads no compaction items, so read the latest run's own.
+            { ...projection, turnItems: yield* latestRunCompactions(command.threadId, projection) },
+            DateTime.toEpochMillis(yield* DateTime.now),
+          )))
     ) {
       yield* emit(
         events,
