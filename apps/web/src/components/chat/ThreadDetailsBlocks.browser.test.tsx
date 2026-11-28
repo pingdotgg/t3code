@@ -1,7 +1,15 @@
 import "~/index.css";
 
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+
+const saved = vi.hoisted(() => ({ order: [] as unknown }));
+vi.mock(import("../../hooks/useSettings"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  updateClientSettings: (async (patch: { threadDetailsOrder: unknown }) => {
+    saved.order = patch.threadDetailsOrder;
+  }) as never,
+}));
 
 import { render } from "../../../test/render";
 import { ThreadDetailsBlocks } from "./ThreadDetailsBlocks";
@@ -15,37 +23,22 @@ const card = (open: boolean, order = ["environment", "openIn", "scripts"]) => (
     blocks={{ ...blocks, openIn: open && row("Open") } as never}
   />
 );
+const lineOn = () =>
+  document.querySelector<HTMLElement>("[data-thread-details-drop-line]")?.parentElement?.dataset
+    .threadDetailsBlockId;
 
-it("skips a block that empties mid-drag, and drops without a jump or a section remount", async () => {
+it("marks the drop past a block that empties mid-drag, and keeps the section mounted", async () => {
   await using screen = await render(card(true));
-  const top = (name: string) => page.getByText(name).element().getBoundingClientRect().top;
-  const environmentTop = top("Environment");
   const scripts = page.getByText("Scripts").element();
   page.getByRole("button", { name: "Move Environment and worktree" }).element().focus();
   await userEvent.keyboard(" ");
   await screen.rerender(card(false));
-  const scriptsTop = top("Scripts");
   await userEvent.keyboard("{ArrowDown}");
-  await expect.poll(() => top("Scripts")).toBeCloseTo(environmentTop, 0);
-  await userEvent.keyboard("{Escape}");
-  await expect.poll(() => top("Scripts")).toBeCloseTo(scriptsTop, 0);
-  page.getByRole("button", { name: "Move Project scripts" }).element().focus();
-  await userEvent.keyboard(" ");
+  await expect.poll(lineOn).toBe("scripts");
   await userEvent.keyboard("{ArrowLeft}");
-  await expect.poll(() => top("Scripts")).toBeCloseTo(scriptsTop, 0);
-  await userEvent.keyboard("{ArrowUp}");
-  const moved: string[] = [];
-  const observer = new MutationObserver((records) =>
-    moved.push(...records.map((record) => (record.target as HTMLElement).style.transform)),
-  );
-  observer.observe(screen.container, {
-    attributes: true,
-    subtree: true,
-    attributeFilter: ["style"],
-  });
+  expect(lineOn()).toBe("scripts");
   await userEvent.keyboard(" ");
+  expect(saved.order).toEqual(["openIn", "scripts", "environment"]);
   await screen.rerender(card(false, ["scripts", "environment", "openIn"]));
-  observer.disconnect();
-  expect(moved.filter((transform) => /[1-9][\d.]*px/.test(transform))).toEqual([]);
   expect(scripts.isConnected).toBe(true);
 });

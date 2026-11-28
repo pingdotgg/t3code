@@ -1,6 +1,7 @@
 import {
   closestCenter,
   DndContext,
+  DragOverlay,
   type DragEndEvent,
   KeyboardSensor,
   PointerSensor,
@@ -8,20 +9,16 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { SortableContext, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { useGT, useMessages } from "gt-react";
 import { GripVerticalIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { updateClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS } from "./threadDetailsPanelStyles";
 import {
   moveThreadDetailsBlock,
   THREAD_DETAILS_BLOCKS,
@@ -37,12 +34,14 @@ export function ThreadDetailsBlocks(props: {
   readonly density: "full" | "compact" | "essential";
 }) {
   const gt = useGT();
+  const m = useMessages();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const listRef = useRef<HTMLDivElement>(null);
   const [hiddenWhileDragging, setHiddenWhileDragging] = useState<ReadonlySet<string>>(new Set());
+  const [dragged, setDragged] = useState<Block | null>(null);
   const shown = props.order
     .filter((id) => props.blocks[id] !== null)
     .map((id) => THREAD_DETAILS_BLOCKS.find((block) => block.id === id)!);
@@ -68,6 +67,7 @@ export function ThreadDetailsBlocks(props: {
   };
   const handleDragEnd = (event: DragEndEvent) => {
     setHiddenWhileDragging(new Set());
+    setDragged(null);
     if (event.over === null || event.active.id === event.over.id) return;
     updateClientSettings({
       threadDetailsOrder: moveThreadDetailsBlock(
@@ -84,14 +84,22 @@ export function ThreadDetailsBlocks(props: {
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-      onDragStart={syncHiddenBlocks}
+      onDragStart={(event) => {
+        syncHiddenBlocks();
+        setDragged(THREAD_DETAILS_BLOCKS.find((block) => block.id === event.active.id) ?? null);
+      }}
       onDragMove={syncHiddenBlocks}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setHiddenWhileDragging(new Set())}
+      onDragCancel={() => {
+        setHiddenWhileDragging(new Set());
+        setDragged(null);
+      }}
     >
       <SortableContext
         items={shown.map((block) => block.id).filter((id) => !hiddenWhileDragging.has(id))}
-        strategy={verticalListSortingStrategy}
+        // Blocks stay put while dragging: sections, padding and dividers regroup on drop, which
+        // shifting blocks across sections cannot show. A line marks where the block lands.
+        strategy={() => null}
       >
         <div ref={listRef} className="contents">
           {runs.map((run, index) => {
@@ -139,6 +147,23 @@ export function ThreadDetailsBlocks(props: {
           })}
         </div>
       </SortableContext>
+      {/* The popover positions with a transform, which would offset a fixed overlay inside it. */}
+      {createPortal(
+        <DragOverlay dropAnimation={null} zIndex={100} modifiers={[restrictToVerticalAxis]}>
+          {dragged ? (
+            <div
+              className={cn(
+                THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+                "flex w-fit items-center border-border/65 bg-popover shadow-md",
+              )}
+            >
+              <GripVerticalIcon className="size-3 text-muted-foreground" aria-hidden />
+              {m(dragged.label)}
+            </div>
+          ) : null}
+        </DragOverlay>,
+        document.body,
+      )}
     </DndContext>
   );
 }
@@ -156,25 +181,34 @@ function SortableBlock(props: {
     listeners,
     setNodeRef,
     setActivatorNodeRef,
-    transform,
-    transition,
     isDragging,
+    isOver,
+    index,
+    activeIndex,
   } = useSortable({
     id: props.block.id,
     disabled: { draggable: props.disabled, droppable: props.disabled },
-    // Hidden blocks leave the list mid-drag, so a drop shifts indices; animating that misplaces blocks.
-    animateLayoutChanges: () => false,
   });
   return (
     <div
       ref={setNodeRef}
       data-thread-details-block-id={props.block.id}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
         "group/block relative has-[>div:last-child:empty]:hidden",
-        isDragging && "z-10 rounded-lg bg-popover shadow-md",
+        isDragging && "opacity-40",
       )}
     >
+      {isOver && !isDragging ? (
+        <div
+          data-thread-details-drop-line
+          aria-hidden
+          // A block moved down lands after its target, and one moved up lands before it.
+          className={cn(
+            "pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-primary",
+            activeIndex < index ? "-bottom-px" : "-top-px",
+          )}
+        />
+      ) : null}
       <button
         type="button"
         ref={setActivatorNodeRef}

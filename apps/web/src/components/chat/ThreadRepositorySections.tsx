@@ -304,7 +304,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
   return (
     <>
       {sections.visible.length === 0 && props.explainsEmpty && props.reachesTracked ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
+        <p className="px-2.5 py-2 text-xs/5 text-muted-foreground">
           {taskFolder === null
             ? gt("Repositories appear here once this thread changes them.")
             : gt("This thread has no repository worktrees yet.")}
