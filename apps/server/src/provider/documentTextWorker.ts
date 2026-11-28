@@ -51,6 +51,7 @@ const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+const XML_SCHEMA_TRUE = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u;
 type TextPart =
   | string
   | typeof CELL_START
@@ -231,9 +232,7 @@ function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: strin
 }
 
 function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
-  return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
-    odfAttribute(attributes, "is-hidden", scope) ?? "",
-  );
+  return XML_SCHEMA_TRUE.test(odfAttribute(attributes, "is-hidden", scope) ?? "");
 }
 
 function isHiddenOdfSection(
@@ -976,7 +975,7 @@ function markWordMergeContinuations(table: XmlNode) {
 // PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
 const drawingMergeCovered = (cell: XmlNode) =>
   cell.name === "tc" &&
-  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => XML_SCHEMA_TRUE.test(flag ?? ""));
 const covered = (cell: XmlNode) =>
   cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
