@@ -6,9 +6,11 @@ Drive T3 Code from your phone, browser (`app.t3.codes`), or another desktop app 
 
 T3 Connect links your host to your other devices without router port-forwarding.
 
-- **Desktop host**: Open **Settings → Sharing & access**, sign in, and turn on **T3 Connect** (note: closing the desktop app's last window stops its local server—use the [background service](./background-service.md) for unattended access).
+- **Desktop host**: Open **Settings → Sharing & access**, sign in, and turn on **T3 Connect**. Closing the desktop app's last window stops its local server unless you turn on **Settings → Labs → Keep running in tray** on Windows or Linux; then T3 Code keeps running in the system tray until you choose **Quit** from the tray icon. Use the [background service](./background-service.md) for unattended access.
 - **CLI / headless host**: Run `t3 up` (or `t3 connect` / `t3 up --connect --lan --yes` for non-interactive scripts) and complete the printed sign-in link on any device. Check status with `t3 status [--json]`.
 - **Other devices**: Sign in to the same T3 Connect account and pick the environment.
+
+On Linux, close-to-tray needs system tray support from your desktop environment. If no tray icon appears, launch T3 Code again to restore the window.
 
 ### Approve new devices
 

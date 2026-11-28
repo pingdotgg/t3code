@@ -20,6 +20,8 @@ export class DesktopState extends Context.Service<
     readonly quitting: Ref.Ref<boolean>;
     // Set by DesktopUpdates.configure, which runs before the first backend start.
     readonly canInstallUpdates: Ref.Ref<boolean>;
+    /** True only while keepRunningInTray is on and a tray icon exists. */
+    readonly closeToTray: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
     readonly databaseMigrationProgress: Ref.Ref<DatabaseMigrationProgress | null>;
   }
@@ -29,6 +31,7 @@ const make = Effect.all({
   backendReady: Ref.make(false),
   quitting: Ref.make(false),
   canInstallUpdates: Ref.make(false),
+  closeToTray: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
   databaseMigrationProgress: Ref.make<DatabaseMigrationProgress | null>(null),
 });
