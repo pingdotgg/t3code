@@ -14,6 +14,18 @@ export const HTML_RENDER_MAX_HEIGHT = 2000;
 export const HTML_RENDER_MAX_FIT_HEIGHT = 20_000;
 export const HTML_RENDER_MAX_TITLE_LENGTH = 200;
 
+function htmlRenderLabel(text: string, fallback: string): string {
+  const trimmed = text.trim();
+  // Never end the label on half an emoji.
+  const last = trimmed.charCodeAt(HTML_RENDER_MAX_TITLE_LENGTH - 1);
+  const end = HTML_RENDER_MAX_TITLE_LENGTH - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  return trimmed.slice(0, end) || fallback;
+}
+
+export function htmlRenderTitle(title: string): string {
+  return htmlRenderLabel(title, "HTML");
+}
+
 export interface HtmlRenderReference {
   readonly attachmentId: string;
   readonly title: string;
@@ -63,7 +75,7 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
   const measured = readMeasuredHeights(heights);
   return {
     attachmentId,
-    title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
+    title: htmlRenderTitle(title),
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
   };
@@ -283,12 +295,7 @@ interface HtmlRenderImage {
 
 function readHtmlRenderImage(src: unknown, name: unknown): HtmlRenderImage | undefined {
   if (typeof src !== "string" || !/^(?:https?:\/\/|data:image\/)/i.test(src)) return undefined;
-  const trimmed = typeof name === "string" ? name.trim() : "";
-  // The page sends any alt text; never end the label on half an emoji.
-  const last = trimmed.charCodeAt(HTML_RENDER_MAX_TITLE_LENGTH - 1);
-  const end = HTML_RENDER_MAX_TITLE_LENGTH - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
-  const label = trimmed.slice(0, end);
-  return { src, name: label || "Image" };
+  return { src, name: htmlRenderLabel(typeof name === "string" ? name : "", "Image") };
 }
 
 /**
