@@ -371,9 +371,22 @@ export const make = Effect.gen(function* () {
           ownProviderThread?.nativeThreadRef?.nativeId ?? undefined,
         );
         if (work === undefined) return;
-        recordCancelledBackgroundWork(awaitingId, work);
-        if (item.nativeItemRef?.nativeId != null) {
-          cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
+        const nativeId = item.nativeItemRef?.nativeId;
+        // Preserve an explicit wait from the roster before deduplicating the shell.
+        const rosterAwaited =
+          item.type === "command_execution" &&
+          nativeId != null &&
+          projection.providerThreads
+            ?.find((candidate) => candidate.id === awaitingId)
+            ?.pendingBackgroundTasks?.some(
+              (task) => task.taskId === nativeId && task.awaited === true,
+            );
+        recordCancelledBackgroundWork(
+          awaitingId,
+          rosterAwaited ? { ...work, awaited: true } : work,
+        );
+        if (nativeId != null) {
+          cancelledBackgroundNativeIds.add(nativeId);
         }
       };
       const unstartedRuns = runs.filter(
