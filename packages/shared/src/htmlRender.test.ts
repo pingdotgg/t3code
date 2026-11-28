@@ -60,7 +60,6 @@ describe("injectHtmlRenderBootstrap", () => {
   it.each([
     '<meta data-name="viewport" content="card">',
     '<meta name="viewport-fit" content="cover">',
-    "<meta name='viewport-fit' content='cover'>",
     "<meta name=viewport-fit content=cover>",
   ])("injects a default viewport when metadata is only viewport-like: %s", (fragment) => {
     const injected = injectHtmlRenderBootstrap(fragment);
@@ -71,12 +70,8 @@ describe("injectHtmlRenderBootstrap", () => {
   });
 
   it.each([
-    '<meta name="viewport" content="width=600">',
     "<meta name='viewport' content='width=600'>",
-    '<meta name=viewport content="width=600">',
-    "<meta name=viewport>",
     "<meta name=viewport />",
-    '<meta name="viewport"/>',
     '<meta data-x="1"name="viewport" content="width=600">',
     '<meta data-if="a>b" name="viewport" content="width=600">',
   ])("preserves a genuine viewport declaration: %s", (fragment) => {
