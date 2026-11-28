@@ -272,24 +272,24 @@ function PullRequestIdentity(props: {
           </T>
         </Text>
       </View>
-      <View className="flex-row items-start gap-1.5">
+      <View className="-my-2 flex-row items-center gap-1.5">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.baseBranch)}
-          className="min-w-0 shrink active:opacity-70"
+          className="min-h-[44px] min-w-[44px] shrink justify-center active:opacity-70 android:min-h-[48px] android:min-w-[48px]"
           hitSlop={8}
         >
           <Text className="font-mono text-2xs text-foreground-muted">{pr.baseBranch}</Text>
         </Pressable>
-        <View className="pt-0.5">
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           <SymbolView name="arrow.left" size={11} tintColorClassName="accent-icon-muted" />
         </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Copy head branch {branch}", { branch: pr.headBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.headBranch)}
-          className="min-w-0 shrink active:opacity-70"
+          className="min-h-[44px] min-w-[44px] shrink justify-center active:opacity-70 android:min-h-[48px] android:min-w-[48px]"
           hitSlop={8}
         >
           <Text className="font-mono text-2xs text-foreground-muted">{pr.headBranch}</Text>
@@ -316,7 +316,7 @@ function PullRequestLabels(props: {
     props.pr.viewerPermissions.labels !== false;
   if (!props.pr.labels.length && !editable) return null;
   return (
-    <Animated.View layout={PR_ROW_LAYOUT} className="flex-row flex-wrap gap-2">
+    <Animated.View layout={PR_ROW_LAYOUT} className="-my-1.5 flex-row flex-wrap items-center gap-2">
       {props.pr.labels.map((label) => {
         const color = pullRequestLabelColor(label.color);
         // Tinted like the list row's label pills, at the overview's chip size.

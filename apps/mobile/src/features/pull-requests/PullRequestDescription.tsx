@@ -116,7 +116,7 @@ export function PullRequestDescription(props: {
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    height: 44,
+                    height: Platform.OS === "android" ? 48 : 44,
                     backgroundColor: fadeColor,
                   }}
                 />
@@ -135,10 +135,17 @@ export function PullRequestDescription(props: {
                 }}
                 style={
                   collapsed
-                    ? { position: "absolute", bottom: 2, left: 0, right: 0, height: 44, zIndex: 2 }
+                    ? {
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: Platform.OS === "android" ? 48 : 44,
+                        zIndex: 2,
+                      }
                     : undefined
                 }
-                className="min-h-11 flex-row items-center justify-center gap-1 py-2 active:opacity-70"
+                className="min-h-[44px] flex-row items-center justify-center gap-1 py-2 active:opacity-70 android:min-h-[48px]"
               >
                 <Text className="text-xs font-t3-medium text-foreground">
                   {expanded ? gt("Show less") : gt("Show more")}

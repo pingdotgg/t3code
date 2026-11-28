@@ -72,15 +72,19 @@ export function ReactionPills(props: {
           accessibilityState={{ selected: reaction.viewerHasReacted, disabled: !props.canReact }}
           disabled={!props.canReact}
           onPress={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
-          className={cn(
-            PILL,
-            reaction.viewerHasReacted
-              ? "border-primary bg-primary/10"
-              : "border-border-subtle bg-grouped-card",
-          )}
+          className="min-h-[44px] min-w-[44px] justify-center active:opacity-70 android:min-h-[48px] android:min-w-[48px]"
         >
-          <Text className="text-sm">{pullRequestReactionEmoji(reaction.content)}</Text>
-          <Text className="text-xs font-t3-medium text-foreground-muted">{reaction.count}</Text>
+          <View
+            className={cn(
+              PILL,
+              reaction.viewerHasReacted
+                ? "border-primary bg-primary/10"
+                : "border-border-subtle bg-grouped-card",
+            )}
+          >
+            <Text className="text-sm">{pullRequestReactionEmoji(reaction.content)}</Text>
+            <Text className="text-xs font-t3-medium text-foreground-muted">{reaction.count}</Text>
+          </View>
         </Pressable>
       ))}
       {props.canReact ? (
@@ -104,9 +108,15 @@ export function ReactionPills(props: {
             void toggle(content, !reacted);
           }}
         >
-          <View className={cn(PILL, "border-border-subtle")}>
-            <SymbolView name="face.smiling" size={15} tintColorClassName="accent-icon-muted" />
-          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Add a reaction")}
+            className="min-h-[44px] min-w-[44px] justify-center android:min-h-[48px] android:min-w-[48px]"
+          >
+            <View className={cn(PILL, "justify-center border-border-subtle")}>
+              <SymbolView name="face.smiling" size={15} tintColorClassName="accent-icon-muted" />
+            </View>
+          </Pressable>
         </Menu>
       ) : null}
     </>

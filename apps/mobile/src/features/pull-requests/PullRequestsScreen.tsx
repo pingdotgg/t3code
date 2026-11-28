@@ -63,7 +63,7 @@ function PullRequestListError(props: { readonly message: string }) {
       // A long press selects the text; collapsing under that selection crashes Android's
       // smart-select animation, so it must not also count as a press.
       onLongPress={() => undefined}
-      className="min-h-11 flex-row items-center gap-3 px-4 py-2.5 active:opacity-70"
+      className="min-h-[44px] flex-row items-center gap-3 px-4 py-2.5 active:opacity-70 android:min-h-[48px]"
     >
       <SymbolView
         name="exclamationmark.triangle"

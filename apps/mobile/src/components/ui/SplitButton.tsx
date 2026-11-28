@@ -18,7 +18,7 @@ export function SplitButton(props: SplitButtonProps) {
         accessibilityState={{ disabled: Boolean(props.disabled), busy: Boolean(props.loading) }}
         disabled={props.disabled}
         onPress={props.onPress}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center justify-center gap-2 px-3 py-2 active:opacity-70"
+        className="min-h-[44px] min-w-0 flex-1 flex-row items-center justify-center gap-2 px-3 py-2 active:opacity-70"
       >
         {props.loading ? (
           <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
@@ -47,7 +47,7 @@ export function SplitButton(props: SplitButtonProps) {
               accessibilityLabel={props.menuTitle}
               accessibilityState={{ disabled: !menuEnabled }}
               disabled={!menuEnabled}
-              className="min-h-11 w-11 items-center justify-center border-l border-border-subtle"
+              className="min-h-[44px] w-[44px] items-center justify-center border-l border-border-subtle"
             >
               <SymbolView
                 name="chevron.down"
