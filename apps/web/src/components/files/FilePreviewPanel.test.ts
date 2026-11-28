@@ -877,13 +877,17 @@ Third}`;
         "<table:table-row><table:table-cell><text:p>Ada</text:p></table:table-cell><table:table-cell><text:p>900</text:p></table:table-cell><table:table-cell><text:p>North</text:p></table:table-cell></table:table-row>" +
         '<table:table-row table:visibility="collapse"><table:table-cell><text:p>Draft</text:p></table:table-cell></table:table-row>' +
         '<table:table-row table:visibility="filter"><table:table-cell><text:p>Bob</text:p></table:table-cell><table:table-cell><text:p>800</text:p></table:table-cell><table:table-cell><text:p>South</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:table-cell><text:p>Cy</text:p></table:table-cell><table:table-cell><text:p>700</text:p></table:table-cell><table:table-cell><text:p>East</text:p></table:table-cell></table:table-row>" +
         "</table:table></office:spreadsheet></office:body></office:document-content>",
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
     expect(result.sheets[0]!.rows).toEqual([
-      ["Name", "Team"],
-      ["Ada", "North"],
+      ["Name", "", "Team"],
+      ["Ada", "", "North"],
+      [],
+      [],
+      ["Cy", "", "East"],
     ]);
   });
 
