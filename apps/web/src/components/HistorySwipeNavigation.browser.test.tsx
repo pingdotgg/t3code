@@ -1,6 +1,7 @@
+import type { TrackpadScrollPhase } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 const navigateHistory = vi.hoisted(() => vi.fn());
@@ -76,6 +77,97 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  it.each([
+    ["end", "back", -130, "wheel first", true],
+    ["end", "forward", 130, "release first", true],
+    ["end", "back", -130, "next from edge", false],
+    ["end", "back", -130, "next wheel before begin", true],
+    ["end", "back", -130, "vertical wheel before begin", false],
+    ["end", "back", -112, "a wobble past the origin", true],
+    ["end", "back", -130, "shift held", false],
+    ["end", "back", -80, "wheel first", false],
+    ["cancel", "back", -130, "wheel first", false],
+  ] as const)(
+    "uses native %s for a %s swipe of %s px with %s",
+    async (phase, direction, deltaX, order, commit) => {
+      navigateHistory.mockReset();
+      const listeners = new Set<(phase: TrackpadScrollPhase) => void>();
+      const scrollEnds = new Set<() => void>();
+      using _bridge = stubGlobal("desktopBridge", {
+        onTrackpadScrollBegin: () => () => {},
+        onTrackpadScrollEnd: (listener: () => void) => {
+          scrollEnds.add(listener);
+          return () => scrollEnds.delete(listener);
+        },
+        onTrackpadScrollPhase: (listener: (phase: TrackpadScrollPhase) => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      });
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+      await using screen = await render(<HistorySwipeNavigation />);
+      const content = screen.container.appendChild(document.createElement("div"));
+      const sendPhase = (phase: TrackpadScrollPhase) =>
+        listeners.forEach((listener) => listener(phase));
+      const nextFromScroller = order === "next from edge";
+      if (nextFromScroller) {
+        content.style.cssText = "width: 100px; overflow-x: auto";
+        const child = content.appendChild(document.createElement("div"));
+        child.style.cssText = "width: 400px; height: 20px";
+      }
+      const firstWheel = new WheelEvent("wheel", {
+        deltaX: deltaX * 0.2,
+        bubbles: true,
+        shiftKey: order === "shift held",
+      });
+      const at = 1_000_000;
+      using _now = vi.spyOn(Date, "now").mockReturnValue(at);
+      using _performance = vi.spyOn(performance, "now").mockReturnValue(firstWheel.timeStamp);
+
+      // Chromium's first wheel can arrive before IPC, and the last wheel can arrive after it.
+      if (nextFromScroller || order.endsWith("before begin")) {
+        sendPhase({ kind: "begin", at: at - 100 });
+        sendPhase({ kind: "cancel", at: at - 10 });
+      }
+      if (order === "vertical wheel before begin") {
+        content.dispatchEvent(new WheelEvent("wheel", { deltaY: 12, bubbles: true }));
+      }
+      if (order !== "release first") content.dispatchEvent(firstWheel);
+      sendPhase({ kind: "begin", at });
+      if (order === "wheel first") {
+        content.dispatchEvent(new WheelEvent("wheel", { deltaX: deltaX * 0.2, bubbles: true }));
+      }
+      if (order === "a wobble past the origin") {
+        // Native net delta is -112, but the wheel distance clamps at the origin and reaches 130.
+        for (const delta of [40, -130]) {
+          content.dispatchEvent(new WheelEvent("wheel", { deltaX: delta, bubbles: true }));
+        }
+      }
+      scrollEnds.forEach((listener) => listener());
+      expect(navigateHistory).not.toHaveBeenCalled();
+      sendPhase(
+        phase === "end"
+          ? {
+              kind: phase,
+              at: at + 1,
+              deltaX,
+              travelX: Math.abs(deltaX),
+              travelY: 0,
+            }
+          : { kind: phase, at: at + 1 },
+      );
+      if (order === "release first") {
+        expect(navigateHistory).not.toHaveBeenCalled();
+        content.dispatchEvent(firstWheel);
+      }
+      expect(navigateHistory.mock.calls).toEqual(commit ? [[direction]] : []);
+
+      swipe(content, deltaX * 2);
+      scrollEnds.forEach((listener) => listener());
+      expect(navigateHistory).toHaveBeenCalledTimes(commit ? 1 : 0);
+    },
+  );
 
   it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
     navigateHistory.mockReset();

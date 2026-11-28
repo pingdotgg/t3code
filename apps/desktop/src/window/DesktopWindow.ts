@@ -35,6 +35,7 @@ import {
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_BEGIN_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
+  TRACKPAD_SCROLL_PHASE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import {
@@ -49,6 +50,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { MacTrackpadMonitorError, monitorMacTrackpadScroll } from "./MacTrackpadScroll.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
@@ -522,6 +524,20 @@ export const make = Effect.gen(function* () {
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
+      runFork(
+        Effect.tryPromise({
+          try: () =>
+            monitorMacTrackpadScroll(environment, window, (phase) => {
+              if (!window.isDestroyed())
+                window.webContents.send(TRACKPAD_SCROLL_PHASE_CHANNEL, phase);
+            }),
+          catch: (cause) => new MacTrackpadMonitorError({ cause }),
+        }).pipe(
+          Effect.catch((cause) =>
+            logWindowWarning("could not observe native trackpad scroll phases", { cause }),
+          ),
+        ),
+      );
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;

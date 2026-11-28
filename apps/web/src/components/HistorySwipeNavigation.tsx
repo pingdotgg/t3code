@@ -1,3 +1,4 @@
+import type { TrackpadScrollPhase } from "@t3tools/contracts";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -12,6 +13,10 @@ const SWIPE_AXIS_LOCK_DISTANCE = 8;
 const SWIPE_HORIZONTAL_DOMINANCE = 2;
 const SWIPE_DOMINANCE_DISTANCE = 30;
 const MOMENTUM_SAMPLE_SIZE = 5;
+const NATIVE_TIMESTAMP_TOLERANCE_MS = 4;
+
+type NativeRelease = Extract<TrackpadScrollPhase, { kind: "end" }>;
+type NativeContact = { at: number; ending?: NativeRelease };
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
 type SwipeGesture =
@@ -120,66 +125,172 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     if (!isMacPlatform(navigator.platform)) return;
     let gesture: SwipeGesture | null = null;
+    let gestureStartedAt = 0;
+    let contact: NativeContact | "idle" | null = null;
+    type UnclaimedWheel = { event: WheelEvent; path: EventTarget[] };
+    let unclaimedWheels: UnclaimedWheel[] = [];
+    let unclaimedFrame: number | undefined;
+    let releaseFrame: number | undefined;
+
     const hideIndicator = () =>
-      setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
-    // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
-    const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
-        navigateHistory(gesture.direction);
-      }
+      setSwipe((current) =>
+        current === null || !current.tracking ? current : { ...current, tracking: false },
+      );
+    const release = (completed: boolean, native?: NativeRelease) => {
+      const swipe = gesture;
       gesture = { kind: "ignored" };
+      if (swipe?.kind !== "tracking") return;
+      // The net native delta never exceeds the clamped wheel distance; it covers wheel events still in flight.
+      const distance = native
+        ? Math.max(swipe.distance, swipe.direction === "back" ? -native.deltaX : native.deltaX)
+        : swipe.distance;
+      if (
+        completed &&
+        distance >= SWIPE_TRIGGER_DISTANCE &&
+        (!native || !isVerticalScroll(native.travelX, native.travelY))
+      ) {
+        navigateHistory(swipe.direction);
+      }
       hideIndicator();
     };
-    // Chromium brackets each trackpad scroll, momentum included, with these.
+    const clearReleaseFrame = () => {
+      if (releaseFrame !== undefined) cancelAnimationFrame(releaseFrame);
+      releaseFrame = undefined;
+    };
+    const clearUnclaimedWheel = () => {
+      if (unclaimedFrame !== undefined) cancelAnimationFrame(unclaimedFrame);
+      unclaimedFrame = undefined;
+      unclaimedWheels = [];
+    };
+    const finishNativeContact = (ending: NativeRelease) => {
+      clearReleaseFrame();
+      contact = "idle";
+      clearUnclaimedWheel();
+      release(true, ending);
+    };
+    const cancelGesture = () => {
+      if (contact === null && gesture === null) return;
+      clearReleaseFrame();
+      if (contact) contact = "idle";
+      clearUnclaimedWheel();
+      release(false);
+    };
+
+    // Chromium's scroll lifecycle includes momentum. AppKit phases take precedence when available.
     const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
-      if (gesture?.kind === "ignored") gesture = null;
+      if (contact === null && gesture?.kind === "ignored") gesture = null;
     });
     const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
-      if (gesture?.kind === "tracking") release();
+      if (contact !== null) return;
+      release(true);
       gesture = null;
     });
-    const onWheel = (event: WheelEvent) => {
+    const onWheel = (event: WheelEvent, buffered?: UnclaimedWheel) => {
+      const at = event.timeStamp;
+      if (contact === "idle") {
+        // IPC can arrive after the first wheel events of the next gesture; they still decide ownership.
+        unclaimedWheels.push({ event, path: event.composedPath() });
+        if (unclaimedFrame === undefined) {
+          unclaimedFrame = requestAnimationFrame(clearUnclaimedWheel);
+        }
+        return;
+      }
+      if (
+        contact &&
+        (at < contact.at - NATIVE_TIMESTAMP_TOLERANCE_MS ||
+          (contact.ending && at > contact.ending.at))
+      )
+        return;
+
       if (event.shiftKey) {
-        if (gesture?.kind === "tracking") hideIndicator();
-        gesture = { kind: "ignored" };
+        if (gesture === null) gestureStartedAt = at;
+        release(false);
         return;
       }
       if (gesture === null) {
+        gestureStartedAt = at;
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
             ? { kind: "ignored" }
-            : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
+            : {
+                kind: "pending",
+                path: buffered?.path ?? event.composedPath(),
+                y: event.clientY,
+                sumX: 0,
+                sumY: 0,
+              };
       }
       if (gesture.kind === "ignored") return;
       if (gesture.kind === "pending") {
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
-        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
+        gesture = lockSwipeAxis({
+          ...gesture,
+          path: [...gesture.path, ...(buffered?.path ?? event.composedPath())],
+        });
         if (gesture.kind === "ignored") return;
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
-        if (event.deltaX === 0 && event.deltaY === 0) return release();
+        if (event.deltaX === 0 && event.deltaY === 0) {
+          if (contact === null) release(true);
+          return;
+        }
         gesture.travelX += Math.abs(event.deltaX);
         gesture.travelY += Math.abs(event.deltaY);
-        if (isVerticalScroll(gesture.travelX, gesture.travelY)) {
-          gesture = { kind: "ignored" };
-          return hideIndicator();
+        if (isVerticalScroll(gesture.travelX, gesture.travelY)) return release(false);
+        if (contact === null) {
+          gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
+          if (isMomentumTail(gesture.deltas)) return release(true);
         }
-        gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
-        if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
       }
-      setSwipe({
-        direction: gesture.direction,
-        progress: Math.min(1, gesture.distance / SWIPE_TRIGGER_DISTANCE),
-        y: gesture.y,
-        bounds: gesture.bounds,
-        tracking: true,
-      });
+      if (contact?.ending) return finishNativeContact(contact.ending);
+      const { direction, distance, y, bounds } = gesture;
+      const progress = Math.min(1, distance / SWIPE_TRIGGER_DISTANCE);
+      setSwipe((current) =>
+        current?.tracking &&
+        current.direction === direction &&
+        current.bounds === bounds &&
+        current.progress === progress
+          ? current
+          : { direction, progress, y, bounds, tracking: true },
+      );
     };
+    const unsubscribeScrollPhase = window.desktopBridge?.onTrackpadScrollPhase?.((phase) => {
+      // Translate the event wall time at receipt so sleep since page load cannot skew the match.
+      const at = phase.at - Date.now() + performance.now();
+      if (phase.kind === "begin") {
+        const wheels = unclaimedWheels;
+        clearUnclaimedWheel();
+        clearReleaseFrame();
+        if (contact !== null || gestureStartedAt < at - NATIVE_TIMESTAMP_TOLERANCE_MS) {
+          if (gesture?.kind === "tracking") release(false);
+          gesture = null;
+        }
+        contact = { at };
+        for (const wheel of wheels) onWheel(wheel.event, wheel);
+      } else if (phase.kind === "end" && contact && contact !== "idle") {
+        if (gesture?.kind === "tracking" || gesture?.kind === "ignored") {
+          finishNativeContact(phase);
+        } else {
+          // One frame lets an already queued wheel event establish scroll ownership.
+          contact.ending = { ...phase, at };
+          releaseFrame = requestAnimationFrame(() => finishNativeContact(phase));
+        }
+      } else if (phase.kind === "cancel") {
+        cancelGesture();
+      }
+    });
     window.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    window.addEventListener("blur", cancelGesture);
+    window.navigation?.addEventListener("currententrychange", cancelGesture);
     return () => {
+      clearUnclaimedWheel();
+      clearReleaseFrame();
+      unsubscribeScrollPhase?.();
+      window.removeEventListener("blur", cancelGesture);
+      window.navigation?.removeEventListener("currententrychange", cancelGesture);
       unsubscribeScrollBegin?.();
       unsubscribeScrollEnd?.();
       window.removeEventListener("wheel", onWheel, { capture: true });

@@ -1109,6 +1109,16 @@ export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export type TrackpadScrollPhase =
+  | { readonly kind: "begin" | "cancel"; readonly at: number }
+  | {
+      readonly kind: "end";
+      readonly at: number;
+      readonly deltaX: number;
+      readonly travelX: number;
+      readonly travelY: number;
+    };
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
@@ -1121,6 +1131,7 @@ export interface DesktopBridge {
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;
+  onTrackpadScrollPhase: (listener: (phase: TrackpadScrollPhase) => void) => () => void;
   /**
    * Renderer `window.focus()` cannot raise an Electron window, and on Wayland
    * only the main process can spend a notification click's activation token.

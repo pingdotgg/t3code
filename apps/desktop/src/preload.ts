@@ -132,6 +132,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
   },
+  onTrackpadScrollPhase: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, phase: Parameters<typeof listener>[0]) =>
+      listener(phase);
+    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_PHASE_CHANNEL, handler);
+  },
   onTrackpadScrollEnd: (listener) => {
     const handler = () => listener();
     ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
