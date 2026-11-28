@@ -4130,12 +4130,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             stream.current.sourceMessageId !== sourceMessageId
           ) {
             yield* closeTextStream(context, kind);
-          } else if (
-            stream.current !== null &&
-            sourceMessageId === null &&
-            stream.current.sourceMessageId === null &&
-            stream.current.pendingToolSplit
-          ) {
+          } else if (stream.current?.pendingToolSplit) {
             if (acpChunkContinuesUnnamedText(stream.current.text, text)) {
               stream.current.pendingToolSplit = false;
             } else {
@@ -4148,7 +4143,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else if (segment.sourceMessageId === null && sourceMessageId !== null) {
             // Agents may omit the first messageId; retain projected identity until the first later id.
             segment.sourceMessageId = sourceMessageId;
-            segment.pendingToolSplit = false;
           }
           segment.text += text;
           yield* publishTextSegment(context, kind);

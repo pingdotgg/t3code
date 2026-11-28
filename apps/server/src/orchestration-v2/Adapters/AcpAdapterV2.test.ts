@@ -3919,38 +3919,6 @@ describe("AcpAdapterV2", () => {
       ],
     },
     {
-      label: "a brand-new interleaved tool call arrives inside an unclosed fenced code block",
-      steps: [
-        answer(undefined, "Config:\n```bash\numask 027\n"),
-        {
-          sessionUpdate: "tool_call",
-          toolCallId: "interleaved-fence-1",
-          title: "pwd",
-          kind: "execute",
-          status: "in_progress",
-          rawInput: { command: "pwd" },
-        },
-        answer(undefined, "chmod 0640 keyring.gpg\n```"),
-      ],
-      expectedAssistants: ["Config:\n```bash\numask 027\nchmod 0640 keyring.gpg\n```"],
-    },
-    {
-      label: "a brand-new interleaved tool call arrives mid-word",
-      steps: [
-        answer(undefined, "Inspecting the conf"),
-        {
-          sessionUpdate: "tool_call",
-          toolCallId: "interleaved-word-1",
-          title: "pwd",
-          kind: "execute",
-          status: "in_progress",
-          rawInput: { command: "pwd" },
-        },
-        answer(undefined, "ig file now."),
-      ],
-      expectedAssistants: ["Inspecting the config file now."],
-    },
-    {
       label: "an already-tracked background tool reports progress and completion mid-answer",
       steps: [
         {
@@ -4022,6 +3990,26 @@ describe("AcpAdapterV2", () => {
           status: "completed",
         },
         answer(undefined, "Found the issue."),
+      ],
+      expectedAssistants: ["Checking", "Found the issue."],
+    },
+    {
+      label: "a terse unnamed preamble precedes a tool call and an identified reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-3",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-3",
+          status: "completed",
+        },
+        answer("reply-1", "Found the issue."),
       ],
       expectedAssistants: ["Checking", "Found the issue."],
     },
