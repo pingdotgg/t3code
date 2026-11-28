@@ -594,3 +594,39 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });
+
+it("shows a newly started agent at the top of a list scrolled a few pixels", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = projection;
+  const subagent = (index: number) => ({
+    id: ThreadId.make(`subagent-${index}`),
+    title: `Subagent ${index}`,
+    createdAt: DateTime.makeUnsafe(`2026-11-28T01:00:${String(index).padStart(2, "0")}.000Z`),
+    forkedFrom: null,
+    lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
+    activityRunStatus: "running",
+    status: "running",
+  });
+  state.relatedShells = Array.from({ length: 12 }, (_, index) => subagent(index));
+  const panel = () => (
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />
+  );
+  await using screen = await render(panel());
+  await screen.getByRole("button", { name: "Show 6 more" }).click();
+  await expect.element(screen.getByText("Subagent 0", { exact: true })).toBeInTheDocument();
+  const list = screen.getByRole("list", { name: "Related threads" }).element();
+  // A wheel or trackpad scroll over the details panel can leave the list a few pixels down.
+  list.scrollTop = 7;
+  expect(list.scrollTop).toBe(7);
+
+  state.relatedShells = [...state.relatedShells, subagent(12)];
+  await screen.rerender(panel());
+
+  await expect.element(screen.getByText("Subagent 12", { exact: true })).toBeInViewport();
+});

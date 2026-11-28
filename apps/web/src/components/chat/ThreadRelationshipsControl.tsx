@@ -132,11 +132,13 @@ function ThreadLineageRowList(props: {
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
+      {/* Rows are newest first. Scroll anchoring would keep the visible rows still and push a
+          newly started agent above the top of a list scrolled even a few pixels. */}
       <ul
         ref={listRef}
         tabIndex={-1}
         aria-label={gt("Related threads")}
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 outline-none [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
