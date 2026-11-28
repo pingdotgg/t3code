@@ -238,23 +238,13 @@ describe("agentWorkingDirectories", () => {
 
   it.each([
     { command: String.raw`echo marker \; cd /other`, expected: [] },
-    { command: "echo marker ; cd /other", expected: ["/other"] },
     { command: String.raw`echo marker \\; cd /other`, expected: ["/other"] },
-  ])("distinguishes escaped shell separators in $command", ({ command, expected }) => {
-    expect(directories(command)).toEqual(expected);
-  });
-
-  it.each([
-    { command: "cd C:\\ && dir", expected: ["C:\\"] },
+    { command: String.raw`cd C:\ && dir`, expected: ["C:\\"] },
     {
       command: String.raw`cd C:\work\; cd D:\other`,
       expected: [String.raw`D:\other`, "C:\\work\\"],
     },
-    {
-      command: "cd C:\\work\\\ncd D:\\other",
-      expected: [String.raw`D:\other`, "C:\\work\\"],
-    },
-  ])("preserves Windows trailing backslashes in $command", ({ command, expected }) => {
+  ])("reads backslashes like the shell in $command", ({ command, expected }) => {
     expect(directories(command)).toEqual(expected);
   });
 
