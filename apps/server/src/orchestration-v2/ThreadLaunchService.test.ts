@@ -82,8 +82,6 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-
-import { expect } from "vite-plus/test";
 import * as AcpRegistrySessions from "../provider/AcpRegistrySessions.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
@@ -2798,10 +2796,8 @@ it.effect("imports a native ACP session again after its T3 thread is deleted", (
       commandId: CommandId.make("command:delete-imported-session"),
       threadId: first.threadId,
     });
-    expect(yield* threads.getThreadShell(first.threadId)).toBeNull();
-    expect(
-      yield* sessions.findOwner({ driver, instanceId, sessionId: input.sessionId }),
-    ).toBeNull();
+    assert.isNull(yield* threads.getThreadShell(first.threadId));
+    assert.isNull(yield* sessions.findOwner({ driver, instanceId, sessionId: input.sessionId }));
 
     const second = yield* sessions.importSession(input).pipe(
       Effect.match({
@@ -2809,7 +2805,7 @@ it.effect("imports a native ACP session again after its T3 thread is deleted", (
         onSuccess: (result) => result.imported,
       }),
     );
-    expect(second).toBe(true);
+    assert.strictEqual(second, true);
   }).pipe(Effect.provide(importLayer));
 });
 
