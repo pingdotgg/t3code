@@ -10,7 +10,7 @@ import {
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState, type ElementType } from "react";
 import type {
@@ -45,6 +45,11 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
   jira: JiraIcon,
   linear: LinearIcon,
 };
+
+const REQUIRED_FIELD_MESSAGES: ReadonlyMap<string, string> = new Map([
+  ["jira:site", msg("Enter the site first.")],
+  ["jira:email", msg("Enter the account email first.")],
+]);
 
 /**
  * Standalone issue trackers for one environment: connect each with a credential, and bind the
@@ -146,9 +151,13 @@ function TrackerRow({
   const submit = async (token: string | null, values = drafts, addAccount = false) => {
     const missing = fields.find((field) => !values[field.key]?.trim());
     if (token !== null && missing !== undefined) {
+      const message = REQUIRED_FIELD_MESSAGES.get(`${tracker.tracker}:${missing.key}`);
       setFailure({
         adding: addAccount,
-        text: gt("Enter the {field} first.", { field: missing.label.toLowerCase() }),
+        text:
+          message === undefined
+            ? gt("Enter the {field} first.", { field: missing.label.toLowerCase() })
+            : messages(message),
       });
       return false;
     }
