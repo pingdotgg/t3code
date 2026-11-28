@@ -1745,6 +1745,63 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
+  const ownerWithReviewSubagent = (worktreePath: string) => {
+    const root = shell({ branch: "feature", worktreePath, settledAt: at(-20 * DAY_MS) });
+    const child = shell({
+      id: ThreadId.make("child"),
+      branch: "review/pr-1",
+      worktreePath,
+      status: "completed",
+      lineage: {
+        parentThreadId: root.id,
+        rootThreadId: root.lineage.rootThreadId,
+        relationshipToParent: "subagent",
+      },
+    });
+    return [root, child];
+  };
+
+  it.effect("moves a subagent on another branch to the worktree's branch, then removes it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeSettledAfterDays: 8,
+      });
+      fixture.setThreads(ownerWithReviewSubagent(fixture.worktree));
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        outcome: "kept",
+        reason: "A subagent thread's branch differs from this worktree's branch",
+      });
+      expect(fixture.threadBranches()).toEqual(["feature", "feature"]);
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        outcome: "removed",
+        reason: "Settled for 20 days",
+      });
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  it.effect("removes a clean detached worktree whose subagent recorded another branch", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeSettledAfterDays: 8,
+      });
+      fixture.setThreads(ownerWithReviewSubagent(fixture.worktree));
+      yield* fixture.command(fixture.worktree, ["switch", "--detach"]);
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        outcome: "removed",
+        reason: "Settled for 20 days",
+      });
+      expect(fixture.threadBranches()).toEqual(["feature", "review/pr-1"]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
   it.effect("keeps a checkout two top-level threads store through a symlinked parent", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
