@@ -279,6 +279,8 @@ const ANSI_C_ESCAPES: Record<string, string> = {
 
 type ShellQuote = '"' | "'" | "$'";
 
+const REDIRECTION_TOKEN_PREFIX = /^(?:(?:\d+|\*|\{[A-Za-z_][A-Za-z0-9_]*\})?[<>]*|&>?)$/u;
+
 function tokenizeShellCommand(command: string): string[] | null {
   const input = command.trim();
   const tokens: string[] = [];
@@ -289,6 +291,7 @@ function tokenizeShellCommand(command: string): string[] | null {
   let substitutionDepth = 0;
   let parameterExpansionDepth = 0;
   let tokenStarted = false;
+  let tokenHasQuotes = false;
 
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index]!;
@@ -296,6 +299,7 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       escaping = false;
       tokenStarted = true;
+      tokenHasQuotes = true;
       continue;
     }
     if (character === "\\" && quote === "$'") {
@@ -401,13 +405,27 @@ function tokenizeShellCommand(command: string): string[] | null {
     if (character === "$" && (input[index + 1] === "'" || input[index + 1] === '"')) {
       quote = input[index + 1] === "'" ? "$'" : '"';
       tokenStarted = true;
+      tokenHasQuotes = true;
       index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
       quote = character;
       tokenStarted = true;
+      tokenHasQuotes = true;
       continue;
+    }
+    if (
+      substitutionDepth === 0 &&
+      parameterExpansionDepth === 0 &&
+      tokenStarted &&
+      (((character === "<" || character === ">") &&
+        (tokenHasQuotes || !REDIRECTION_TOKEN_PREFIX.test(current))) ||
+        (character === "&" && input[index + 1] === ">"))
+    ) {
+      tokens.push(current);
+      current = "";
+      tokenHasQuotes = false;
     }
     if (/\s/u.test(character)) {
       if (substitutionDepth > 0 || parameterExpansionDepth > 0) {
@@ -419,6 +437,7 @@ function tokenizeShellCommand(command: string): string[] | null {
         tokens.push(current);
         current = "";
         tokenStarted = false;
+        tokenHasQuotes = false;
       }
       continue;
     }

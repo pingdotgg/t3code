@@ -137,7 +137,12 @@ describe("commandProgramName", () => {
     [">/tmp/log && npm test", "npm"],
     ["cd /tmp && 2>& 1 node app.js", "node"],
     ["cd /tmp && {output}>/tmp/log deno test", "deno"],
-  ])("skips redirections before the next command: %s", (command, program) => {
+    ["whoami>/dev/null", "whoami"],
+    ["cat</etc/hosts", "cat"],
+    ["whoami&>/dev/null", "whoami"],
+    ["'my>tool' arg", "my>tool"],
+    ["my\\>tool arg", "my>tool"],
+  ])("handles redirections around commands: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
