@@ -14,6 +14,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
+  resolveModelPickerTab,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -649,5 +650,81 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
     expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
     expect(restoredEntry?.enabled).toBe(true);
+  });
+});
+
+describe("resolveModelPickerTab", () => {
+  const activeInstanceId = ProviderInstanceId.make("claudeAgent_personal");
+  const otherInstanceId = ProviderInstanceId.make("codex_work");
+  const opening = {
+    activeInstanceId,
+    chosenTab: null,
+    lastPickedTab: null,
+    hasFavorites: true,
+    keepActiveInstance: false,
+    instanceEntries: deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: activeInstanceId }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: otherInstanceId }),
+    ]),
+    selectableUnavailableInstanceIds: undefined,
+  } as const;
+
+  it("reopens on the tab the last model was picked from", () => {
+    expect(resolveModelPickerTab({ ...opening, lastPickedTab: "favorites" })).toBe("favorites");
+    expect(resolveModelPickerTab({ ...opening, lastPickedTab: activeInstanceId })).toBe(
+      activeInstanceId,
+    );
+    // An additive pick leaves another account active, so the tab is remembered by account.
+    expect(resolveModelPickerTab({ ...opening, lastPickedTab: otherInstanceId })).toBe(
+      otherInstanceId,
+    );
+    // Locked and setup-needed accounts, and a hidden remembered account, keep today's tab.
+    expect(
+      resolveModelPickerTab({ ...opening, lastPickedTab: "favorites", keepActiveInstance: true }),
+    ).toBe(activeInstanceId);
+    expect(
+      resolveModelPickerTab({
+        ...opening,
+        lastPickedTab: otherInstanceId,
+        instanceEntries: opening.instanceEntries.filter(
+          (entry) => entry.instanceId === activeInstanceId,
+        ),
+      }),
+    ).toBe("favorites");
+  });
+
+  it("does not reopen on a remembered account that is enabled but unavailable", () => {
+    const remembered = {
+      ...opening,
+      lastPickedTab: otherInstanceId,
+      instanceEntries: deriveProviderInstanceEntries([
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: activeInstanceId,
+        }),
+        provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: otherInstanceId,
+          status: "error",
+        }),
+      ]),
+    } as const;
+    expect(resolveModelPickerTab(remembered)).toBe("favorites");
+    // Still reachable when the sidebar offers its setup action or a selectable unavailable model.
+    expect(
+      resolveModelPickerTab({
+        ...remembered,
+        selectableUnavailableInstanceIds: new Set([otherInstanceId]),
+      }),
+    ).toBe(otherInstanceId);
+  });
+
+  it("lands on favorites once they load unless a tab was chosen", () => {
+    const beforeLoad = { ...opening, lastPickedTab: "favorites", hasFavorites: false } as const;
+    expect(resolveModelPickerTab(beforeLoad)).toBe(activeInstanceId);
+    expect(resolveModelPickerTab({ ...beforeLoad, hasFavorites: true })).toBe("favorites");
+    expect(
+      resolveModelPickerTab({ ...beforeLoad, hasFavorites: true, chosenTab: activeInstanceId }),
+    ).toBe(activeInstanceId);
   });
 });
