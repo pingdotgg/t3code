@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "accounts:backfill-emails": "node scripts/backfill-account-emails.ts",
     "deploy": "alchemy deploy",
     "push:android:smoke": "node scripts/android-push-smoke.ts",
     "push:android:watch": "node scripts/android-push-watch.ts",
