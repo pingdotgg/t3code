@@ -246,6 +246,10 @@ describe("pull request body segmentation", () => {
       { id: "markdown:0", kind: "markdown", text: deepCloser, sourceOffset: 0 },
       actual,
     ]);
+    expect(split("- ```js`x\n\n  https://example.com/actual.mp4")).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "- ```js`x", sourceOffset: 0 },
+      actual,
+    ]);
     const shown = "```markdown\n- ```\nhttps://example.com/sample.mp4\n```";
     expect(split(`${shown}\n\nhttps://example.com/actual.mp4`)).toEqual([
       { id: "markdown:0", kind: "markdown", text: shown, sourceOffset: 0 },

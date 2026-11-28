@@ -384,7 +384,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       openFence === null &&
       fenceMatch?.[1]![0] === "`" &&
       (fenceMatch[2]!.match(/`+/gu) ?? []).some((run) => run.length === fenceMatch[1]!.length);
-    if (fenceMatch !== null && !isInlineCode) {
+    // A backtick fence's info string cannot hold a backtick; on a list marker that is item text.
+    const isListText =
+      openFence === null &&
+      fenceMatch?.[1]![0] === "`" &&
+      fenceMatch[2]!.includes("`") &&
+      LIST_ITEM_PATTERN.test(line);
+    if (fenceMatch !== null && !isInlineCode && !isListText) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
