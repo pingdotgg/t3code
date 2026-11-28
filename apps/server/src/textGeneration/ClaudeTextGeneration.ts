@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 
@@ -197,7 +198,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         type: "image",
         source: {
           type: "base64",
-          media_type: attachment.mimeType,
+          media_type: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
           data: Buffer.from(bytes).toString("base64"),
         },
       });
