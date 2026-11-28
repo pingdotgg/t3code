@@ -118,12 +118,14 @@ import {
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import {
+  attachmentDownloadResource,
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
+  saveAssetDownload,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
 import LargeFilePreview from "./LargeFilePreview";
@@ -388,26 +390,22 @@ function WorkspacePdfSaveAction(props: {
 }) {
   const gt = useGT();
   const [saving, setSaving] = useState(false);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const refreshAssetUrl = useAssetUrlRefresh(
+    props.environmentId,
+    attachmentDownloadResource(props.resource),
+  );
   return (
     <FileSurfaceAction
       label={saving ? gt("Preparing file…") : gt("Save file")}
       disabled={saving}
       onPress={() => {
         setSaving(true);
-        void (async () => {
-          const url = await refreshAssetUrl();
-          if (!url) throw new Error(gt("Reconnect to the environment and try again."));
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
-          // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
-          const downloadUrl = URL.createObjectURL(await response.blob());
-          setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-          const anchor = document.createElement("a");
-          anchor.href = downloadUrl;
-          anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
-          anchor.click();
-        })()
+        void saveAssetDownload({
+          prepareUrl: refreshAssetUrl,
+          fileName: props.name,
+          unavailableMessage: gt("Reconnect to the environment and try again."),
+          loadFailedMessage: gt("The file could not be loaded. Try again."),
+        })
           .catch((cause: unknown) =>
             toastManager.add({
               type: "error",
@@ -418,7 +416,11 @@ function WorkspacePdfSaveAction(props: {
           .finally(() => setSaving(false));
       }}
     >
-      <DownloadIcon className="size-3.5" />
+      {saving ? (
+        <Spinner size="sm" aria-hidden role="presentation" />
+      ) : (
+        <DownloadIcon className="size-3.5" />
+      )}
     </FileSurfaceAction>
   );
 }
@@ -2079,23 +2081,21 @@ function LargeFileActions(props: {
         disabled={saving}
         onPress={() => {
           setSaving(true);
-          void (async () => {
-            const url = await refreshAssetUrl();
-            if (!url) throw new Error(gt("Reconnect to the environment and try again."));
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
-            const downloadUrl = URL.createObjectURL(await response.blob());
-            setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-            const anchor = document.createElement("a");
-            anchor.href = downloadUrl;
-            anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
-            anchor.click();
-          })()
+          void saveAssetDownload({
+            prepareUrl: refreshAssetUrl,
+            fileName: props.name,
+            unavailableMessage: gt("Reconnect to the environment and try again."),
+            loadFailedMessage: gt("The file could not be loaded. Try again."),
+          })
             .catch(showError)
             .finally(() => setSaving(false));
         }}
       >
-        <DownloadIcon className="size-3.5" />
+        {saving ? (
+          <Spinner size="sm" aria-hidden role="presentation" />
+        ) : (
+          <DownloadIcon className="size-3.5" />
+        )}
       </FileSurfaceAction>
     </>
   );

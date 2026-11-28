@@ -22,12 +22,20 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), () => ({
 
 // Like the real hook, the callback is a new function whenever its resource object is.
 const refreshers = new WeakMap<object, () => Promise<string | null>>();
+const refreshedResources: Array<unknown> = [];
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: (_environmentId, resource) => {
     if (!resource) return refresh;
     let callback = refreshers.get(resource);
-    if (!callback) refreshers.set(resource, (callback = () => refresh()));
+    if (!callback)
+      refreshers.set(
+        resource,
+        (callback = () => {
+          refreshedResources.push(resource);
+          return refresh();
+        }),
+      );
     return callback;
   },
   useAssetUrlState: assetUrlState,
@@ -2858,3 +2866,70 @@ it.each([
     await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
   },
 );
+
+it("shows a spinner while preparing and downloads directly in a plain browser without buffering", async () => {
+  refreshedResources.length = 0;
+  let resolveDownload!: (url: string) => void;
+  const downloadUrlPromise = new Promise<string>((resolve) => {
+    resolveDownload = resolve;
+  });
+  refresh
+    .mockReset()
+    .mockResolvedValueOnce("https://example.test/api/assets/preview/archive.bin")
+    .mockReturnValueOnce(downloadUrlPromise);
+  const fetchSpy = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+  using _fetch = stubGlobal("fetch", fetchSpy);
+  const clicked: Array<{ href: string; download: string }> = [];
+  const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push({ href: this.href, download: this.download });
+  });
+  try {
+    await using screen = await render(
+      <AttachmentFilePreview
+        name="archive.bin"
+        mimeType="application/octet-stream"
+        sizeBytes={60_000_000}
+        asset={{
+          environmentId: EnvironmentId.make("test"),
+          resource: { _tag: "draft-workspace-file", cwd: "/repo", path: "/repo/archive.bin" },
+        }}
+      />,
+    );
+    const saveButton = () =>
+      screen.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Save file"], button[aria-label="Preparing file…"]',
+      );
+    await vi.waitFor(() => expect(saveButton()?.getAttribute("aria-label")).toBe("Save file"));
+    await act(() => saveButton()!.click());
+
+    expect(saveButton()?.getAttribute("aria-label")).toBe("Preparing file…");
+    expect(saveButton()?.disabled).toBe(true);
+    expect(saveButton()?.querySelector("svg.lucide-loader-circle")).not.toBeNull();
+    expect(saveButton()?.querySelector("svg.lucide-download")).toBeNull();
+    expect(refreshedResources.at(-1)).toEqual({
+      _tag: "draft-workspace-file",
+      cwd: "/repo",
+      path: "/repo/archive.bin",
+      disposition: "attachment",
+    });
+
+    await act(async () => {
+      resolveDownload("https://example.test/api/assets/download/archive.bin");
+      await downloadUrlPromise;
+    });
+    await vi.waitFor(() => expect(saveButton()?.getAttribute("aria-label")).toBe("Save file"));
+    expect(saveButton()?.disabled).toBe(false);
+    expect(saveButton()?.querySelector("svg.lucide-download")).not.toBeNull();
+    expect(clicked).toEqual([
+      {
+        href: "https://example.test/api/assets/download/archive.bin",
+        download: "archive.bin",
+      },
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally {
+    clickSpy.mockRestore();
+  }
+});

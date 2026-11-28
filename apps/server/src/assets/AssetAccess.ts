@@ -768,7 +768,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           Effect.orElseSucceed(() => null),
         );
       }
-      const download = isGenericFile && !isVideo && inlinePreviewMimeType === undefined;
+      const download =
+        input.resource.disposition === "attachment" ||
+        (isGenericFile && !isVideo && inlinePreviewMimeType === undefined);
       // A client-named type is kept only where it cannot make the bytes render as a document.
       const mimeType =
         inlinePreviewMimeType ??

@@ -31,6 +31,7 @@ import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Spinner } from "~/components/ui/spinner";
 import { toastManager } from "~/components/ui/toast";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -42,11 +43,14 @@ import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
+  attachmentDownloadResource,
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
   FileSurfaceNotice,
+  saveAssetDownload,
+  saveBlobDownload,
 } from "./fileSurfaceChrome";
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
@@ -147,11 +151,7 @@ export function AttachmentFilePreview(props: {
       }
     : null;
   const resource = assetResource ?? attachmentResource;
-  const downloadResource = resource
-    ? resource._tag === "draft-workspace-file"
-      ? resource
-      : { ...resource, disposition: "attachment" as const }
-    : null;
+  const downloadResource = resource ? attachmentDownloadResource(resource) : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
@@ -255,22 +255,16 @@ export function AttachmentFilePreview(props: {
   const save = () => {
     setSaving(true);
     void settlePromise(async () => {
-      let file = props.file;
-      if (!file) {
-        const target = await prepareDownload();
-        if (!target) throw new Error(gt("Reconnect to the environment and try again."));
-        const response = await fetch(target);
-        if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
-        file = await response.blob();
+      if (props.file) {
+        saveBlobDownload(props.file, props.name);
+        return;
       }
-      // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
-      const downloadUrl = URL.createObjectURL(file);
-      // Scheduled before the click so the URL is revoked even if the click throws.
-      setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = props.name;
-      anchor.click();
+      await saveAssetDownload({
+        prepareUrl: prepareDownload,
+        fileName: props.name,
+        unavailableMessage: gt("Reconnect to the environment and try again."),
+        loadFailedMessage: gt("The file could not be loaded. Try again."),
+      });
     }).then((result) => {
       if (!AsyncResult.isSuccess(result)) {
         const cause = Cause.squash(result.cause);
@@ -496,7 +490,11 @@ export function AttachmentFilePreview(props: {
             disabled={saving}
             onPress={save}
           >
-            <DownloadIcon className="size-3.5" />
+            {saving ? (
+              <Spinner size="sm" aria-hidden role="presentation" />
+            ) : (
+              <DownloadIcon className="size-3.5" />
+            )}
           </FileSurfaceAction>
         ) : null}
         {props.onRemove ? (

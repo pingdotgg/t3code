@@ -1839,6 +1839,42 @@ describe("AssetAccess", () => {
       ).toMatchObject({ kind: "file", path: attachmentPath, download: true });
     }).pipe(Effect.provide(layerTest)),
   );
+  it.effect("serves video and image attachments as downloads when attachment is requested", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      for (const [attachmentId, fileExtension, mimeType] of [
+        ["thread-1-00000000-0000-4000-8000-000000000051-mp4", "mp4", "video/mp4"],
+        ["thread-1-00000000-0000-4000-8000-000000000052", "png", "image/png"],
+      ] as const) {
+        yield* fileSystem.writeFile(
+          path.join(config.attachmentsDir, `${attachmentId}.${fileExtension}`),
+          screenshotPng,
+        );
+        for (const disposition of [undefined, "attachment"] as const) {
+          const result = yield* issueAssetUrl({
+            resource: {
+              _tag: "attachment",
+              attachmentId,
+              mimeType,
+              ...(disposition ? { disposition } : {}),
+            },
+          });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separatorIndex = suffix.indexOf("/");
+          const asset = yield* resolveAsset(
+            suffix.slice(0, separatorIndex),
+            suffix.slice(separatorIndex + 1),
+          );
+          expect(asset !== null && "download" in asset ? asset.download : undefined).toBe(
+            disposition === "attachment" ? true : undefined,
+          );
+        }
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("ignores a client-named document type for image attachments", () =>
     Effect.gen(function* () {
