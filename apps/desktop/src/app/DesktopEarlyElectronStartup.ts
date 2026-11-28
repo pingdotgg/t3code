@@ -8,6 +8,7 @@ import {
   resolveLinuxPasswordStoreSwitch,
   type LinuxPasswordStoreSwitch,
   type LinuxPasswordStorePreference,
+  type LinuxSessionBus,
 } from "../linuxSecretStorage.ts";
 import {
   resolveDesktopBaseDir,
@@ -22,7 +23,9 @@ interface EarlyDesktopSettingsInput {
   readonly readFileString: (path: string) => string;
 }
 
-type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
+type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput & {
+  readonly sessionBus: LinuxSessionBus;
+};
 
 export interface EarlyLinuxElectronOptions {
   readonly isDevelopment: boolean;
@@ -149,6 +152,7 @@ export function resolveEarlyLinuxElectronOptions(
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,
+      sessionBus: input.sessionBus,
     }),
   };
 }
