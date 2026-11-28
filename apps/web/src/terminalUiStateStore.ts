@@ -609,11 +609,10 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
-  discardTerminalPlacement: (
+  trackTerminalPlacement: (
     threadRef: ScopedThreadRef,
     terminalId: string,
-    previousActiveTerminalId?: string,
-  ) => void;
+  ) => (rejected: boolean) => void;
   reconcileTerminalIds: (
     threadRef: ScopedThreadRef,
     serverIds: string[],
@@ -627,6 +626,7 @@ interface TerminalUiStateStoreState {
 export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
   persist(
     (set, get) => {
+      const pendingPredecessors = new Map<string, readonly string[]>();
       const removeTerminalUiState = (threadRef: ScopedThreadRef) =>
         set((state) => {
           const threadKey = terminalThreadKey(threadRef);
@@ -777,13 +777,31 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
-        discardTerminalPlacement: (threadRef, terminalId, previousActiveTerminalId) =>
-          updateTerminal(threadRef, (state) => {
-            const next = closeThreadTerminal(state, terminalId);
-            return state.activeTerminalId === terminalId && previousActiveTerminalId !== undefined
-              ? setThreadActiveTerminal(next, previousActiveTerminalId)
-              : next;
-          }),
+        trackTerminalPlacement: (threadRef, terminalId) => {
+          const threadKey = terminalThreadKey(threadRef);
+          const key = JSON.stringify([threadKey, terminalId]);
+          const { activeTerminalId } = selectThreadTerminalUiState(
+            get().terminalUiStateByThreadKey,
+            threadRef,
+          );
+          // Capture the chain while its pending predecessors are still tracked.
+          const predecessors = [
+            activeTerminalId,
+            ...(pendingPredecessors.get(JSON.stringify([threadKey, activeTerminalId])) ?? []),
+          ];
+          pendingPredecessors.set(key, predecessors);
+          return (rejected) => {
+            if (pendingPredecessors.get(key) !== predecessors) return;
+            pendingPredecessors.delete(key);
+            if (!rejected) return;
+            updateTerminal(threadRef, (state) => {
+              const next = closeThreadTerminal(state, terminalId);
+              if (state.activeTerminalId !== terminalId) return next;
+              const previous = predecessors.find((id) => next.terminalIds.includes(id));
+              return previous === undefined ? next : setThreadActiveTerminal(next, previous);
+            });
+          };
+        },
         reconcileTerminalIds: (threadRef, serverIds, snapshotId) => {
           if (threadRef.threadId.length === 0) return;
           const threadKey = terminalThreadKey(threadRef);

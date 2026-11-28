@@ -32,9 +32,10 @@ describe("terminalUiStateStore actions", () => {
     const store = useTerminalUiStateStore.getState();
     store.newTerminal(THREAD_REF, "first");
     store.splitTerminalVertical(THREAD_REF, "second");
+    const settle = store.trackTerminalPlacement(THREAD_REF, "pending");
     store.splitTerminal(THREAD_REF, "pending", null);
 
-    store.discardTerminalPlacement(THREAD_REF, "pending");
+    settle(true);
     expect(layout().terminalGroups).toEqual([
       expect.objectContaining({ terminalIds: ["first", "second"], splitDirection: "vertical" }),
     ]);
@@ -53,11 +54,65 @@ describe("terminalUiStateStore actions", () => {
       const store = useTerminalUiStateStore.getState();
       for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
       store.setActiveTerminal(THREAD_REF, "first");
+      const settle = store.trackTerminalPlacement(THREAD_REF, "pending");
       store.newTerminal(THREAD_REF, "pending");
       if (select) store.setActiveTerminal(THREAD_REF, select);
       if (close) store.closeTerminal(THREAD_REF, close);
 
-      store.discardTerminalPlacement(THREAD_REF, "pending", "first");
+      settle(true);
+
+      expect(layout().activeTerminalId).toBe(expected);
+    },
+  );
+
+  it.each([
+    {
+      order: "first then second",
+      reverse: false,
+      newer: false,
+      rejectFirst: true,
+      expected: "first",
+    },
+    {
+      order: "second then first",
+      reverse: true,
+      newer: false,
+      rejectFirst: true,
+      expected: "first",
+    },
+    {
+      order: "after a newer selection",
+      reverse: false,
+      newer: true,
+      rejectFirst: true,
+      expected: "second",
+    },
+    {
+      order: "after the first succeeds",
+      reverse: false,
+      newer: false,
+      rejectFirst: false,
+      expected: "pending-1",
+    },
+  ])(
+    "keeps the expected selection when overlapping launches settle $order",
+    ({ reverse, newer, rejectFirst, expected }) => {
+      const store = useTerminalUiStateStore.getState();
+      for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
+      store.setActiveTerminal(THREAD_REF, "first");
+      const settleFirst = store.trackTerminalPlacement(THREAD_REF, "pending-1");
+      store.newTerminal(THREAD_REF, "pending-1");
+      const settleSecond = store.trackTerminalPlacement(THREAD_REF, "pending-2");
+      store.newTerminal(THREAD_REF, "pending-2");
+
+      if (newer) store.setActiveTerminal(THREAD_REF, "second");
+      if (reverse) {
+        settleSecond(true);
+        settleFirst(rejectFirst);
+      } else {
+        settleFirst(rejectFirst);
+        settleSecond(true);
+      }
 
       expect(layout().activeTerminalId).toBe(expected);
     },
