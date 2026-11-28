@@ -903,7 +903,12 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
+  const detail =
+    input.title?.trim() ||
+    input.prompt
+      ?.trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim();
   if (!detail) return placeholderThreadTitle(input.parentTitle, input.index);
   if (detail.length <= 80) return detail;
   let end = 77;

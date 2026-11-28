@@ -3667,6 +3667,54 @@ describe("OrchestratorMcpService provider resolution", () => {
             );
           assert.equal(promptedCommits[0]?.commandId, promptedCommits[1]?.commandId);
 
+          for (const [index, titleCase] of [
+            {
+              prompt: "Review the auth flow\n\nPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\rPay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\u2028Pay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: "Review the auth flow\u2029Pay special attention to token renewal.",
+              expected: "Review the auth flow",
+            },
+            {
+              prompt: `\n\n  ${"a".repeat(80)}  \nmore`,
+              expected: "a".repeat(80),
+            },
+            {
+              prompt:
+                "Review the auth flow\n\nPay special attention to token renewal, refresh races and the logout path.",
+              expected: "Review the auth flow",
+            },
+            {
+              title: "Auth review",
+              prompt: "Review the auth flow\nmore",
+              expected: "Auth review",
+            },
+          ].entries()) {
+            const created = yield* service.createThreads(scope, {
+              threads: [
+                {
+                  ...request.threads[0]!,
+                  ...(titleCase.title === undefined ? {} : { title: titleCase.title }),
+                  prompt: titleCase.prompt,
+                },
+              ],
+              clientRequestId: `first-line-title-${index}`,
+            });
+            const projection = yield* orchestrator.getThreadProjection(
+              created.threads[0]!.threadId,
+            );
+            assert.equal(projection.thread.title, titleCase.expected);
+          }
+
           yield* settings.updateSettings({
             projectSettingsOverrides: {
               [projectId]: {
