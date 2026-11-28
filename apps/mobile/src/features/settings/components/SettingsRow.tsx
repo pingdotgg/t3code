@@ -12,6 +12,7 @@ import { openSettings } from "../settings-navigation";
 
 export function SettingsRow(props: {
   readonly disabled?: boolean;
+  readonly selected?: boolean;
   readonly icon: ComponentProps<typeof ListRow>["icon"];
   readonly label: string;
   readonly value?: string;
@@ -45,7 +46,8 @@ export function SettingsRow(props: {
     }
   };
   if (sidebar) {
-    const selected = props.target !== undefined && props.target === sidebar.selected;
+    const selected =
+      props.selected ?? (props.target !== undefined && props.target === sidebar.selected);
     return (
       <RowPressable
         accessibilityRole="button"

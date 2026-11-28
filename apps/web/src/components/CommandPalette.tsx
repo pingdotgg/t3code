@@ -1,3 +1,5 @@
+import { extensionEnvironment, extensionClientSurface } from "../state/extensions";
+import { openExtensionCommand } from "./ExtensionCommandHost";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -516,6 +518,16 @@ function OpenCommandPaletteDialog(props: {
   const settingsSearchItems = useCommandPaletteSettingsItems(deferredQuery.trim().length > 0);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const extensionEnvironmentId =
+    activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId;
+  const extensionSupported =
+    environments.find((entry) => entry.environmentId === extensionEnvironmentId)?.serverConfig
+      ?.environment.capabilities.extensions === true;
+  const extensions = useEnvironmentQuery(
+    extensionEnvironmentId && extensionSupported
+      ? extensionEnvironment.state({ environmentId: extensionEnvironmentId, input: {} })
+      : null,
+  );
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
   const referenceThreadRef =
@@ -1382,6 +1394,34 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  if (extensionEnvironmentId)
+    for (const extension of extensions.data ?? []) {
+      if (extension.status !== "running") continue;
+      for (const command of extension.manifest.commands ?? [])
+        actionItems.push({
+          kind: "action",
+          value: `extension:${extension.manifest.id}:${command.id}`,
+          title: command.title,
+          description: extension.manifest.name,
+          searchTerms: ["extension", command.description],
+          icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            openExtensionCommand({
+              environmentId: extensionEnvironmentId,
+              extension,
+              command,
+              context: {
+                surface: extensionClientSurface,
+                ...(activeThread
+                  ? { threadId: activeThread.id, projectId: activeThread.projectId }
+                  : activeDraftThread?.projectId
+                    ? { projectId: activeDraftThread.projectId }
+                    : {}),
+              },
+            });
+          },
+        });
+    }
 
   if (projects.length > 0) {
     const activeProjectTitle =

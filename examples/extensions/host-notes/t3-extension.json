@@ -1,0 +1,78 @@
+{
+  "id": "t3.host-notes",
+  "name": "Host notes",
+  "description": "Keep notes on your T3 server from any connected client or agent.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "main": "extension.mjs",
+  "events": ["thread.created"],
+  "commands": [
+    {
+      "id": "read",
+      "title": "Read host notes",
+      "description": "Read notes and the number of projects on this server.",
+      "menu": "thread",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "save",
+      "title": "Save a host note",
+      "description": "Append a note to this server's extension storage.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "read-notes",
+      "description": "Read notes saved on this T3 server.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    }
+  ],
+  "panels": [
+    {
+      "id": "notes",
+      "title": "Host notes",
+      "entry": "panel.html"
+    }
+  ],
+  "statusItems": [
+    {
+      "id": "notes",
+      "text": "Host notes",
+      "command": "read"
+    }
+  ],
+  "settings": {
+    "heading": {
+      "title": "Heading",
+      "description": "Heading returned with your notes.",
+      "type": "string",
+      "default": "Notes from this server"
+    }
+  },
+  "settingsPages": [
+    {
+      "id": "notes",
+      "title": "Host notes",
+      "description": "Configure and browse notes stored on this server.",
+      "settings": ["heading"],
+      "panelId": "notes"
+    }
+  ]
+}

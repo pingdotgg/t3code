@@ -3,7 +3,8 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { NavigationRow } from "../../components/ui/NavigationRow";
+import { FolderBrowser } from "./FolderBrowser";
+import { SectionTitle, ListSection, ListRow } from "./ProjectForm";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { Button } from "../../components/ui/Button";
@@ -41,9 +42,6 @@ import {
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
-  filterFilesystemBrowseEntries,
-  getFilesystemBrowsePath,
-  resolveFilesystemReadAccess,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
@@ -72,20 +70,18 @@ import {
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
-import { cn } from "../../lib/cn";
 import { m } from "../../i18n/messages";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
-import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
-import { useEnvironmentPresentation } from "../../state/presentation";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -102,11 +98,7 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import {
-  chooserDraftKey,
-  isMissingCloneParentBrowseFailure,
-  resolveAddProjectEnvironment,
-} from "./AddProjectScreen.logic";
+import { chooserDraftKey, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
 import { readNewTaskFlowState } from "../threads/new-task-flow-state";
 import {
   createNewTaskDraft,
@@ -159,20 +151,6 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
   return parseAddProjectRemoteSource(stringParam(value));
 }
 
-function SectionTitle(props: { readonly children: string }) {
-  return (
-    <Text
-      className={
-        Platform.OS === "android"
-          ? "px-4 text-sm font-t3-medium text-primary-text"
-          : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
-      }
-    >
-      {props.children}
-    </Text>
-  );
-}
-
 function AddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
   const insets = useSafeAreaInsets();
 
@@ -192,20 +170,6 @@ function AddProjectShell(props: { readonly children: ReactNode; readonly title: 
         {props.children}
       </ScrollView>
     </SettingsScreen>
-  );
-}
-
-function ListSection(props: { readonly children: ReactNode }) {
-  return (
-    <View
-      className={
-        Platform.OS === "android"
-          ? "overflow-hidden rounded-[28px] bg-grouped-card"
-          : "overflow-hidden rounded-[24px] bg-grouped-card"
-      }
-    >
-      {props.children}
-    </View>
   );
 }
 
@@ -235,74 +199,6 @@ function EnvironmentOptionRow(
             )
       }
     />
-  );
-}
-
-function ListRow(props: {
-  readonly title: string;
-  readonly subtitle?: string | null;
-  readonly icon: ReactNode;
-  readonly disabled?: boolean;
-  readonly selected?: boolean;
-  readonly isFirst?: boolean;
-  readonly right?: ReactNode;
-  readonly onPress?: () => void;
-}) {
-  if (Platform.OS === "android") {
-    return (
-      <NavigationRow
-        className="bg-grouped-card"
-        title={props.title}
-        subtitle={props.subtitle}
-        leading={props.icon}
-        trailing={props.right}
-        disabled={props.disabled}
-        onPress={props.onPress}
-        accessibilityRole={props.selected !== undefined ? "radio" : "button"}
-        accessibilityState={props.selected !== undefined ? { checked: props.selected } : undefined}
-      />
-    );
-  }
-  return (
-    <Pressable
-      disabled={props.disabled}
-      onPress={props.onPress}
-      className={cn(
-        "bg-grouped-card px-3.5 py-2.5 active:opacity-70",
-        !props.isFirst && "border-t border-border-subtle",
-        props.disabled && "opacity-[0.45]",
-      )}
-    >
-      <View className="flex-row items-center gap-3">
-        <View
-          className={
-            props.selected
-              ? "h-7 w-7 items-center justify-center rounded-full bg-primary"
-              : "h-7 w-7 items-center justify-center"
-          }
-        >
-          {props.icon}
-        </View>
-        <View className="flex-1 gap-0.5">
-          <Text className="text-base leading-snug font-t3-bold">{props.title}</Text>
-          {props.subtitle ? (
-            <Text className="text-sm leading-snug text-foreground-muted" numberOfLines={2}>
-              {props.subtitle}
-            </Text>
-          ) : null}
-        </View>
-        {"right" in props ? (
-          props.right
-        ) : !props.disabled ? (
-          <SymbolView
-            name="chevron.right"
-            size={13}
-            tintColorClassName="accent-chevron"
-            type="monochrome"
-          />
-        ) : null}
-      </View>
-    </Pressable>
   );
 }
 
@@ -1074,127 +970,6 @@ export function AddProjectRepositoryScreen(props: {
         <EmptyEnvironmentState />
       )}
     </AddProjectShell>
-  );
-}
-
-function FolderBrowser(props: {
-  readonly environment: EnvironmentOption;
-  readonly pathInput: string;
-  readonly setPathInput: (path: string) => void;
-  readonly navigateToBrowsePath: (input: {
-    readonly browseDirectoryPath: string;
-    readonly selectedDirectoryName?: string;
-  }) => Promise<boolean>;
-  readonly pinnedDirectoryName?: string;
-  readonly cloning?: boolean;
-}) {
-  const messages = useMessages();
-  const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
-  const browseInput =
-    browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null;
-  const fileAccessSession = useEnvironmentQuery(
-    environmentSession.sessionStateAtom(props.environment.environmentId),
-  );
-  const fileEnvironment = useEnvironmentPresentation(props.environment.environmentId);
-  const fileAccess = resolveFilesystemReadAccess(
-    {
-      isCatalogReady: fileEnvironment.isReady,
-      connection: fileEnvironment.presentation?.connection ?? null,
-      session: fileAccessSession.data,
-      sessionError: fileAccessSession.error,
-    },
-    messages,
-  );
-  const { canReadFiles } = fileAccess;
-  const browseState = useEnvironmentQuery(
-    !canReadFiles || browseInput === null
-      ? null
-      : filesystemEnvironment.browse({
-          environmentId: props.environment.environmentId,
-          input: browseInput,
-        }),
-  );
-  const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
-  const pinnedDirectoryMatches = isWindowsPlatform(props.environment.platform)
-    ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
-    : browsePath.filterQuery === pinnedDirectoryName;
-  const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
-  const { visibleEntries: visibleBrowseEntries } = filterFilesystemBrowseEntries(
-    browseState.data?.entries ?? [],
-    browseFilterQuery,
-  );
-  const gt = useGT();
-
-  return (
-    <>
-      <SectionTitle>{gt("Browse folders")}</SectionTitle>
-      {!canReadFiles && !fileAccess.isPending ? (
-        <ErrorBanner
-          message={fileAccess.error ?? gt("This connection cannot browse host folders.")}
-        />
-      ) : null}
-      {browseState.error === null ? null : isMissingCloneParentBrowseFailure({
-          cloning: props.cloning === true,
-          failure: browseState.failure,
-        }) ? (
-        <Text className="text-sm text-foreground-muted">
-          {gt("This folder does not exist yet. Cloning creates it.")}
-        </Text>
-      ) : (
-        <ErrorBanner message={browseState.error} />
-      )}
-      <ListSection>
-        {fileAccess.isPending || (browseState.isPending && browseState.data === null) ? (
-          <View className="items-center py-5">
-            <AppActivityIndicator colorClassName="accent-icon-muted" />
-          </View>
-        ) : null}
-        {browsePath.canBrowseUp ? (
-          <ListRow
-            title=".."
-            icon={
-              <SymbolView
-                name="arrow.turn.left.up"
-                size={Platform.OS === "android" ? 24 : 17}
-                tintColorClassName="accent-icon-muted"
-                type="monochrome"
-              />
-            }
-            isFirst
-            right={null}
-            onPress={() => {
-              if (browsePath.parentPath) {
-                void props.navigateToBrowsePath({
-                  browseDirectoryPath: browsePath.parentPath,
-                });
-              }
-            }}
-          />
-        ) : null}
-        {visibleBrowseEntries.map((entry, index) => (
-          <ListRow
-            key={entry.fullPath}
-            title={entry.name}
-            icon={
-              <SymbolView
-                name="folder"
-                size={Platform.OS === "android" ? 24 : 17}
-                tintColorClassName="accent-icon-muted"
-                type="monochrome"
-              />
-            }
-            isFirst={index === 0 && !browsePath.canBrowseUp}
-            right={null}
-            onPress={() => {
-              void props.navigateToBrowsePath({
-                browseDirectoryPath: browsePath.directoryPath,
-                selectedDirectoryName: entry.name,
-              });
-            }}
-          />
-        ))}
-      </ListSection>
-    </>
   );
 }
 

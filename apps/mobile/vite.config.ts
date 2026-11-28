@@ -5,6 +5,8 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/features/browser/LocalPreviewRouteScreen.test.tsx",
+  "src/features/keyboard/CommandPalette.test.tsx",
+  "src/features/settings/extension-lifecycle.test.tsx",
   "src/features/threads/LinkedThreadSheet.test.tsx",
   "src/features/workflows/WorkflowStepCard.test.tsx",
   "src/features/threads/ThreadGuestShareSheet.test.tsx",

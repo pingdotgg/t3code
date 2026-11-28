@@ -7,6 +7,18 @@ import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 import { settingsNavGroups, SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
+vi.mock("./useExtensionSettingsPages", () => ({
+  useExtensionSettingsPages: () => ({
+    pages: [
+      {
+        entry: { manifest: { id: "test.extension", name: "Test extension" } },
+        page: { id: "settings", title: "Test extension" },
+      },
+    ],
+  }),
+  extensionSettingsPath: (id: string, page: string) => `/settings/extension/${id}/${page}`,
+}));
+
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
     { id: "theme", title: "Theme", to: "/settings/appearance" },
@@ -114,9 +126,12 @@ it("moves Tab through every settings section", async () => {
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
 
-  const sections = settingsNavGroups(false)
-    .flatMap((group) => group.paths)
-    .map((to) => SETTINGS_SECTION_LABELS[to]);
+  const sections = [
+    ...settingsNavGroups(false)
+      .flatMap((group) => group.paths)
+      .map((to) => SETTINGS_SECTION_LABELS[to]),
+    "Test extension",
+  ];
   const tabbed: string[] = [];
   for (let step = 0; step < sections.length; step += 1) {
     await userEvent.tab();
@@ -125,13 +140,25 @@ it("moves Tab through every settings section", async () => {
     tabbed.push(section.textContent ?? "");
   }
   expect(tabbed).toEqual(sections);
+  await userEvent.keyboard("{Home}");
+  await expect.element(page.getByRole("button", { name: "General", exact: true })).toHaveFocus();
+  await userEvent.keyboard("{End}");
+  await expect
+    .element(page.getByRole("button", { name: "Test extension", exact: true }))
+    .toHaveFocus();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(_screen.router?.state.location.pathname).toBe(
+      "/settings/extension/test.extension/settings",
+    ),
+  );
 });
 
 it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
   await page.viewport(width, 800);
   await using _screen = await renderNav();
 
-  for (const name of ["Agents", "Code", "Connections"]) {
+  for (const name of ["Agents", "Code", "Connections", "Installed extensions"]) {
     const heading = page.getByRole("heading", { name, level: 3 });
     await expect.element(heading).toBeInTheDocument();
     const group = page.getByRole("group", { name }).element();
@@ -141,7 +168,7 @@ it.each([1280, 390])("names each group by a heading outside it at %ipx wide", as
     );
   }
   const groups = page.getByRole("group").elements();
-  expect(groups).toHaveLength(settingsNavGroups(false).length);
+  expect(groups).toHaveLength(settingsNavGroups(false).length + 1);
   for (const group of groups) {
     const first = group.querySelector("[data-settings-section]")?.textContent;
     const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");

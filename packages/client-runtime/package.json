@@ -667,6 +667,14 @@
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
     },
+    "./state/extensions": {
+      "types": "./src/state/extensions.ts",
+      "default": "./src/state/extensions.ts"
+    },
+    "./extension-panel": {
+      "types": "./src/extensionPanel.ts",
+      "default": "./src/extensionPanel.ts"
+    },
     "./pull-request-references": {
       "types": "./src/pullRequestReferences.ts",
       "default": "./src/pullRequestReferences.ts"

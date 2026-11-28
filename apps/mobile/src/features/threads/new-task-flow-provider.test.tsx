@@ -21,6 +21,7 @@ import type { ComposerDraft } from "../../state/use-composer-drafts";
 
 const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
+  environments: vi.fn(),
   status: vi.fn(),
   refs: vi.fn(),
   readFile: vi.fn(),
@@ -107,7 +108,7 @@ vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map()
 vi.mock("../../state/project-has-threads", () => ({ useProjectHasThreads: () => false }));
 vi.mock("../../state/workspace", () => ({
   useConnectionsReady: () => true,
-  useWorkspaceEnvironments: () => [],
+  useWorkspaceEnvironments: mocks.environments,
 }));
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
@@ -137,6 +138,7 @@ function setup() {
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
   mocks.projects.mockReturnValue(projects);
+  mocks.environments.mockReturnValue([]);
   mocks.presentation.mockReturnValue({
     isReady: true,
     presentation: { connection: { phase: "connected", error: null } },
@@ -250,18 +252,25 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean, pickOnMount?: EnvironmentProject) {
+    async render(
+      active: boolean,
+      options?: { routeDraftId?: string; pickOnMount?: EnvironmentProject },
+    ) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
-            <NewTaskFlowProvider active={active} flowKey="test-flow">
-              <Probe pickOnMount={pickOnMount} />
+            <NewTaskFlowProvider
+              active={active}
+              flowKey="test-flow"
+              {...(options?.routeDraftId ? { routeDraftId: options.routeDraftId } : {})}
+            >
+              <Probe pickOnMount={options?.pickOnMount} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
         ),
       );
       // The draft screen applies a project whenever it shows without a draft.
-      if (active && current.draftKey === null) {
+      if (active && !options?.routeDraftId && current.draftKey === null) {
         await act(async () => current.setProject(projects[0]!));
       }
     },
@@ -281,7 +290,7 @@ function setup() {
 
 it("keeps the draft on a project the screen picks as it mounts", async () => {
   using screen = setup();
-  await screen.render(true, screen.projects[2]);
+  await screen.render(true, { pickOnMount: screen.projects[2] });
   expect(screen.current.selectedProject).toEqual(screen.projects[2]);
   expect(screen.snapshot(screen.current.draftKey).project).toEqual({
     environmentId: "two",
@@ -385,6 +394,19 @@ it("uses cached repository capability and branch defaults while offline", async 
   await screen.render(true);
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
+});
+
+it("retains the stamped environment while the route draft's project is pending", async () => {
+  using screen = setup();
+  const environmentId = EnvironmentId.make("remote");
+  mocks.environments.mockReturnValue([{ environmentId, connectionState: "connecting" }]);
+  const draftKey = mocks.createDraft({
+    environmentId,
+    projectId: ProjectId.make("loading-project"),
+  });
+  await screen.render(true, { routeDraftId: draftKey });
+  expect(screen.current.selectedProject).toBeNull();
+  expect(screen.current.stampedEnvironmentId).toBe(environmentId);
 });
 
 const playbookPrompt = (machine: string) =>

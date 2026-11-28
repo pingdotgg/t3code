@@ -19,6 +19,15 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // Catalog snapshots include stored extension settings, which can contain credentials.
+  [WS_METHODS.extensionsList]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsSubscribe]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsInstall]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsManage]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsSettings]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsInvoke]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.extensionsPanel]: AuthEnvironmentMaintainScope,
+
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   // An MCP sign-in stores a credential for the agent, as an account sign-in does.
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,

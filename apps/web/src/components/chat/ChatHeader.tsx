@@ -1,3 +1,4 @@
+import { ExtensionActions } from "./ExtensionActions";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -409,6 +410,11 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <ExtensionActions
+        environmentId={activeThreadEnvironmentId}
+        {...(isServerThread ? { threadId: activeThreadId } : {})}
+        {...(activeProject ? { projectId: activeProject.id } : {})}
+      />
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );

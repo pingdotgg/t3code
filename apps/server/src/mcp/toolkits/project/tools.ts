@@ -80,7 +80,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
 const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
-    "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
+    "Register a folder; createWorkspaceRootIfMissing creates it. Rejects already registered folders. Without workspaceRoot, creates a git repo from title with README, icon and first commit; commitError leaves the project intact. Clone first with t3_project_clone when needed.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...ProjectCreatePayload.fields,
@@ -131,7 +131,7 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
-    "Create a top-level thread in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+    "Start a top-level thread in its bound workspace; task in message. Omit projectId/model/modes to inherit; outside a thread pass projectId or scratch. Modes cannot exceed yours. Retry with the same clientRequestId. Use t3_thread_read or t3_thread_wait; cite its link verbatim.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),

@@ -1,3 +1,4 @@
+import { EXTENSION_DEVELOPMENT_DISCOVERY } from "@t3tools/provider-core/server/extensionDevelopmentSkill";
 import { MspError, type ProcessExit, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
@@ -2211,13 +2212,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 input: [
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({
-                      agentFeedback: hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                      runtimePolicy: turnInput.runtimePolicy,
-                    }),
+                    text: `${EXTENSION_DEVELOPMENT_DISCOVERY}
+
+${buildRuntimeInstructions({
+  agentFeedback: hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
+  harness: "Muse Code",
+  model: session.model ?? undefined,
+  reasoningEffort: effort,
+  runtimePolicy: turnInput.runtimePolicy,
+})}`,
                   },
                   ...parts,
                 ],

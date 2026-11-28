@@ -1,3 +1,5 @@
+import { EnvironmentId, ThreadId, type ProjectId } from "@t3tools/contracts";
+import { useExtensionMenu } from "./useExtensionMenu";
 import { useGT, useMessages } from "gt-react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
@@ -16,6 +18,7 @@ import {
 
 export function ThreadHeader(props: {
   readonly title: string;
+  readonly projectId?: ProjectId;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
   readonly onReturnToThread?: () => void;
@@ -24,6 +27,11 @@ export function ThreadHeader(props: {
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
 }) {
+  const extensionMenu = useExtensionMenu(
+    EnvironmentId.make(String(props.gitControls.environmentId)),
+    props.draft ? undefined : ThreadId.make(String(props.gitControls.threadId)),
+    props.projectId,
+  );
   const gt = useGT();
   const m = useMessages();
   const goBack = useWorkspaceBackNavigation();
@@ -44,7 +52,9 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
-  const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
+  const menus = [gitMenu, terminalMenu, extensionMenu].filter(
+    (menu): menu is AppBarMenu => menu !== null,
+  );
 
   return (
     <AppBar

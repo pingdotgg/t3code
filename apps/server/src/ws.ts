@@ -1,3 +1,4 @@
+import * as ExtensionService from "./extensions/ExtensionService.ts";
 import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
@@ -1485,6 +1486,7 @@ export const layerWsRpc = (
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const extensions = yield* ExtensionService.ExtensionService;
       const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
@@ -2041,6 +2043,13 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [WS_METHODS.extensionsList]: () => extensions.list,
+        [WS_METHODS.extensionsSubscribe]: () => extensions.changes,
+        [WS_METHODS.extensionsInstall]: (input) => extensions.install(input),
+        [WS_METHODS.extensionsManage]: (input) => extensions.manage(input),
+        [WS_METHODS.extensionsSettings]: (input) => extensions.setSettings(input),
+        [WS_METHODS.extensionsInvoke]: (input) => extensions.invoke(input),
+        [WS_METHODS.extensionsPanel]: (input) => extensions.panel(input),
         [WS_METHODS.issuesList]: (input) => issues.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),
@@ -3834,6 +3843,7 @@ export const WS_RPC_SERVER_OPTIONS = {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
+    const extensions = yield* ExtensionService.ExtensionService;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -3924,6 +3934,7 @@ export const layer = Layer.unwrap(
               readSettingsClient(url.value),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(Layer.succeed(ExtensionService.ExtensionService, extensions)),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),

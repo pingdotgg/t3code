@@ -1,3 +1,5 @@
+import { SettingsExtensionPageRouteScreen } from "./features/settings/SettingsExtensionPageRouteScreen";
+import { SettingsExtensionsRouteScreen } from "./features/settings/SettingsExtensionsRouteScreen";
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
@@ -167,6 +169,8 @@ const { title: _compactBrandTitle, ...compactBrandHeaderOptions } = getCompactBr
 // route options stay plain objects because registerPresentedRoutes reads them at load.
 const ROUTE_TITLES: Readonly<Record<string, string>> = {
   Settings: msg("Settings"),
+  SettingsExtensionPage: msg("Extension"),
+  SettingsExtensions: msg("Extensions"),
   SettingsEnvironments: msg("Environments"),
   SettingsEnvironmentDetail: msg("Environment"),
   SettingsEnvironmentNewThreads: msg("Threads"),
@@ -367,6 +371,15 @@ const SETTINGS_SCREENS = {
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
     linking: "settings/follow-ups",
+    options: settingsPage(),
+  }),
+  SettingsExtensionPage: createNativeStackScreen({
+    screen: SettingsExtensionPageRouteScreen,
+    options: pageRoute(),
+  }),
+  SettingsExtensions: createNativeStackScreen({
+    screen: SettingsExtensionsRouteScreen,
+    linking: "settings/extensions",
     options: settingsPage(),
   }),
   SettingsScheduledTasks: createNativeStackScreen({

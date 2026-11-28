@@ -358,7 +358,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
 
 const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
   description:
-    "Unlink a thread's PRs whose last known state is in `states`. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
+    "Unlink thread PRs whose last known state is in states. Unknown states stay linked. Prefer over repeated unlink_pull_request calls.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
@@ -405,7 +405,7 @@ const WatchPullRequestInput = Schema.Struct({
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, conflicts, and once on merge or close unless you did it via CLI. Handle old comments first; only new ones wake you. After this call, end your turn. The watch stays on: do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch and link an open PR here. Wakes on failed checks, required checks passing, new comments/reviews, conflicts, and once on merge/close unless via CLI. Handle old comments first. Call, then end your turn. Watch persists; never rewatch on wake. Verify merge readiness.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
@@ -465,7 +465,7 @@ export type ReadPullRequestGuideResult = typeof ReadPullRequestGuideResult.Type;
 
 const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
   description:
-    "Write review guides for up to 20 PRs (the tour in the PR Guide tab). Returns once runs start. Each run takes minutes in a temporary checkout. A run for the same head is joined. Read with `read_pull_request_guide`. Fails while guides are off.",
+    "Start PR Guide tours for up to 20 PRs; returns after startup. Runs take minutes in temporary checkouts; same-head runs are joined. Read via read_pull_request_guide. Fails while guides are off.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     pullRequests: Schema.Array(GuideTarget).check(Schema.isMinLength(1), Schema.isMaxLength(20)),

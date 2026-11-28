@@ -1,3 +1,4 @@
+import * as ExtensionService from "./extensions/ExtensionService.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { WebSocket } from "@effect/platform-node/NodeWS";
@@ -858,6 +859,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
+  Layer.mock(ExtensionService.ExtensionService)({}),
   Layer.mock(McpSignIn.McpSignIn)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
