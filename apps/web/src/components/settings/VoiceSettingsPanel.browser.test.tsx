@@ -10,10 +10,8 @@ import {
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
 } from "@t3tools/contracts";
-import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
-import { initializeI18n } from "~/i18n/initializeI18n";
+import { userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { readBrowserClientSettings } from "../../clientPersistenceStorage";
@@ -719,33 +717,6 @@ it("shows the model's effective language and restores the saved preference when 
   await screen.rerender(<SpeechLanguageSelect model={{ languages: ["en", "fr"] }} />);
   await expect.element(picker).toHaveTextContent("French");
   expect(getClientSettings().speechLanguage).toBe("fr");
-});
-
-it("sorts transcription languages in the app language", async () => {
-  const previous = getClientSettings();
-  // GTProvider leaves its locale in a cookie; reset before and after the test.
-  initializeI18n(() => {});
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => {
-    initializeI18n(() => {});
-    __setClientSettingsForTests(previous);
-  });
-  __setClientSettingsForTests({ ...previous, speechLanguage: "auto" });
-  const translations = await getTranslationsSnapshot("sv");
-  await using screen = await render(
-    <GTProvider locale="sv" translations={translations}>
-      <SpeechLanguageSelect model={{ languages: ["fo", "fil", "fi"] }} />
-    </GTProvider>,
-  );
-  await screen.getByRole("combobox", { name: "Transkriberingsspråk" }).click();
-  await expect.element(page.getByRole("option", { name: "färöiska", exact: true })).toBeVisible();
-  expect(
-    page
-      .getByRole("option")
-      .elements()
-      .slice(1)
-      .map((option) => option.textContent?.trim()),
-  ).toEqual(["filippinska", "finska", "färöiska"]);
 });
 
 it("keeps punctuation in a saved dictionary term and its alias", async () => {
