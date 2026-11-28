@@ -971,7 +971,7 @@
   "37ab148aaa486051": "已拒绝命令",
   "0112efa1861c7a30": "已停止命令",
   "930808342aac8010": "已运行命令",
-  "3ab6b281a0991766": "{count, plural, =1 {已检查关联的 pull request } other {已检查关联的 pull request {count} 次}}",
+  "3ab6b281a0991766": "{count, plural, =1 {已检查关联的 pull request} other {已检查关联的 pull request {count} 次}}",
   "857e92a89b6b6257": "{count, plural, other {已读取 {count} 个文件}}",
   "466ac7fcdb97bb76": "{count, plural, other {已更改 {count} 个文件}}",
   "85e7e6dd7b82b428": "{count, plural, other {已运行 {count} 条命令}}",
