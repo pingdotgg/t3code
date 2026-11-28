@@ -529,6 +529,8 @@ it("imports Pi conversations through the environment RPC and can retry a changed
     container: appContainer(),
     router: false,
   });
+  // Agent history is read only after "Find my projects" (#43948).
+  await page.getByRole("button", { name: "Find my projects", exact: true }).click();
   await expect
     .element(page.getByRole("button", { name: "Review all 1", exact: true }))
     .toBeVisible();
@@ -551,7 +553,19 @@ it("imports Pi conversations through the environment RPC and can retry a changed
   changed = false;
   await router.navigate({ to: "/welcome" });
   await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
-  await page.getByText("Import projects and their threads", { exact: true }).click();
+  const findProjects = page.getByRole("button", { name: "Find my projects", exact: true });
+  const reviewAll = page.getByRole("button", { name: "Review all 1", exact: true });
+  const importRow = page.getByText("Import projects and their threads", { exact: true });
+  await vi.waitFor(() => {
+    if (!findProjects.query() && !reviewAll.query() && !importRow.query())
+      throw new Error("waiting");
+  });
+  if (findProjects.query()) await findProjects.click();
+  await vi.waitFor(() => {
+    if (!reviewAll.query() && !importRow.query()) throw new Error("waiting");
+  });
+  if (reviewAll.query()) await reviewAll.click();
+  await importRow.click();
   await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
   await expect
     .element(page.getByText("Imported 2 threads. 1 thread could not be imported.", { exact: true }))
