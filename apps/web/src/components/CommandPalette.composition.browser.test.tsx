@@ -10,22 +10,17 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { AsyncResult } from "effect/reactivity";
 
-const browse = vi.hoisted(() => ({ isPending: false }));
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
+  isBrowsePending: false,
   lookupRepository: vi.fn(),
 }));
-
-function setup({
-  isBrowsePending = false,
-  deniedScope,
-  sourceControl,
-}: { isBrowsePending?: boolean; deniedScope?: string | undefined; sourceControl?: unknown } = {}) {
-  browse.isPending = isBrowsePending;
+const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = false) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
-}
+  scopes.isBrowsePending = isBrowsePending;
+};
 const githubAvailable = {
   versionControlSystems: [],
   sourceControlProviders: [
@@ -141,7 +136,7 @@ vi.mock("../state/query", async (original) => ({
   useEnvironmentQuery: () => ({
     data: scopes.sourceControl,
     isLoading: false,
-    isPending: browse.isPending,
+    isPending: scopes.isBrowsePending,
   }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
@@ -190,7 +185,7 @@ it.each([
 ])(
   "Tab with nothing to complete in the folder path: %j",
   async ({ isBrowsePending, leavesInput }) => {
-    setup({ isBrowsePending });
+    setup(undefined, undefined, isBrowsePending);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText("Local folder", { exact: true }).click();
@@ -232,7 +227,7 @@ it.each([
 ])(
   "tells screen readers how to submit the $step step",
   async ({ source, keys, deniedScope, description }) => {
-    setup({ deniedScope });
+    setup(deniedScope);
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(source, { exact: true }).click();
@@ -273,7 +268,7 @@ it.each([
 });
 
 it("tells screen readers whether a new project will be published", async () => {
-  setup({ sourceControl: githubAvailable });
+  setup(undefined, githubAvailable);
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("New project", { exact: true }).click();
