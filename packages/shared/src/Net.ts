@@ -222,14 +222,13 @@ export const make = () => {
     hasListenerOnHost,
     reserveLoopbackPort,
     findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred, host) {
-      const wildcardHost =
-        host !== undefined && (host === "" || isWildcardHost(host))
-          ? normalizeHostname(host)
-          : undefined;
+      const normalizedHost = host === undefined ? undefined : normalizeHostname(host);
+      const wildcardHost = host === "" || isWildcardHost(host) ? normalizedHost : undefined;
+      const bindHost = normalizedHost === "::1" ? normalizedHost : wildcardHost;
       if (preferred > 0 && (yield* isPortAvailableForHost(preferred, host))) {
-        if (wildcardHost === undefined) return preferred;
+        if (bindHost === undefined) return preferred;
 
-        const canBind = yield* probeBind(preferred, wildcardHost).pipe(
+        const canBind = yield* probeBind(preferred, bindHost).pipe(
           Effect.catchTags({
             NetListenError: (cause) =>
               isUnavailableIpv6Probe(cause)
@@ -245,7 +244,7 @@ export const make = () => {
         if (canBind) return preferred;
       }
       if (wildcardHost === undefined) {
-        return yield* reserveLoopbackPort(listensOnLoopback(host) ? undefined : host);
+        return yield* reserveLoopbackPort(bindHost ?? (listensOnLoopback(host) ? undefined : host));
       }
 
       // A wildcard bind can succeed while another address family owns the localhost port.
