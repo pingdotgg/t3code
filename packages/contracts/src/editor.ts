@@ -145,6 +145,14 @@ export const EDITORS = [
     launchStyle: "line-column",
     jetbrainsProductCode: "WS",
   },
+  {
+    id: "qtcreator",
+    label: "Qt Creator",
+    commands: ["qtcreator"],
+    // Reuse a running instance; without it every open starts another Qt Creator.
+    baseArgs: ["-client"],
+    launchStyle: "direct-path",
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
