@@ -2,7 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSpellCheckerLanguages } from "./SpellCheckerLanguages.ts";
 
-const AVAILABLE = ["de-DE", "en-AU", "en-GB", "en-US", "fr", "pt-BR", "pt-PT"];
+// Chromium lists a bare "en" (the en-US dictionary) next to the regional ones.
+const AVAILABLE = ["de-DE", "en", "en-AU", "en-GB", "en-US", "fr", "pt-BR", "pt-PT"];
 
 describe("resolveSpellCheckerLanguages", () => {
   it("replaces the packaged en-US default with the OS languages in order", () => {

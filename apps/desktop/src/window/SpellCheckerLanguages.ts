@@ -25,8 +25,11 @@ export const resolveSpellCheckerLanguages = (
   if (current.length > 1 || (current[0] ?? PACKAGED_DEFAULT_LANGUAGE) !== PACKAGED_DEFAULT_LANGUAGE)
     return undefined;
   const tags = preferredSystemLanguages.map(normalizeLanguageTag);
-  const exactMatches = tags.map((tag) => findExactLanguage(tag, available));
-  // GLib follows en_GB with a generated "en"; that fallback must not add another English dictionary.
+  // GLib follows en_GB with a generated "en", and Chromium's "en" is the en-US dictionary, so a tag
+  // without a region is only a fallback and must not add another dictionary for its language.
+  const exactMatches = tags.map((tag) =>
+    tag.includes("-") ? findExactLanguage(tag, available) : undefined,
+  );
   const coveredBases = new Set(
     exactMatches.flatMap((match) => (match ? [baseLanguage(match)] : [])),
   );
