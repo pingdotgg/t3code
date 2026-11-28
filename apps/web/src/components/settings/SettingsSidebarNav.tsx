@@ -65,6 +65,8 @@ import {
   useHasSecretProvidersEnvironment,
 } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { ALL_PROJECTS_VALUE, selectProjectAxis } from "./settingsScopeAxis";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -140,6 +142,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
   const navigate = useNavigate();
   const preloadSection = useSettingsSectionPrefetch();
+  const scope = useOptionalSettingsScope();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -204,6 +207,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   }, [compactSearchOpen]);
 
   const handleSectionClick = (to: SettingsPath) => {
+    // Settings keep the picked project across pages, so on a project's page Projects goes back to the list.
+    if (to === "/settings/projects" && pathname === to && scope?.search.project) {
+      scope.selectScope(selectProjectAxis(scope.search, ALL_PROJECTS_VALUE));
+      return;
+    }
     void navigate({
       to,
       hash: "",
