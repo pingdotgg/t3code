@@ -1270,7 +1270,8 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
     | "activeRunId"
     | "latestRunId"
     | "hasActionableProposedPlan"
-  >;
+  > &
+  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt">;
 
 type ShellThreadRow = {
   readonly fork_run_ids_json: string | null;
@@ -9713,6 +9714,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               archivedAt: state.thread.archivedAt,
               snoozedUntil: state.thread.snoozedUntil ?? null,
               snoozedAt: state.thread.snoozedAt ?? null,
+              lastSnoozeWakeAt: state.thread.lastSnoozeWakeAt ?? null,
               pendingGuestMessageCount: pendingGuestMessageCount(state.thread.guestShare),
               activeRunId: state.activeRunId,
               latestRunId: state.latestRunId,
