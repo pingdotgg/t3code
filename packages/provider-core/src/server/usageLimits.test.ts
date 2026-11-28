@@ -104,6 +104,54 @@ describe("applyUsageLimitsUpdate", () => {
       zeroSpendCap: true,
     });
   });
+  it("records every credit block it is sent so an older probe cannot grant over it", () => {
+    const later = "2026-09-03T12:00:05.000Z";
+    const revoke = { windows: [], continuesOnCredits: false } as const;
+    const revoked = applyUsageLimitsUpdate({
+      previous: { ...published, continuesOnCredits: true },
+      checkedAt: later,
+      update: revoke,
+    });
+    expect(revoked).toEqual({ ...published, checkedAt: later, continuesOnCredits: false });
+    // No grant yet: a probe still in flight may be about to make one from an older read.
+    const blockedFirst = applyUsageLimitsUpdate({
+      previous: published,
+      checkedAt: later,
+      update: revoke,
+    });
+    expect(blockedFirst).toEqual({ ...published, checkedAt: later, continuesOnCredits: false });
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: blockedFirst,
+        probed: { ...published, continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    // A different block after one is already recorded: a probe started in between must not win.
+    const blockedAgain = applyUsageLimitsUpdate({
+      previous: blockedFirst,
+      checkedAt: "2026-09-03T12:00:09.000Z",
+      update: revoke,
+    });
+    expect(blockedAgain?.checkedAt).toBe("2026-09-03T12:00:09.000Z");
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: blockedAgain,
+        probed: { ...published, checkedAt: "2026-09-03T12:00:07.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt: later, update: revoke }),
+    ).toBeUndefined();
+
+    const granted = { ...published, continuesOnCredits: true };
+    expect(
+      applyUsageLimitsUpdate({
+        previous: granted,
+        checkedAt: later,
+        update: { windows: [{ ...session, usedPercent: 55 }] },
+      })?.continuesOnCredits,
+    ).toBe(true);
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
@@ -129,6 +177,33 @@ describe("resolveUsageLimitsAfterProbe", () => {
       checkedAt: live.checkedAt,
       windows: live.windows,
     });
+
+    // A probe that read the account before a block was reported cannot grant over it.
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...live, continuesOnCredits: false },
+        probed: { ...probed, continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(false);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: { ...live, continuesOnCredits: false },
+        probed: { ...probed, checkedAt: "2026-09-03T12:00:06.000Z", continuesOnCredits: true },
+      })?.continuesOnCredits,
+    ).toBe(true);
+
+    // Sparse limits from before any probe succeeded keep their block but not their windows.
+    const granted = { ...probed, continuesOnCredits: true };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: {
+          ...live,
+          unavailable: { reason: "probeFailed" as const },
+          continuesOnCredits: false,
+        },
+        probed: granted,
+      }),
+    ).toEqual({ ...granted, continuesOnCredits: false });
 
     const sameTime = { ...probed, checkedAt: live.checkedAt };
     const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
