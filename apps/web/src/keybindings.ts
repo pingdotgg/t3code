@@ -21,6 +21,7 @@ import {
   shortcutKeyFromEvent as sharedShortcutKeyFromEvent,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
+import { hasLiveAssistantSelection } from "./lib/assistantSelectionState";
 import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 import { getKeyboardLayoutMap } from "./keyboardLayout";
@@ -48,6 +49,7 @@ export interface ShortcutMatchContext {
   isWeb: boolean;
   isDesktop: boolean;
   editableFocus?: boolean;
+  assistantSelection?: boolean;
   [key: string]: boolean;
 }
 
@@ -79,6 +81,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isWeb: !isElectron,
     isDesktop: isElectron,
     editableFocus: false,
+    assistantSelection: false,
     isMac: isMacPlatform(resolvePlatform(options)),
     ...options?.context,
   };
@@ -99,12 +102,15 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
-  whenAst: KeybindingWhenNode | undefined,
-  context: ShortcutMatchContext,
-): boolean {
-  if (!whenAst) return true;
-  return evaluateWhenNode(whenAst, context);
+function bindingApplies(binding: ResolvedKeybindingRule, context: ShortcutMatchContext): boolean {
+  // Even a rule without `when` only cites while live assistant text is selected and no editable field owns focus.
+  if (
+    binding.command === "chat.citeSelection" &&
+    (!context.assistantSelection || context.editableFocus)
+  ) {
+    return false;
+  }
+  return !binding.whenAst || evaluateWhenNode(binding.whenAst, context);
 }
 
 export function shortcutConflictKey(
@@ -158,7 +164,7 @@ export function effectiveShortcutsForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!bindingApplies(binding, context)) continue;
 
     const shortcut = shortcutForContext(binding, context);
     const conflictKey = shortcutConflictKey(shortcut, platform);
@@ -199,14 +205,19 @@ export function resolveShortcutCommand(
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
-  if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
-    context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
+  if (typeof document !== "undefined") {
+    if (options?.context?.editableFocus === undefined) {
+      context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
+    }
+    if (options?.context?.assistantSelection === undefined) {
+      context.assistantSelection = hasLiveAssistantSelection();
+    }
   }
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!bindingApplies(binding, context)) continue;
     if (
       !matchesKeybindingShortcut(
         event,
@@ -275,6 +286,31 @@ export function formatShortcutLabel(
 ): string {
   const parts = formatShortcutKeyParts(shortcut, platform);
   return isMacPlatform(platform) ? parts.join("") : parts.join("+");
+}
+
+const ARIA_KEY_NAMES: Readonly<Record<string, string>> = {
+  " ": "Space",
+  "+": "Plus",
+  escape: "Escape",
+  arrowup: "ArrowUp",
+  arrowdown: "ArrowDown",
+  arrowleft: "ArrowLeft",
+  arrowright: "ArrowRight",
+};
+
+/** WAI-ARIA `aria-keyshortcuts` syntax, such as `Control+Shift+L`. */
+export function formatAriaKeyshortcut(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): string {
+  const useMetaForMod = isMacPlatform(platform);
+  const parts: string[] = [];
+  if (shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod)) parts.push("Control");
+  if (shortcut.altKey) parts.push("Alt");
+  if (shortcut.shiftKey) parts.push("Shift");
+  if (shortcut.metaKey || (shortcut.modKey && useMetaForMod)) parts.push("Meta");
+  parts.push(ARIA_KEY_NAMES[shortcut.key] ?? formatShortcutKeyLabel(shortcut.key));
+  return parts.join("+");
 }
 
 export function shortcutLabelForCommand(
