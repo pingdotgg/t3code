@@ -576,8 +576,10 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 // CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+// The ranges skip nonspacing marks that would make a narrow base look wide.
+// Symbols such as ™, © and ↔ show as text, one column, unless a variation selector makes them emoji.
 const WIDE_GRAPHEME =
-  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+  /\p{Emoji_Presentation}|\ufe0f|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\u3029\u302e-\u3098\u309b-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{16fe0}-\u{16fe3}\u{16ff0}-\u{191d2}\u{1aff0}-\u{1b2fb}\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}]/u;
 let graphemes: Intl.Segmenter | undefined;
 
 function monospaceWidth(text: string): number {

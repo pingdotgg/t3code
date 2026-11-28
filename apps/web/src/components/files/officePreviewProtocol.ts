@@ -80,6 +80,9 @@ export type OfficeWorkerResult =
         truncated: boolean;
         rowCount: number;
         columns: number;
+        /** Zero-based sheet positions of the rows and columns shown, when some are hidden. */
+        rowIndexes: number[] | undefined;
+        columnIndexes: number[] | undefined;
       }[];
     }
   | {
