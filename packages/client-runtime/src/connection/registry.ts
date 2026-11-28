@@ -106,11 +106,12 @@ export class EnvironmentRegistry extends Context.Service<
     /**
      * Succeeds with `false` and changes nothing when the environment is
      * platform-managed, since the host owns that entry. With `knownAddressOnly`, it fails like
-     * `assertKnownAddress`, checked under the environment's lease.
+     * `assertKnownAddress`, checked under the environment's lease. A route added to a saved
+     * environment keeps the saved label unless `useRegistrationLabel` marks it as a requested edit.
      */
     readonly register: (
       registration: ConnectionRegistration,
-      options?: { readonly knownAddressOnly?: boolean },
+      options?: { readonly knownAddressOnly?: boolean; readonly useRegistrationLabel?: boolean },
     ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
     /**
      * Fails when the route would add a new address to a saved user environment. Pairing that does
@@ -579,7 +580,7 @@ export const make = Effect.gen(function* () {
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
-    options?: { readonly knownAddressOnly?: boolean },
+    options?: { readonly knownAddressOnly?: boolean; readonly useRegistrationLabel?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
@@ -598,7 +599,8 @@ export const make = Effect.gen(function* () {
         if (previous !== undefined) {
           // Keep the saved label (a local rename) unless T3 Connect, which owns relay labels, sent it.
           const route =
-            incoming.target._tag === "RelayConnectionTarget"
+            incoming.target._tag === "RelayConnectionTarget" ||
+            options?.useRegistrationLabel === true
               ? incoming
               : { ...incoming, target: targetWithLabel(incoming.target, previous.target.label) };
           const existing = connectionRoutes(previous);
