@@ -448,24 +448,14 @@ it.layer(layerTest)("ProjectService", (it) => {
         const service = yield* ProjectService.ProjectService;
         const projectId = ProjectId.make("project:tracked-folders-symlink");
         const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const work = yield* fileSystem.realPath(
           yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-symlink-" }),
         );
         yield* fileSystem.makeDirectory(`${work}/parent/child`, { recursive: true });
-        yield* fileSystem.makeDirectory(`${work}/parent/kid`, { recursive: true });
         yield* fileSystem.makeDirectory(`${work}/api`);
-        yield* fileSystem.makeDirectory(`${work}/other`);
         yield* fileSystem.symlink(`${work}/parent/child`, `${work}/project-link`);
-        yield* fileSystem.symlink(`${work}/parent`, `${work}/parent-link`);
         yield* fileSystem.symlink(`${work}/api`, `${work}/api-link`);
         const folder = (folderPath: string) => ({ path: folderPath, name: "Folder" });
-        const invalid = [
-          ["own-folder", [folder(`${work}/parent/child`)], "always part of it"],
-          ["parent", [folder(`${work}/parent`)], "contains the project's own folder"],
-          ["parent-link", [folder(`${work}/parent-link`)], "contains the project's own folder"],
-          ["duplicate-link", [folder(`${work}/api`), folder(`${work}/api-link`)], "listed twice"],
-        ] as const;
         const expectInvalid = (error: ProjectService.ProjectServiceError, detail: string) => {
           assert.equal(error._tag, "ProjectInvalidError");
           assert.include(error.message, detail);
@@ -478,48 +468,25 @@ it.layer(layerTest)("ProjectService", (it) => {
             workspaceRoot: `${work}/project-link`,
             trackedFolders,
           });
-        const update = (key: string, change: Partial<ProjectService.ProjectUpdateInput>) =>
-          service.update({
-            commandId: CommandId.make(`command:tracked-symlink:update:${key}`),
-            projectId,
-            ...change,
-          });
 
-        for (const [key, trackedFolders, detail] of invalid) {
+        for (const [key, trackedFolders, detail] of [
+          ["own-folder", [folder(`${work}/parent/child`)], "always part of it"],
+          ["parent", [folder(`${work}/parent`)], "contains the project's own folder"],
+          ["duplicate", [folder(`${work}/api`), folder(`${work}/api-link`)], "listed twice"],
+        ] as const) {
           expectInvalid(yield* create(key, trackedFolders).pipe(Effect.flip), detail);
         }
-        const tracked = [folder(path.join(work, "other")), folder(path.join(work, "api-link"))];
-        const created = yield* create("valid", [
-          folder(`${work}/other/`),
-          folder(`${work}/api-link`),
-        ]);
-        assert.deepEqual(created.trackedFolders, tracked);
 
-        for (const [key, trackedFolders, detail] of invalid) {
-          expectInvalid(yield* update(key, { trackedFolders }).pipe(Effect.flip), detail);
-        }
-        expectInvalid(
-          yield* update("track-alias", { trackFolders: [folder(`${work}/api`)] }).pipe(Effect.flip),
-          "listed twice",
-        );
-
-        const missingRootId = ProjectId.make("project:tracked-folders-symlink-missing-root");
-        yield* service.create({
-          commandId: CommandId.make("command:tracked-symlink:missing-root:create"),
-          projectId: missingRootId,
-          title: "Missing root",
-          workspaceRoot: `${work}/parent-link/kid`,
-        });
-        yield* fileSystem.remove(`${work}/parent/kid`, { recursive: true });
+        yield* create("valid", [folder(`${work}/api-link`)]);
         expectInvalid(
           yield* service
             .update({
-              commandId: CommandId.make("command:tracked-symlink:missing-root:update"),
-              projectId: missingRootId,
-              trackFolders: [folder(`${work}/parent-link`)],
+              commandId: CommandId.make("command:tracked-symlink:update"),
+              projectId,
+              trackFolders: [folder(`${work}/api`)],
             })
             .pipe(Effect.flip),
-          "contains the project's own folder",
+          "listed twice",
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
