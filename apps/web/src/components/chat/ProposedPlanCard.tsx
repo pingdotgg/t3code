@@ -64,7 +64,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     citationSource?.request?.citation.messageId === citationSource?.messageId
       ? (citationSource?.request?.key ?? null)
       : null;
-  const [lastExpandKey, setLastExpandKey] = useState<string | null>(null);
+  // A row remounted after its jump landed must not reopen a plan the user collapsed.
+  const [lastExpandKey, setLastExpandKey] = useState<string | null>(() =>
+    citationSource?.request?.activationRef.current.scrolled ? expandKey : null,
+  );
   if (expandKey !== lastExpandKey) {
     setLastExpandKey(expandKey);
     if (expandKey !== null) setExpanded(true);
