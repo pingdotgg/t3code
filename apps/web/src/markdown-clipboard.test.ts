@@ -954,6 +954,34 @@ describe("copying a table as CSV", () => {
     );
   });
 
+  it("counts text-style symbols such as ™, © and ↔ as one column unless shown as emoji", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(new FakeElement("TH").append(new FakeText("Name")), td(new FakeText("Note"))),
+      ),
+      new FakeElement("TBODY").append(
+        row(td(new FakeText("Acme™")), td(new FakeText("a"))),
+        row(td(new FakeText("©2026")), td(new FakeText("b"))),
+        row(td(new FakeText("A↔B")), td(new FakeText("c"))),
+        row(td(new FakeText("❤️")), td(new FakeText("d"))),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(
+      [
+        "```",
+        "Name   Note",
+        "-----  ----",
+        "Acme™  a",
+        "©2026  b",
+        "A↔B    c",
+        "❤️     d",
+        "```",
+      ].join("\n"),
+    );
+  });
+
   it("keeps values under their headers across spans, and copies footer rows", () => {
     const span = (attributes: Record<string, string>, text: string) =>
       new FakeElement("TD", [], attributes).append(new FakeText(text));
