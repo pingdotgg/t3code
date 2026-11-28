@@ -622,7 +622,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("declares Calendar and Apple Events access for hosted commands in macOS builds", () =>
+  it.effect("declares Calendar, Photos and Apple Events access for hosted commands on macOS", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
         for (const signed of [false, true]) {
@@ -641,6 +641,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             "NSCalendarsFullAccessUsageDescription",
             "NSCalendarsWriteOnlyAccessUsageDescription",
             "NSAppleEventsUsageDescription",
+            "NSPhotoLibraryUsageDescription",
           ]) {
             assert.isString(mac.extendInfo[key], `${version}, signed=${signed}: ${key}`);
             assert.isNotEmpty(mac.extendInfo[key]);
@@ -1628,6 +1629,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
     assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.personal-information\.photos-library<\/key>\s*<true\/>/u,
+    );
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });

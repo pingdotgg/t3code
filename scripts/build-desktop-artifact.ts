@@ -1397,13 +1397,15 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.automation.apple-events</key>
     <true/>
-    <!-- The hardened runtime denies camera and microphone to the app and every
-         child process, with no prompt, unless the app claims these. Terminals
-         and coding agents inherit the app's TCC identity, so without these a
-         command like ffmpeg or imagesnap gets silent access-denied. -->
+    <!-- The hardened runtime denies camera, microphone and Photos to the app and
+         every child process, with no prompt, unless the app claims these.
+         Terminals and coding agents inherit the app's TCC identity, so without
+         these a command like ffmpeg or imagesnap gets silent access-denied. -->
     <key>com.apple.security.device.camera</key>
     <true/>
     <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.personal-information.photos-library</key>
     <true/>
   </dict>
 </plist>
@@ -2897,6 +2899,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "T3 Code lets commands run by terminals and coding agents use the camera.",
         NSMicrophoneUsageDescription:
           "T3 Code lets commands run by terminals and coding agents use the microphone.",
+        NSPhotoLibraryUsageDescription:
+          "T3 Code lets commands run by terminals and coding agents access your photo library.",
         NSAppleEventsUsageDescription:
           "T3 Code lets commands run by terminals and coding agents control other apps.",
         NSSpeechRecognitionUsageDescription:
