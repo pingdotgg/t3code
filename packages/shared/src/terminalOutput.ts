@@ -111,10 +111,9 @@ function* previousCharacters(text: string, end: number, skipSgr = false): Genera
 }
 
 function* previousRunCharacters(runs: Line, index: number, end: number): Generator<string> {
-  yield* previousCharacters(runs[index]!.text, end);
-  for (let previous = index - 1; previous >= 0; previous -= 1) {
+  for (let previous = index; previous >= 0; previous -= 1) {
     const { text } = runs[previous]!;
-    yield* previousCharacters(text, text.length);
+    yield* previousCharacters(text, previous === index ? end : text.length);
   }
 }
 
