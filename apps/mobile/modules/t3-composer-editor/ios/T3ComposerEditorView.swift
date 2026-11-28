@@ -100,6 +100,7 @@ private final class ComposerTextView: UITextView {
   var submitTitle = "Send Message"
   var alternateSubmitTitle = "Send Message"
   private var bypassTextPasteInterception = false
+  private var pasteboardImageCheck: (changeCount: Int, hasImage: Bool)?
 
   override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
@@ -194,16 +195,25 @@ private final class ComposerTextView: UITextView {
     if isReadOnly && Self.readOnlyActions.contains(NSStringFromSelector(action)) {
       return false
     }
-    if action == #selector(paste(_:)) {
-      let pasteboard = UIPasteboard.general
-      if pasteboard.hasImages ||
-        pasteboard.itemProviders.contains(where: {
-          $0.canLoadObject(ofClass: UIImage.self)
-        }) {
-        return true
-      }
+    if action == #selector(paste(_:)), pasteboardHasImage() {
+      return true
     }
     return super.canPerformAction(action, withSender: sender)
+  }
+
+  // The iPad shortcut bar revalidates Paste after every keystroke, so scan the pasteboard once per change.
+  private func pasteboardHasImage() -> Bool {
+    let pasteboard = UIPasteboard.general
+    let changeCount = pasteboard.changeCount
+    if let check = pasteboardImageCheck, check.changeCount == changeCount {
+      return check.hasImage
+    }
+    let hasImage = pasteboard.hasImages ||
+      pasteboard.itemProviders.contains(where: {
+        $0.canLoadObject(ofClass: UIImage.self)
+      })
+    pasteboardImageCheck = (changeCount, hasImage)
+    return hasImage
   }
 
   override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
