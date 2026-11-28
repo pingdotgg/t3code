@@ -240,12 +240,17 @@ function serializeDetails(details: Element): string {
 const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
 const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
 
+/** Where a word's unfinished drive path starts, after which backslashes and brackets read literally. */
+function driveStartOf(word: string): number {
+  // Check each word once; testing every escape's growing prefix would be quadratic.
+  const drive = UNFINISHED_DRIVE_PATH.exec(word);
+  return drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+}
+
 /** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
 function escapeProse(text: string): string {
   return text.replace(/\S+/g, (word, wordOffset: number) => {
-    // Check each word once; testing every escape's growing prefix would be quadratic.
-    const drive = UNFINISHED_DRIVE_PATH.exec(word);
-    const driveStart = drive ? drive.index + drive[0].search(/[A-Za-z]/) + 2 : Infinity;
+    const driveStart = driveStartOf(word);
     return word.replace(INLINE_MARKDOWN, (match: string, offset: number) => {
       if (offset >= driveStart) return match;
       const before = text[wordOffset + offset - 1];
@@ -346,8 +351,15 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
 
 function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  // Prose leaves `]` bare, but inside a label it would end the label.
-  const text = outsideCode(label, (prose) => prose.replace(/(?<!\\)((?:\\\\)*)\]/g, "$1\\]"));
+  // Prose leaves `]` bare, but inside a label it would end the label. Drive paths stay literal.
+  const text = outsideCode(label, (prose) =>
+    prose.replace(/\S+/g, (word) => {
+      const driveStart = driveStartOf(word);
+      return word.replace(/(?<!\\)(?:\\\\)*\]/g, (match: string, offset: number) =>
+        offset + match.length > driveStart ? match : `${match.slice(0, -1)}\\]`,
+      );
+    }),
+  );
   return `[${text}](${destination})`;
 }
 

@@ -401,6 +401,7 @@ describe("serializeRenderedMarkdownFragment", () => {
 
   it.each([
     ["array[index]", "https://example.com"] as const,
+    ["C:\\repo\\file[1].ts", "https://example.com"] as const,
     ...[
       "support@example.com?subject=Help",
       "foo",
