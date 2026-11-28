@@ -450,7 +450,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         new URL("./testkit/fixtures/opencode2_fork/opencode_transcript.ndjson", import.meta.url),
       );
 
-      const sessionID = recorded.metadata?.["nativeSessionId"];
+      const sessionID = String(recorded.metadata?.["nativeSessionId"]);
       const entries = recorded.entries.flatMap((entry): ReadonlyArray<ProviderReplayEntry> => {
         if (nextTurn === "prompt" || entry.type === "runtime_exit") return [entry];
         if (entry.label === "session.prompt.2") {
@@ -462,15 +462,34 @@ describe("OpenCode 2 through the orchestrator", () => {
               data: [
                 { id: "msg_idle_one", type: "idle", time: { created: 1 }, outcome: "succeeded" },
               ],
-              cursor: {},
+              cursor: { previous: "after-turn-one" },
             }),
             out("session.command", { sessionID, name: "hello", text: "TWO" }),
             reply("session.command", null),
             out("session.active"),
-            reply("session.active", { data: { [String(sessionID)]: { type: "running" } } }),
+            reply("session.active", { data: { [sessionID]: { type: "running" } } }),
           ];
         }
-        return entry.label === "session.prompt.response.2" ? [] : [entry];
+        if (entry.label === "message.list") {
+          return [
+            out("message.list", { sessionID, cursor: "after-turn-one", limit: "1" }),
+            reply("message.list", {
+              data: [
+                {
+                  id: "msg_0eb7b1f9f001g95Bduh3bi8syS",
+                  type: "user",
+                  time: { created: 2 },
+                  text: "Reply exactly TWO.",
+                },
+              ],
+              cursor: {},
+            }),
+          ];
+        }
+        return entry.label === "session.prompt.response.2" ||
+          entry.label?.startsWith("message.list.")
+          ? []
+          : [entry];
       });
       const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
         withDirectory({ ...recorded, entries }, cwd),
