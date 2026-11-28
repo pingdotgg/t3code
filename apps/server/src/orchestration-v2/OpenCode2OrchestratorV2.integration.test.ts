@@ -65,9 +65,10 @@ const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
 ];
-const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
-
-const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
+// A session is written no allow a subagent could inherit: T3 answers what the rules would allow.
+const t3Rules = mcpRules;
+const asks = (rules: ReadonlyArray<{ action: string; resource: string }>) =>
+  rules.map((entry) => ({ ...entry, effect: "ask" }));
 
 const BUILD_PATHS = [
   {
@@ -111,16 +112,15 @@ const agentList = (directory: string) => ({
 
 const autoEditRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
-  { action: "edit", resource: "*", effect: "allow" },
+  { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
-  ...BUILD_PATHS,
+  ...asks(BUILD_PATHS),
   ...mcpRules(name),
 ];
 
 const planRules = (name: string) => [
-  { action: "*", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "deny" },
-  ...PLAN_PATHS,
+  ...asks(PLAN_PATHS),
   ...mcpRules(name),
 ];
 
