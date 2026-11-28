@@ -131,10 +131,7 @@ const PENDING_CHECKS_TTL = Duration.minutes(1);
 const FINISHED_CHECKS_TTL = Duration.minutes(30);
 
 function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
-  const statuses = new Set(checks.map((check) => check.status));
-  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
-  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
-  return statuses.has("success") ? "passing" : null;
+  return rollupCheckStatuses(checks.map((check) => check.status));
 }
 
 /** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
