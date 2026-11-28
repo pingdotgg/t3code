@@ -26,6 +26,18 @@ export type IdleCompactionRecords = Pick<
   | "contextTransfers"
 >;
 
+/** The latest run that started; a removed or steered queued message leaves a cancelled run that never did. */
+export function latestIdleCompactionRun<R extends IdleCompactionRecords["runs"][number]>(
+  runs: ReadonlyArray<R>,
+): R | null {
+  return runs
+    .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
+    .reduce<R | null>(
+      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+      null,
+    );
+}
+
 /**
  * When an idle Claude thread should compact, or null when it should not. The
  * window ends when the prompt cache of Claude's last request expires (1h on
@@ -54,13 +66,7 @@ export function idleCompactionWindow(
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
     return null;
   if (!isListedThreadLineage(thread.lineage)) return null;
-  // A removed or steered queued message leaves a cancelled run that never started.
-  const latestRun = runs
-    .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
-    .reduce<(typeof runs)[number] | null>(
-      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-      null,
-    );
+  const latestRun = latestIdleCompactionRun(runs);
   if (latestRun?.status !== "completed" || latestRun.completedAt === null) return null;
   const message = messages.find((candidate) => candidate.id === latestRun.userMessageId);
   // Never compact a compaction, so one idle spell compacts at most once.
@@ -113,18 +119,6 @@ export function idleCompactionWindow(
 
 // A typed `/compact`, with or without instructions, compacts the conversation.
 const COMPACT_COMMAND = /^\/compact(?:\s|$)/i;
-
-/** The latest run that started; a removed or steered queued message leaves a cancelled run that never did. */
-export function latestIdleCompactionRun<R extends IdleCompactionRecords["runs"][number]>(
-  runs: ReadonlyArray<R>,
-): R | null {
-  return runs
-    .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
-    .reduce<R | null>(
-      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-      null,
-    );
-}
 
 /**
  * Whether a compaction a client sent on return is no longer needed. The client decides from its

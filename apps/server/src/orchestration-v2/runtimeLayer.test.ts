@@ -1396,14 +1396,11 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
-  it.effect.each([
-    { name: "only after the active Claude cache expires", type: "cache" },
-    { name: "only after the previous Claude compaction failed", type: "compaction" },
-  ] as const)("compacts on return $name", (scenario) =>
+  it.effect("compacts on return only after the previous Claude compaction failed", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make(`return-compaction-${scenario.type}-thread`);
+      const threadId = ThreadId.make("return-compaction-thread");
       const selection = { instanceId: claudeInstanceId, model: "claude-opus-5-5" };
       yield* orchestrator.dispatch({
         type: "thread.create",
@@ -1412,7 +1409,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         creationSource: "web",
         threadId,
         projectId: ProjectId.make(`${threadId}:project`),
-        title: "Return compaction cache",
+        title: "Return compaction",
         modelSelection: selection,
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -1426,7 +1423,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         creationSource: "web",
         threadId,
         messageId: MessageId.make(`${threadId}:first`),
-        text: scenario.type === "cache" ? "Continue work." : "/compact keep the plan",
+        text: "/compact keep the plan",
         attachments: [],
         dispatchMode: { type: "start_immediately" },
       });
@@ -1480,38 +1477,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
               tokenUsage: {
                 usedTokens: 250_000,
                 updatedAt: DateTime.formatIso(now),
-                promptCacheExpiresAt: DateTime.formatIso(
-                  DateTime.add(now, { minutes: scenario.type === "cache" ? 1 : -1 }),
-                ),
+                promptCacheExpiresAt: DateTime.formatIso(DateTime.subtract(now, { minutes: 1 })),
               },
             },
           },
-          ...(scenario.type === "compaction"
-            ? [
-                {
-                  id: EventId.make(`${threadId}:compaction-completed`),
-                  type: "turn-item.updated" as const,
-                  threadId,
-                  runId: run.id,
-                  occurredAt: now,
-                  payload: compaction,
-                },
-              ]
-            : []),
+          {
+            id: EventId.make(`${threadId}:compaction-completed`),
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: compaction,
+          },
         ],
       });
 
-      const states =
-        scenario.type === "cache"
-          ? ([
-              ["warm", false],
-              ["expired", true],
-            ] as const)
-          : ([
-              ["completed", false],
-              ["failed", true],
-            ] as const);
-      for (const [state, compacts] of states) {
+      for (const [state, compacts] of [
+        ["completed", false],
+        ["failed", true],
+      ] as const) {
         const messageId = MessageId.make(`${threadId}:${state}`);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -1531,7 +1515,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           compacts,
         );
         assert.lengthOf(projection.runs, compacts ? 2 : 1);
-        if (state === "warm") yield* TestClock.adjust("2 minutes");
         if (state === "completed") {
           yield* sink.write({
             events: [

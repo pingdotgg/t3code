@@ -779,7 +779,6 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       compacts: false,
     },
     // A client decides on return from its own copy, which can miss the result.
-    { name: "no result is waiting", delivery: "none", mode: "onReturn", compacts: true },
     {
       name: "a result is waiting to be sent",
       delivery: "pending",

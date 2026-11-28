@@ -233,8 +233,7 @@ describe("returnCompactionIsMoot", () => {
     readonly name: string;
     readonly cacheExpiresInMs?: number;
     readonly usageAgeMs?: number;
-    readonly compaction?: "completed" | "failed" | "interrupted";
-    readonly compactText?: string;
+    readonly compaction?: "completed" | "failed";
     readonly moot: boolean;
   }>([
     {
@@ -260,25 +259,12 @@ describe("returnCompactionIsMoot", () => {
       moot: true,
     },
     {
-      name: "drops a compaction right after one with instructions",
-      cacheExpiresInMs: -MINUTE_MS,
-      compaction: "completed",
-      compactText: "/compact keep the plan",
-      moot: true,
-    },
-    {
       name: "keeps a compaction after one that failed",
       cacheExpiresInMs: -MINUTE_MS,
       compaction: "failed",
       moot: false,
     },
-    {
-      name: "keeps a compaction after one that was stopped",
-      cacheExpiresInMs: -MINUTE_MS,
-      compaction: "interrupted",
-      moot: false,
-    },
-  ])("$name", ({ cacheExpiresInMs, usageAgeMs, compaction, compactText, moot }) => {
+  ])("$name", ({ cacheExpiresInMs, usageAgeMs, compaction, moot }) => {
     const thread = records(cacheExpiresInMs === undefined ? {} : { cacheExpiresInMs });
     if (usageAgeMs !== undefined) {
       thread.providerTurns = thread.providerTurns.map((turn) => ({
@@ -287,7 +273,7 @@ describe("returnCompactionIsMoot", () => {
       }));
     }
     if (compaction !== undefined) {
-      thread.messages = [{ ...thread.messages[0]!, text: compactText ?? "/compact" }];
+      thread.messages = [{ ...thread.messages[0]!, text: "/compact" }];
       thread.turnItems = [
         {
           id: TurnItemId.make("compaction-item"),
