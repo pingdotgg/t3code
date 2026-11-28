@@ -1,5 +1,10 @@
 {
   "035aab5e99159bd8": "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
+  "fae3639874428042": "Tasks",
+  "7342bfc328008926": "Running",
+  "353b08f4363dbb2c": "Pending",
+  "7ead7eba403ccf8d": "No tasks in this thread.",
+  "ab790e733ad16c7e": "Open tasks, {done} of {total} completed",
   "4bcfa3b976a421cf": "Side chat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread on {machine}",
@@ -5753,10 +5758,5 @@
   "bb9866823586b67a": "Usage database and Go key",
   "8380d6f1828fe191": "Conversation history",
   "1f2036cf25caaf16": "Account usage from Cursor",
-  "51aa7700c1f967d2": "Session history",
-  "fae3639874428042": "Tasks",
-  "7342bfc328008926": "Running",
-  "353b08f4363dbb2c": "Pending",
-  "7ead7eba403ccf8d": "No tasks in this thread.",
-  "ab790e733ad16c7e": "Open tasks, {done} of {total} completed"
+  "51aa7700c1f967d2": "Session history"
 }
