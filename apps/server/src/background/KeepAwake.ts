@@ -61,7 +61,13 @@ export function inhibitorCommand(
         args: ["-c", 'echo && exec caffeinate -i -w "$0"', String(serverPid)],
         stdin: "ignore",
       };
-    case "linux":
+    case "linux": {
+      const hold = ["sh", "-c", 'echo && exec tail --pid="$0" -f /dev/null', String(serverPid)];
+      // KDE handles the lid itself by asking logind to suspend, which a logind sleep block refuses.
+      // PowerDevil's own inhibitor blocks only idle sleep, like caffeinate -i.
+      if (env.XDG_CURRENT_DESKTOP?.split(":").includes("KDE")) {
+        return { command: "kde-inhibit", args: ["--power", ...hold], stdin: "ignore" };
+      }
       return {
         command: "systemd-inhibit",
         args: [
@@ -70,13 +76,11 @@ export function inhibitorCommand(
           "--why=Agents are working",
           "--mode=block",
           // systemd-inhibit starts this only after logind grants the lock.
-          "sh",
-          "-c",
-          'echo && exec tail --pid="$0" -f /dev/null',
-          String(serverPid),
+          ...hold,
         ],
         stdin: "ignore",
       };
+    }
     case "win32":
       return {
         command: windowsPowerShellPath(env),
@@ -206,8 +210,9 @@ export const layer = Layer.effectDiscard(
 
     const holdOnce = Effect.gen(function* () {
       const child = yield* spawner.spawn(
+        // Leave `detached` at its default (own process group off Windows): kde-inhibit leaves its
+        // child running on SIGTERM, so releasing the hold must signal the whole group.
         ChildProcess.make(command.command, command.args, {
-          detached: false,
           shell: false,
           stdin: command.stdin,
           stdout: "pipe",

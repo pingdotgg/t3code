@@ -42,4 +42,17 @@ describe("KeepAwake.inhibitorCommand", () => {
         ?.command,
     ).toBe(String.raw`D:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`);
   });
+
+  it("holds KDE's idle-only inhibitor on KDE so closing the lid still suspends", () => {
+    const linuxCommand = (desktop?: string) =>
+      KeepAwake.inhibitorCommand("linux", 42, false, { XDG_CURRENT_DESKTOP: desktop });
+    expect(linuxCommand("KDE")).toEqual({
+      command: "kde-inhibit",
+      args: ["--power", "sh", "-c", 'echo && exec tail --pid="$0" -f /dev/null', "42"],
+      stdin: "ignore",
+    });
+    expect(linuxCommand("X-Custom:KDE")?.command).toBe("kde-inhibit");
+    expect(linuxCommand("ubuntu:GNOME")?.command).toBe("systemd-inhibit");
+    expect(linuxCommand(undefined)?.command).toBe("systemd-inhibit");
+  });
 });
