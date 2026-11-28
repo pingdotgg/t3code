@@ -5,7 +5,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import type { VisitThreadInput } from "../operations/commands.ts";
-import { claimThreadOpen } from "./threadSearch.ts";
+import { claimThreadOpen, threadSearchSubject } from "./threadSearch.ts";
 import { createThreadVisitTracker, VISIT_DISPATCH_THROTTLE_MS } from "./threadVisits.ts";
 
 const environmentId = EnvironmentId.make("env-visits");
@@ -24,13 +24,18 @@ function at(seconds: number) {
 }
 
 // claimThreadOpen dedupes per thread in module state, so each test opens its own thread.
-function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> | null) {
+function setup(
+  threadName: string,
+  initial: Omit<Shell, "environmentId" | "id"> | null,
+  options?: { readonly viewing?: boolean },
+) {
   vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
   const threadId = ThreadId.make(threadName);
   const ref = { environmentId, threadId };
   const shellAtom = Atom.make<Shell | null>(
     initial === null ? null : { environmentId, id: threadId, ...initial },
   );
+  const viewingAtom = options?.viewing === undefined ? undefined : Atom.make(options.viewing);
   // Visits the server accepted; offline ones fail without reaching it.
   const visits: Array<VisitThreadInput> = [];
   const localVisits: Array<string> = [];
@@ -55,6 +60,7 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
         }),
     },
     markLocalVisit: (_ref, visitedAt) => localVisits.push(visitedAt),
+    ...(viewingAtom ? { viewingAtom } : {}),
   });
   const registry = AtomRegistry.make();
   return {
@@ -69,6 +75,23 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
     },
     reconnect: () => registry.set(sessionGenerationAtom, registry.get(sessionGenerationAtom) + 1),
     mount: () => registry.mount(tracker(ref)),
+    setViewing: (value: boolean) => {
+      if (viewingAtom) registry.set(viewingAtom, value);
+    },
+    searchOpens: () =>
+      threadSearchSubject(
+        {
+          environmentId,
+          id: threadId,
+          title: threadName,
+          branch: null,
+          createdAt: at(0),
+          updatedAt: at(10),
+          latestUserMessageAt: null,
+          opens: null,
+        },
+        null,
+      ).opens,
     setOnline: (value: boolean) => {
       online = value;
     },
@@ -312,4 +335,22 @@ it("retries rejected opens only once per connection generation", async () => {
   t.update({ updatedAt: at(20), latestRun: { completedAt: at(20) } });
   await vi.advanceTimersByTimeAsync(3 * VISIT_DISPATCH_THROTTLE_MS);
   expect(t.attempts).toHaveLength(2);
+});
+
+it("claims the open on first visibility, not on a hidden mount", () => {
+  using t = setup("thread-background-before-shell", null, { viewing: false });
+  t.mount();
+  expect(t.searchOpens()).toBeNull();
+  expect(t.visits).toEqual([]);
+
+  t.setViewing(true);
+  expect(t.searchOpens()).toEqual({
+    score: 1,
+    picks: [],
+    openedAt: Date.UTC(2026, 0, 1),
+  });
+  expect(t.visits).toEqual([]);
+
+  t.update({ updatedAt: at(10), lastVisitedAt: at(10), latestRun: null });
+  expect(t.visits).toEqual([{ threadId: t.ref.threadId, visitedAt: at(10), opened: true }]);
 });
