@@ -8,6 +8,8 @@ import type {
   FilesystemGetMetadataResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectStatFileInput,
+  ProjectStatFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
@@ -123,6 +125,12 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
+    readonly statFile: (
+      input: ProjectStatFileInput,
+    ) => Effect.Effect<
+      ProjectStatFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
     /** Writes inside a known workspace only. */
     readonly writeFile: (
       input: ProjectWriteFileInput,
@@ -215,21 +223,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.getMetadata",
   )(function* (input) {
     const paths = [...new Set(input.paths)];
-    const cwd = input.cwd === undefined ? undefined : yield* toHostPath(input.cwd);
-    const entries = yield* Effect.forEach(
-      paths,
-      (value) =>
-        metadataForPath(
-          cwd !== undefined &&
-            path.isAbsolute(cwd) &&
-            !path.isAbsolute(value) &&
-            !value.startsWith("~/") &&
-            !value.startsWith("~\\")
-            ? path.resolve(cwd, value)
-            : value,
-        ),
-      { concurrency: 8 },
-    );
+    const entries = yield* Effect.forEach(paths, metadataForPath, { concurrency: 8 });
     const byPath = new Map(paths.map((value, index) => [value, entries[index] ?? null]));
     return { entries: input.paths.map((value) => byPath.get(value) ?? null) };
   });
@@ -273,14 +267,16 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
+    const home = yield* HostProcess.HomeDirectory;
+    const cwd = expandHomePath(input.cwd, home);
     const requestedPath = input.relativePath;
     const hostPath =
       requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
-        ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+        ? expandHomePath(requestedPath, home)
         : yield* toHostPath(requestedPath);
     if (
       isNetworkPath(hostPath) &&
-      !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
+      !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(cwd))
     ) {
       return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
         workspaceRoot: input.cwd,
@@ -314,12 +310,12 @@ export const make = Effect.gen(function* () {
     }
 
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: input.cwd,
+      workspaceRoot: cwd,
       relativePath: input.relativePath,
     });
 
     const realWorkspaceRoot = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(path.resolve(input.cwd)),
+      try: () => NodeFSP.realpath(path.resolve(cwd)),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -397,10 +393,55 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const resolveReadableTarget = Effect.fnUntraced(function* (input: ProjectReadFileInput) {
+    const target = yield* resolveReadTarget(input);
+    if (target.realTargetPath !== null && (yield* isServerInternalPath(target.realTargetPath))) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    return target;
+  });
+
+  const statFile: WorkspaceFileSystem["Service"]["statFile"] = Effect.fn(
+    "WorkspaceFileSystem.statFile",
+  )(function* (input) {
+    const { realTargetPath } = yield* resolveReadableTarget(input);
+    if (realTargetPath === null) {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: input.relativePath,
+      });
+    }
+    const stat = yield* fileSystem.stat(realTargetPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: realTargetPath,
+            operationPath: realTargetPath,
+            operation: "stat",
+            cause,
+          }),
+      ),
+    );
+    if (stat.type !== "File") {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: realTargetPath,
+      });
+    }
+    return { byteLength: Number(stat.size) };
+  });
+
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const target = yield* resolveReadTarget(input);
+    const target = yield* resolveReadableTarget(input);
     const absentResult = {
       relativePath: target.relativePath,
       contents: "",
@@ -410,12 +451,6 @@ export const make = Effect.gen(function* () {
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
-    if (yield* isServerInternalPath(realTargetPath)) {
-      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-      });
-    }
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -665,7 +700,7 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
+  return WorkspaceFileSystem.of({ getMetadata, readFile, statFile, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

@@ -3177,6 +3177,17 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsStatFile]: (input) =>
+          workspaceFileSystem.statFile(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectReadFileError({
+                  ...input,
+                  ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
             Effect.mapError(

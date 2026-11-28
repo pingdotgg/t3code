@@ -475,14 +475,22 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
   }
 }
 
-export const ProjectReadFileInput = Schema.Struct({
+export const ProjectStatFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectStatFileInput = typeof ProjectStatFileInput.Type;
+
+export const ProjectReadFileInput = Schema.Struct({
+  ...ProjectStatFileInput.fields,
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
+
+export const ProjectStatFileResult = Schema.Struct({ byteLength: NonNegativeInt });
+export type ProjectStatFileResult = typeof ProjectStatFileResult.Type;
 
 export const ProjectReadFileResult = Schema.Struct({
   relativePath: Schema.NonEmptyString,

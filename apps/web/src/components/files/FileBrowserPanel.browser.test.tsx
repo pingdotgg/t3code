@@ -1,8 +1,4 @@
-import {
-  EnvironmentId,
-  type ProjectEntry,
-  type FilesystemGetMetadataResult,
-} from "@t3tools/contracts";
+import { EnvironmentId, type ProjectEntry, type ProjectStatFileResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -62,32 +58,32 @@ vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => canReadFiles,
 }));
-vi.mock(import("~/state/filesystem"), async (original) => {
+vi.mock(import("~/state/projects"), async (original) => {
   const module = await original();
   return {
     ...module,
-    filesystemEnvironment: {
-      ...module.filesystemEnvironment,
-      getMetadata: ({ input }) => metadataForPath(input.paths[0] ?? ""),
+    projectEnvironment: {
+      ...module.projectEnvironment,
+      statFile: ({ input }) => metadataForPath(input.relativePath),
     },
   };
 });
 
 let canReadFiles = true;
 const previewSizes = new Map([
-  ["/repo/README.md", FULL_TEXT_MAX_BYTES],
-  ["/repo/oversized.md", FULL_TEXT_MAX_BYTES + 1],
+  ["README.md", FULL_TEXT_MAX_BYTES],
+  ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
 ]);
 const delayedSize = Promise.withResolvers<number>();
 const metadataForPath = Atom.family((path: string) =>
   Atom.make(
-    Effect.gen(function* (): Effect.fn.Return<FilesystemGetMetadataResult> {
+    Effect.gen(function* (): Effect.fn.Return<ProjectStatFileResult> {
       const byteLength =
-        path === "/repo/delayed.md"
+        path === "delayed.md"
           ? yield* Effect.promise(() => delayedSize.promise)
           : previewSizes.get(path);
       if (byteLength === undefined) return yield* Effect.die("File size unavailable");
-      return { entries: [{ kind: "file", byteLength }] };
+      return { byteLength };
     }),
   ).pipe(Atom.setIdleTTL(60_000)),
 );
@@ -220,7 +216,7 @@ describe("FileBrowserPanel", () => {
     using _reset = {
       [Symbol.dispose]: () => {
         canReadFiles = true;
-        previewSizes.set("/repo/README.md", FULL_TEXT_MAX_BYTES);
+        previewSizes.set("README.md", FULL_TEXT_MAX_BYTES);
       },
     };
     for (const [path, byteLength, readAllowed, offersPreview] of [
@@ -234,7 +230,7 @@ describe("FileBrowserPanel", () => {
       ["src/", undefined, true, false],
     ] as const) {
       canReadFiles = readAllowed;
-      if (byteLength !== undefined) previewSizes.set(`/repo/${path}`, byteLength);
+      if (byteLength !== undefined) previewSizes.set(path, byteLength);
       await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
       findTreeRow(path)!.dispatchEvent(
         new MouseEvent("contextmenu", {
