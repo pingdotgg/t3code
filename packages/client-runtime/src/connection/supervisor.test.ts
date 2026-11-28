@@ -2683,6 +2683,44 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect("tries another route first while the preferred one keeps dropping its sessions", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        checkRoute: () => Effect.succeed("answered"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const connectedTarget = Effect.gen(function* () {
+        return Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag;
+      });
+
+      for (let generation = 1; generation <= 3; generation++) {
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === generation,
+        );
+        expect(yield* connectedTarget).toBe("BearerConnectionTarget");
+        yield* harness.closeLatestSession();
+        yield* TestClock.adjust("10 seconds");
+      }
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 4,
+      );
+      expect(yield* connectedTarget).toBe("RelayConnectionTarget");
+
+      yield* TestClock.adjust("6 minutes");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 5,
+      );
+      expect(yield* connectedTarget).toBe("BearerConnectionTarget");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("checks a dead LAN route less often until the network changes", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);

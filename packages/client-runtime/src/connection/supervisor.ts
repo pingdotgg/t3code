@@ -82,6 +82,11 @@ const SILENT_ROUTE_BACKOFF_MAX_MS = 1_800_000;
 // A better route that answered the check but then failed to connect is not
 // tried again for this long, so a flaky LAN cannot bounce the connection.
 const BETTER_ROUTE_COOLDOWN_MS = 300_000;
+// A route whose live sessions keep dropping (iOS tears down sockets through a
+// reconfiguring Tailscale tunnel while the host stays healthy) is tried last
+// for a cooldown; the better-route check moves back once the cooldown ends.
+const FLAPPING_ROUTE_LOSSES = 3;
+const FLAPPING_ROUTE_WINDOW_NANOS = 180_000_000_000n;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -350,15 +355,48 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const attemptEntry = Effect.gen(function* () {
     const latest = yield* Ref.get(currentEntry);
-    const routes = connectionRoutes(latest);
+    const now = yield* Clock.monotonicTimeNanos;
+    const cooldowns = yield* Ref.get(routeCooldowns);
+    const coolingDown = (candidate: ConnectionRoute) =>
+      (cooldowns.get(connectionRouteId(candidate.target)) ?? 0n) > now;
+    const saved = connectionRoutes(latest);
+    const routes = [
+      ...saved.filter((candidate) => !coolingDown(candidate)),
+      ...saved.filter(coolingDown),
+    ];
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
-    if (Option.isNone(preferred)) return latest;
-    const route = routes.find(
-      (candidate) => connectionRouteId(candidate.target) === preferred.value,
-    );
-    return route === undefined
+    const route = Option.isNone(preferred)
+      ? undefined
+      : routes.find((candidate) => connectionRouteId(candidate.target) === preferred.value);
+    const ordered =
+      route === undefined ? routes : [route, ...routes.filter((candidate) => candidate !== route)];
+    return ordered.every((candidate, index) => candidate === saved[index])
       ? latest
-      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+      : entryWithRoutes(latest, ordered);
+  });
+
+  const routeLosses = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<bigint>>>(new Map());
+  const recordRouteLoss = Effect.fnUntraced(function* (routeId: string) {
+    if ((yield* currentRoutes).length < 2) return;
+    const now = yield* Clock.monotonicTimeNanos;
+    const recent = [
+      ...((yield* Ref.get(routeLosses)).get(routeId) ?? []).filter(
+        (at) => now - at <= FLAPPING_ROUTE_WINDOW_NANOS,
+      ),
+      now,
+    ];
+    if (recent.length < FLAPPING_ROUTE_LOSSES) {
+      yield* Ref.update(routeLosses, (current) => new Map(current).set(routeId, recent));
+      return;
+    }
+    yield* Ref.update(routeLosses, (current) => {
+      const next = new Map(current);
+      next.delete(routeId);
+      return next;
+    });
+    yield* Ref.update(routeCooldowns, (current) =>
+      new Map(current).set(routeId, now + BigInt(BETTER_ROUTE_COOLDOWN_MS) * 1_000_000n),
+    );
   });
 
   const learnRoutesFrom = Effect.fnUntraced(function* (
@@ -1141,6 +1179,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
     yield* logUnexpectedFailure("attempt", connectedExit.cause);
+    yield* recordRouteLoss(activeRouteId);
     const outcome = failureFromCause(
       target,
       connectedExit.cause,

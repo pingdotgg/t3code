@@ -44,6 +44,23 @@ const sha256Base64Url = (data: Uint8Array) =>
 export const thumbprint = (jwk: DpopPublicJwk) =>
   sha256Base64Url(utf8(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })));
 
+// Every request signs with the same few access tokens, and on mobile each hash is a native round
+// trip that waits for a busy JS thread.
+const accessTokenHashes = new Map<string, string>();
+const ACCESS_TOKEN_HASH_CAPACITY = 16;
+const accessTokenHash = (accessToken: string) => {
+  const known = accessTokenHashes.get(accessToken);
+  if (known !== undefined) return Effect.succeed(known);
+  return sha256Base64Url(utf8(accessToken)).pipe(
+    Effect.tap((hash) =>
+      Effect.sync(() => {
+        if (accessTokenHashes.size >= ACCESS_TOKEN_HASH_CAPACITY) accessTokenHashes.clear();
+        accessTokenHashes.set(accessToken, hash);
+      }),
+    ),
+  );
+};
+
 export const createProof = Effect.fn("DpopProof.createProof")(function* (input: {
   readonly method: string;
   readonly url: string;
@@ -60,7 +77,7 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
     htu,
     jti: yield* random.uuidV4(),
     iat: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
-    ...(input.accessToken ? { ath: yield* sha256Base64Url(utf8(input.accessToken)) } : {}),
+    ...(input.accessToken ? { ath: yield* accessTokenHash(input.accessToken) } : {}),
   });
   const signature = yield* input.key.sign(utf8(`${header}.${payload}`));
   return `${header}.${payload}.${Base64Url.encode(signature)}`;

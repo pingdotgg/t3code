@@ -49,6 +49,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderInstanceIcon, providerInstanceNameLabel } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
+import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
@@ -341,6 +342,8 @@ type ThreadListV2ShelfHeaderProps = {
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 };
+
+const RECONNECTING_LABEL_DELAY_MS = 2_000;
 
 const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
 
@@ -876,8 +879,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const rawStatus = resolveThreadListV2Status(thread);
-  const status = resolveThreadListV2RowStatus(thread);
+  // A remote reconnect usually finishes within a second; only a longer one is worth a label.
+  const shownReconnecting = useDelayedStatus(
+    thread.id,
+    thread.connectionPhase === "reconnecting" ? "reconnecting" : null,
+    RECONNECTING_LABEL_DELAY_MS,
+  );
+  const statusThread =
+    thread.connectionPhase === "reconnecting" && shownReconnecting === null
+      ? { ...thread, connectionPhase: "connected" as const }
+      : thread;
+  const rawStatus = resolveThreadListV2Status(statusThread);
+  const status = resolveThreadListV2RowStatus(statusThread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
