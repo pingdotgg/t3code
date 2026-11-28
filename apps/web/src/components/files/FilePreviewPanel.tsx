@@ -1853,6 +1853,7 @@ function FilePreviewPanelContent({
               sizeBytes={file.data?.byteLength ?? 0}
               onPostRender={fileLineReveal("codeView")}
               workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
               wordWrap={wordWrap}
@@ -2116,6 +2117,7 @@ export function WorkspaceLargeTextPreview(props: {
   sizeBytes: number;
   onPostRender?: ComponentProps<typeof LargeFilePreview>["onPostRender"];
   workspaceMutationId: string | null;
+  refreshRevision?: number;
   revealLine: number | null;
   revealRequestId: number;
   wordWrap: boolean;
@@ -2130,11 +2132,11 @@ export function WorkspaceLargeTextPreview(props: {
       description: thrownErrorMessage(cause, m) ?? gt("Try again."),
     });
   };
-  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  // Each workspace mutation or manual refresh re-mints the URL, so an edited file loads its new bytes.
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    props.workspaceMutationId ?? undefined,
+    withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0),
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([
@@ -2142,9 +2144,10 @@ export function WorkspaceLargeTextPreview(props: {
     resource,
     assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : null,
     revision,
+    props.refreshRevision ?? 0,
   ]);
   const [loaded, setLoaded] = useState<{ revision: string; url: string } | null>(null);
-  if (assetUrl._tag === "Success" && loaded?.revision !== contentRevision) {
+  if (assetUrl._tag === "Success" && !assetUrl.waiting && loaded?.revision !== contentRevision) {
     setLoaded({ revision: contentRevision, url: assetUrl.url });
   }
   if (assetUrl._tag === "Failure")
