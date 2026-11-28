@@ -427,7 +427,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         mcpServers: [{ name: "t3-code", enabled: true }],
         requireMcpServersOff: ["t3-code"],
         requireArg:
-          "--config features.apps=false --config mcp_servers.t3-code.enabled=false --ephemeral",
+          "--config features.apps=false --config mcp_servers.t3-code.enabled=false --config project_doc_max_bytes=0 --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -451,7 +451,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "my server", enabled: true },
         ],
         requireArg:
-          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --config project_doc_max_bytes=0 --ephemeral',
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -470,7 +470,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       {
         output: JSON.stringify({ branch: "remove-default-shapes" }),
         mcpServers: 2,
-        requireArg: "--config features.plugins=false --config features.apps=false --ephemeral",
+        requireArg:
+          "--config features.plugins=false --config features.apps=false --config project_doc_max_bytes=0 --ephemeral",
         forbidArg: "mcp_servers=",
       },
       (textGeneration) =>
@@ -492,7 +493,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         launchArgs:
           "--config features.plugins=true --config features.apps=true --config features.connectors=true",
         requireArg:
-          "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.connectors=false --config features.plugins=false --config features.apps=false --ephemeral",
+          "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.connectors=false --config features.plugins=false --config features.apps=false --config project_doc_max_bytes=0 --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
