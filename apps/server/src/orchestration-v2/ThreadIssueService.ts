@@ -8,6 +8,8 @@
 import {
   CommandId,
   threadIssueKeysEqual,
+  type IssueLinkedThreadsResult,
+  type IssueOperationError,
   type IssueRef,
   type ThreadId,
   type ThreadIssueKey,
@@ -17,7 +19,9 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
+import { listLinkedIssueThreads } from "../issue/linkedThreads.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 export interface LinkThreadIssueInput {
@@ -44,12 +48,17 @@ export class ThreadIssueService extends Context.Service<
     readonly unlink: (
       input: UnlinkThreadIssueInput,
     ) => Effect.Effect<{ readonly wasLinked: boolean }, Orchestrator.OrchestratorV2Error>;
+    /** Every thread the issue is linked to, most recently active first. */
+    readonly linkedThreads: (
+      key: ThreadIssueKey,
+    ) => Effect.Effect<IssueLinkedThreadsResult, IssueOperationError>;
   }
 >()("t3/orchestration-v2/ThreadIssueService") {}
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const random = yield* SecureRandom.SecureRandom;
+  const sql = yield* SqlClient.SqlClient;
 
   const commandId = (tag: string, threadId: ThreadId) =>
     random.uuidV4().pipe(
@@ -103,7 +112,10 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return ThreadIssueService.of({ link, unlink });
+  const linkedThreads: ThreadIssueService["Service"]["linkedThreads"] = (key) =>
+    listLinkedIssueThreads(key).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+
+  return ThreadIssueService.of({ link, unlink, linkedThreads });
 });
 
 export const layer = Layer.effect(ThreadIssueService, make);

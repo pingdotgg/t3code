@@ -2,9 +2,10 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   type AuthEnvironmentScope,
+  type DpopFailureReason,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import {
@@ -57,10 +59,12 @@ function layerPairingHttp(
   options?: {
     readonly failDescriptor?: boolean;
     readonly failExchange?: boolean;
+    readonly failExchangeDpopReason?: DpopFailureReason;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
+    readonly accessTokenRenewal?: boolean;
   },
 ) {
   const grantScopes = options?.grantScopes ?? AuthStandardClientScopes;
@@ -88,6 +92,7 @@ function layerPairingHttp(
           capabilities: {
             repositoryIdentity: true,
             ...(options?.selfUpdate === true ? { serverSelfUpdate: "boot-service" } : {}),
+            ...(options?.accessTokenRenewal === true ? { accessTokenRenewal: true } : {}),
           },
         }),
       );
@@ -101,6 +106,9 @@ function layerPairingHttp(
               _tag: "EnvironmentAuthInvalidError",
               code: "auth_invalid",
               reason: "invalid_credential",
+              ...(options.failExchangeDpopReason !== undefined
+                ? { dpopFailureReason: options.failExchangeDpopReason }
+                : {}),
               traceId: "trace-pairing-test",
             },
             { status: 401 },
@@ -124,10 +132,11 @@ function layerPairingHttp(
           ),
         );
       }
+      const dpop = new Headers(init.headers).has("dpop");
       const granted = Response.json({
-        access_token: "bearer-token",
+        access_token: dpop ? "dpop-token" : "bearer-token",
         issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-        token_type: "Bearer",
+        token_type: dpop ? "DPoP" : "Bearer",
         expires_in: 3600,
         scope: sessionScopes.join(" "),
       });
@@ -163,6 +172,7 @@ function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
   provision?: ClientCapabilities.SshEnvironmentGateway["Service"]["provision"],
+  savedCredential?: BearerConnectionCredential,
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
@@ -178,7 +188,7 @@ function layerPairingOnboarding(
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
-      get: () => Effect.succeedNone,
+      get: () => Effect.succeed(Option.fromUndefinedOr(savedCredential)),
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)(provision ? { provision } : {}),
@@ -281,7 +291,7 @@ describe("connection onboarding", () => {
     }),
   );
 
-  it.effect("turns a switched-off environment back on when it is paired again", () =>
+  it.effect("turns a switched-off environment back on, keeping its label, when paired again", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const onboarding = yield* Onboarding.ConnectionOnboarding;
@@ -300,7 +310,7 @@ describe("connection onboarding", () => {
         new BearerConnectionTarget({
           environmentId,
           connectionId: PAIRED_PROFILE.connectionId,
-          label: PAIRED_PROFILE.label,
+          label: "Old label",
         }),
       );
     }).pipe(Effect.provide(layerPairingOnboarding())),
@@ -393,6 +403,34 @@ describe("connection onboarding", () => {
       expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
     }).pipe(Effect.provide(layerPairingOnboarding({ exchangeGate })));
   });
+
+  it.effect("an edited label replaces the saved one", () =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      yield* registerSwitchedOffEnvironment;
+
+      yield* onboarding.updateBearer({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Studio",
+        httpBaseUrl: PAIRED_PROFILE.httpBaseUrl,
+      });
+
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      expect(entry === undefined ? [] : connectionRoutes(entry).map((r) => r.target.label)).toEqual(
+        ["Studio"],
+      );
+    }).pipe(
+      Effect.provide(
+        layerPairingOnboarding(
+          undefined,
+          [],
+          undefined,
+          new BearerConnectionCredential({ token: "old-token" }),
+        ),
+      ),
+    ),
+  );
 
   it.effect("adds a new address as a route when pairing targets that environment", () =>
     Effect.gen(function* () {
@@ -552,6 +590,7 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
       });
 
+      assert(registration.credential._tag === "BearerConnectionCredential");
       const session = yield* fetchRemoteSessionState({
         httpBaseUrl: registration.profile.httpBaseUrl,
         bearerToken: registration.credential.token,
@@ -560,6 +599,93 @@ describe("connection onboarding", () => {
       expect(session.authenticated).toBe(true);
       expect(session.scopes).toEqual(scopes);
     }).pipe(Effect.provide(layerPairingOnboarding({ grantScopes: scopes }))),
+  );
+
+  it.effect.each([
+    { name: "a host that renews, with a device key", renews: true, signer: true, dpop: true },
+    { name: "a host that renews, without a device key", renews: true, signer: false, dpop: false },
+    { name: "an older host, with a device key", renews: false, signer: true, dpop: false },
+  ])("pairs with $name as DPoP: $dpop", ({ renews, signer, dpop }) =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      });
+      expect(registration.credential).toMatchObject(
+        dpop
+          ? { _tag: "DpopConnectionCredential", accessToken: "dpop-token" }
+          : { _tag: "BearerConnectionCredential", token: "bearer-token" },
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerPairingOnboarding({ accessTokenRenewal: renews }),
+          signer
+            ? Layer.succeed(
+                ManagedRelay.ManagedRelayDpopSigner,
+                ManagedRelay.ManagedRelayDpopSigner.of({
+                  thumbprint: Effect.succeed("device-key"),
+                  createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
+                }),
+              )
+            : Layer.empty,
+        ),
+      ),
+    ),
+  );
+
+  const layerDpopPairing = (failExchangeDpopReason?: DpopFailureReason) =>
+    Layer.merge(
+      layerPairingOnboarding({
+        accessTokenRenewal: true,
+        failExchange: true,
+        ...(failExchangeDpopReason !== undefined ? { failExchangeDpopReason } : {}),
+      }),
+      Layer.succeed(
+        ManagedRelay.ManagedRelayDpopSigner,
+        ManagedRelay.ManagedRelayDpopSigner.of({
+          thumbprint: Effect.succeed("device-key"),
+          createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
+        }),
+      ),
+    );
+
+  it.effect("preserves DPoP clock-skew diagnostics during direct pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        failureCause: "clock_skew",
+        hop: "server",
+        via: "direct",
+        traceId: "trace-pairing-test",
+      });
+      expect(error.message).toContain(
+        "Hint: Check that automatic date and time is enabled on both devices, then try again.",
+      );
+    }).pipe(Effect.provide(layerDpopPairing("time_window"))),
+  );
+
+  it.effect("does not blame the clock for a rejected pairing code", () =>
+    Effect.gen(function* () {
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        traceId: "trace-pairing-test",
+      });
+      expect(error).not.toHaveProperty("failureCause");
+      expect(error.message).not.toContain("clock skew");
+    }).pipe(Effect.provide(layerDpopPairing())),
   );
 
   it.effect("refuses to add a route that reaches a different machine, keeping the code", () =>

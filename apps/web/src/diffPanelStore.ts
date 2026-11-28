@@ -1,7 +1,13 @@
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  trimAsciiWhitespace,
+  type RunId,
+  type ScopedThreadRef,
+  type ThreadId,
+  type TurnItemId,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -18,7 +24,15 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  | {
+      kind: "turn";
+      turnId: RunId;
+      /** From the thread's folder, so a tracked repository's file carries that repository's folder. */
+      filePath: string | null;
+      revealRequestId: number;
+      /** A turn diff section key to narrow to; absent shows every repository. */
+      repository?: string;
+    };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -29,13 +43,14 @@ interface DiffPanelStoreState {
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
+  selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
 function normalizeBaseRef(baseRef: string | null): string | null {
-  const normalized = baseRef?.trim();
+  const normalized = baseRef === null ? null : trimAsciiWhitespace(baseRef);
   return normalized ? normalized : null;
 }
 
@@ -99,14 +114,39 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
+          // Git reports paths with their edge whitespace; only a blank one means no file.
+          const requestedPath = filePath !== undefined && filePath.trim() !== "" ? filePath : null;
           return {
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]: {
                 kind: "turn",
                 turnId,
-                filePath: filePath ?? null,
+                filePath: requestedPath,
                 revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                // A requested file may sit outside the repository the view was narrowed to.
+                ...(requestedPath === null &&
+                previous?.kind === "turn" &&
+                previous.repository !== undefined
+                  ? { repository: previous.repository }
+                  : {}),
+              },
+            },
+          };
+        }),
+      selectTurnRepository: (ref, turnId, repository) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: {
+                kind: "turn",
+                turnId,
+                filePath: null,
+                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId : 0,
+                ...(repository === null ? {} : { repository }),
               },
             },
           };

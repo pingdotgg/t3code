@@ -67,7 +67,7 @@ const CLAUDE_HOST_SESSION_VARIABLES = [
  * Claude Code reads its entrypoint from the process env, not its settings `env`, so T3 Code applies that override itself.
  */
 export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnvironment")(function* (
-  config: Pick<ClaudeSettings, "homePath">,
+  config: Pick<ClaudeSettings, "homePath" | "enabled">,
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
@@ -80,6 +80,8 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   // an Electron app they start (T3 Code itself, VS Code) would run as Node and exit.
   delete baseEnvironment.ELECTRON_RUN_AS_NODE;
   const environment = yield* mergeProviderInstanceEnvironment(instanceEnvironment, baseEnvironment);
+  // A turned-off Claude never runs, so its settings stay unread.
+  if (!config.enabled) return environment;
   const settingsEntrypoint = (yield* readClaudeSettingsEnv(config, undefined, environment))
     .CLAUDE_CODE_ENTRYPOINT;
   return settingsEntrypoint
@@ -147,9 +149,15 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
   function* (
     config: Pick<ClaudeSettings, "homePath">,
     environment?: NodeJS.ProcessEnv,
-  ): Effect.fn.Return<string, never, Path.Path> {
+  ): Effect.fn.Return<string, never, Path.Path | FileSystem.FileSystem> {
+    const fileSystem = yield* FileSystem.FileSystem;
     const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `claude:home:${resolvedHomePath}`;
+    // Two instances that reach one Claude home through a symlink share sessions, so they can resume.
+    // Only the key uses the real path: the spawn keeps the literal path, which names the Keychain login.
+    const canonicalHomePath = yield* fileSystem
+      .realPath(resolvedHomePath)
+      .pipe(Effect.orElseSucceed(() => resolvedHomePath));
+    return `claude:home:${canonicalHomePath}`;
   },
 );
 

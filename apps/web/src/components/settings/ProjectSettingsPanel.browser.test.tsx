@@ -124,7 +124,7 @@ vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
 }));
 vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
-  ProjectActionsSettings: (() => null) as never,
+  ProjectActionsSettings: (() => <div data-testid="project-actions" />) as never,
 }));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
@@ -536,13 +536,16 @@ describe("project identity reset", () => {
         input: { projectId: state.projects[0]!.id, title: "No project" },
       }),
     );
-    await userEvent.click(resetButton(screen, "project icon")!);
+    const iconReset = resetButton(screen, "project icon")!;
+    const iconRow = iconReset.closest('[data-slot="settings-row"]');
+    await userEvent.click(iconReset);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenLastCalledWith({
         environmentId: primaryId,
         input: { projectId: state.projects[0]!.id, faviconPath: null, projectIcon: scratchIcon },
       }),
     );
+    expect(document.activeElement).toBe(iconRow);
   });
 
   it("resets each member of a mixed group to its own default icon", async () => {
@@ -656,6 +659,13 @@ describe("project settings scope", () => {
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
+  });
+
+  it("shows the machine-wide Actions while no project is selected", async () => {
+    setup();
+    await using _screen = await mountSettings({});
+
+    await expect.element(page.getByTestId("project-actions")).toBeInTheDocument();
   });
 
   it("lists only the selected environment's projects and keeps it when one is opened", async () => {
@@ -827,4 +837,24 @@ describe("project name composition", () => {
       "日本語の名前",
     ]);
   });
+});
+
+it("shows the saved project name again after an empty name is rejected", async () => {
+  setup();
+  await using screen = await mountPanel();
+  const input = nameInput(screen);
+
+  await userEvent.fill(input, "   ");
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(input).toHaveValue("Shared repo");
+  expect(state.toast).toHaveBeenCalledWith({
+    type: "warning",
+    title: "Project title cannot be empty",
+  });
+
+  await userEvent.click(input);
+  await userEvent.keyboard("{Tab}");
+  expect(state.toast).toHaveBeenCalledOnce();
+  expect(state.update).not.toHaveBeenCalled();
 });

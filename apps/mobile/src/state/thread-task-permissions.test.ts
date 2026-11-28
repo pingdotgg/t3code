@@ -11,6 +11,7 @@ import {
   ThreadId,
   TurnItemId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2ThreadProjection,
   type RuntimeMode,
   type ServerConfig,
@@ -35,6 +36,7 @@ const state = vi.hoisted(() => ({
   draft: {
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
+    context: undefined as OrchestrationMessageContext | undefined,
     modelSelection: undefined as ModelSelection | undefined,
     runtimeMode: undefined as RuntimeMode | undefined,
   },
@@ -48,6 +50,8 @@ const state = vi.hoisted(() => ({
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   appendAttachments: vi.fn(),
+  mergeDraft: vi.fn(),
+  fileHolds: [] as string[],
   questionDrafts: {} as Record<
     string,
     { text: string; attachments: DraftComposerImageAttachment[] }
@@ -105,8 +109,33 @@ vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) =
       : null,
 }));
 vi.mock("../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
-vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
+vi.mock("../lib/attachmentUpload", async () => {
+  const { Effect } = await import("effect");
+  return {
+    prepareTurnAttachments: vi.fn(
+      (input: { readonly attachments: ReadonlyArray<{ readonly id: string }> }) =>
+        Effect.succeed({
+          status: "ready",
+          attachments: input.attachments.map((attachment) => ({
+            type: "image",
+            id: `uploaded-${attachment.id}`,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+          })),
+        }),
+    ),
+  };
+});
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
+vi.mock("../lib/composerAttachmentPreviewRetention", () => ({
+  retainComposerAttachmentFileForPreview: (attachment: { readonly fileUri: string }) => {
+    state.fileHolds.push(attachment.fileUri);
+    return () => {
+      state.fileHolds.splice(state.fileHolds.indexOf(attachment.fileUri), 1);
+    };
+  },
+}));
 vi.mock("./queued-run-edit", () => ({
   useQueuedRunEdit: () => null,
   getQueuedRunEdit: () => null,
@@ -169,6 +198,7 @@ vi.mock("./composer-attachment-uploads", async () => {
     composerAttachmentUploadsAtom: Atom.make({}),
     composerAttachmentUploadBlockReason: () => null,
     composerAttachmentsStillUploading: () => false,
+    uploadComposerAttachmentShared: vi.fn(),
   };
 });
 vi.mock("./use-composer-drafts", async () => {
@@ -189,7 +219,7 @@ vi.mock("./use-composer-drafts", async () => {
     scheduleUnusedComposerAttachmentCleanup: () => {},
     appendComposerDraftAttachments: state.appendAttachments,
     appendComposerDraftText: vi.fn(),
-    mergeComposerDraftContent: vi.fn(),
+    mergeComposerDraftContent: state.mergeDraft,
     removeComposerDraftAttachment: vi.fn(),
     useComposerDraft: () => state.draft,
     useComposerDraftSettings: () => state.draft,
@@ -197,6 +227,8 @@ vi.mock("./use-composer-drafts", async () => {
   };
 });
 vi.mock("../lib/composerImages", () => ({
+  isFileBackedComposerAttachment: (attachment: { readonly fileUri?: string }) =>
+    attachment.fileUri !== undefined,
   convertPastedImagesToAttachments: vi.fn(),
   pickComposerFiles: vi.fn(),
   pickComposerMedia: vi.fn(),
@@ -215,6 +247,8 @@ import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 import { questionAttachmentDraftKey } from "./question-attachments";
+import { startQuestionImagePreparation } from "./question-attachment-preparation";
+import { abortComposerDraftOperations } from "./composerDraftOperations";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };
 
@@ -224,6 +258,7 @@ beforeEach(() => {
   state.draft = {
     text: "Keep my draft",
     attachments: [],
+    context: undefined,
     modelSelection: undefined,
     runtimeMode: undefined,
   };
@@ -431,25 +466,72 @@ describe("mobile task permissions", () => {
     expect(await composer.onSendMessage()).toBeNull();
     expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
       { environmentId: "secondary", threadId: "thread" },
-      "why does this fail?",
+      { text: "why does this fail?", attachments: [], titleSeed: "why does this fail?" },
       { runtimeMode: "approval-required", modelSelection: selection },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).toHaveBeenCalled();
 
-    // An attachment added while the side chat starts stays in the draft.
+    // Attachments and context go to the side chat, bound to their uploaded ids.
     vi.clearAllMocks();
-    startSideChat.mockImplementationOnce(async () => {
-      state.draft = {
-        ...state.draft,
-        attachments: [{ id: "added" } as DraftComposerImageAttachment],
-      };
-      return true;
-    });
-    state.draft = { ...state.draft, text: "/side again?", attachments: [] };
+    const imageRecord = {
+      version: 1,
+      kind: "image",
+      contextId: "image-shot",
+      label: "shot.png",
+      attachmentId: "shot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    } as OrchestrationMessageContext["records"][number];
+    state.draft = {
+      ...state.draft,
+      text: "/side what is this?",
+      attachments: [
+        { id: "shot", type: "image", name: "shot.png" } as DraftComposerImageAttachment,
+      ],
+      context: { version: 1, records: [imageRecord] },
+    };
     expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
-    expect(startSideChat).toHaveBeenCalledOnce();
-    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(startSideChat).toHaveBeenCalledExactlyOnceWith(
+      { environmentId: "secondary", threadId: "thread" },
+      expect.objectContaining({
+        text: "what is this?",
+        attachments: [expect.objectContaining({ id: "uploaded-shot" })],
+        context: { version: 1, records: [{ ...imageRecord, attachmentId: "uploaded-shot" }] },
+      }),
+      expect.anything(),
+    );
+    expect(state.clearDraft).toHaveBeenCalled();
+    state.draft = { ...state.draft, context: undefined };
+
+    // A failed start restores the draft: text first, since the merge caps attachments, then
+    // the uncapped attachments. The local file stays on disk meanwhile, and no send runs from
+    // the half-restored draft.
+    vi.clearAllMocks();
+    let heldDuringStart: string[] = [];
+    startSideChat.mockImplementationOnce(async () => {
+      heldDuringStart = [...state.fileHolds];
+      return false;
+    });
+    const shot = { id: "shot", fileUri: "file:///shot.png" } as DraftComposerImageAttachment;
+    const sent = { ...state.draft, attachments: [shot] };
+    state.draft = sent;
+    const restoring = useThreadComposerState({ startSideChat });
+    const restoreOrder: string[] = [];
+    state.mergeDraft.mockImplementationOnce(async (_key, content) => {
+      state.draft = { ...sent, text: "new text" };
+      await restoring.onSendMessage();
+      restoreOrder.push(`merge ${content.text}`);
+    });
+    state.appendAttachments.mockImplementationOnce((_key, attachments, options) =>
+      restoreOrder.push(`append ${attachments.length} restore=${options.restore}`),
+    );
+    expect(await restoring.onSendMessage()).toBeNull();
+    expect(restoreOrder).toEqual(["merge /side what is this?", "append 1 restore=true"]);
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(heldDuringStart).toEqual(["file:///shot.png"]);
+    expect(state.fileHolds).toEqual([]);
     // A model the send would refuse does not start a side chat either.
     vi.clearAllMocks();
     state.serverConfig = {
@@ -478,6 +560,38 @@ describe("mobile task permissions", () => {
         text: "Keep my draft",
       }),
     );
+  });
+
+  it("queues a goal command with the thread's settings and leaves the draft alone", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft.modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    Object.assign(state.draft, { runtimeMode: "approval-required" });
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(await composer.onSendCommand("/goal clear")).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        threadId: "thread",
+        text: "/goal clear",
+        restoreToDraft: false,
+        attachments: [],
+        modelSelection: state.thread.modelSelection,
+        runtimeMode: state.thread.runtimeMode,
+      }),
+    );
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("Keep my draft");
+  });
+
+  it("rechecks the operate grant before queueing a command", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    state.grantedEnvironments.delete("secondary");
+    expect(await composer.onSendCommand("/goal clear")).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
   });
 
   it("rechecks the target environment before an approval response", async () => {
@@ -532,6 +646,19 @@ it.each(["cancelled", "expired"] as const)(
   (status) => {
     const environmentId = EnvironmentId.make("secondary");
     const threadId = ThreadId.make("thread");
+    const unanswered = RuntimeRequestId.make("input");
+    const answered = RuntimeRequestId.make("input-other");
+    const questionKey = questionAttachmentDraftKey(environmentId, threadId, unanswered, "language");
+    const preparing = startQuestionImagePreparation(questionKey);
+    const preparingAnswered = startQuestionImagePreparation(
+      questionAttachmentDraftKey(environmentId, threadId, answered, "language"),
+    );
+    using _preparations = {
+      [Symbol.dispose]: () => {
+        preparing.finish();
+        preparingAnswered.finish();
+      },
+    };
     const notes = {
       id: "notes",
       type: "file",
@@ -540,7 +667,7 @@ it.each(["cancelled", "expired"] as const)(
       sizeBytes: 5,
     } as unknown as DraftComposerImageAttachment;
     state.questionDrafts = {
-      [questionAttachmentDraftKey(environmentId, threadId, "input", "language")]: {
+      [questionKey]: {
         text: "",
         attachments: [notes],
       },
@@ -548,12 +675,19 @@ it.each(["cancelled", "expired"] as const)(
     makeThreadRequestsResolvedAnnouncer(
       environmentId,
       threadId,
-    )([{ id: RuntimeRequestId.make("input"), status }]);
+    )([
+      { id: unanswered, status },
+      { id: answered, status: "resolved" },
+    ]);
     expect(state.appendAttachments).toHaveBeenCalledWith(
       "secondary:thread",
       [notes],
       expect.objectContaining({ appendReference: true }),
     );
+    expect(preparing.destination()).toBe("secondary:thread");
+    expect(preparingAnswered.destination()).toBeNull();
+    abortComposerDraftOperations("secondary:thread");
+    expect(preparing.destination()).toBeNull();
   },
 );
 

@@ -19,13 +19,15 @@ import * as Effect from "../Effect.ts"
 import * as Ndjson from "../encoding/Ndjson.ts"
 import * as Sse from "../encoding/Sse.ts"
 import { identity } from "../Function.ts"
-import type * as Headers from "../http/Headers.ts"
+import * as Headers from "../http/Headers.ts"
 import * as HttpBody from "../http/HttpBody.ts"
 import * as HttpClient from "../http/HttpClient.ts"
 import * as HttpClientError from "../http/HttpClientError.ts"
 import * as HttpClientRequest from "../http/HttpClientRequest.ts"
 import type * as HttpClientResponse from "../http/HttpClientResponse.ts"
 import * as HttpMethod from "../http/HttpMethod.ts"
+import { type ClientPath, CurrentClientPath } from "../http/internal/clientPath.ts"
+import * as MediaType from "../http/internal/mediaType.ts"
 import * as internalUrlParams from "../http/internal/urlParams.ts"
 import * as UrlParams from "../http/UrlParams.ts"
 import * as InternalRecord from "../internal/record.ts"
@@ -43,7 +45,6 @@ import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.ts"
 import * as HttpApiSchema from "./HttpApiSchema.ts"
-import * as MediaType from "./internal/mediaType.ts"
 import * as HttpApiPath from "./internal/path.ts"
 
 /**
@@ -421,11 +422,16 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
   Effect.gen(function*() {
     const services = yield* Effect.context()
 
+    const baseUrl = options?.baseUrl?.toString()
+    const fullPath = (path: string) =>
+      baseUrl === undefined
+        ? path
+        : internalUrlParams.toPath(HttpClientRequest.prependUrl(HttpClientRequest.get(path), baseUrl).url)
     const httpClient = options.httpClient.pipe(
-      options?.baseUrl === undefined
+      baseUrl === undefined
         ? identity
         : HttpClient.mapRequest(
-          HttpClientRequest.prependUrl(options.baseUrl.toString())
+          HttpClientRequest.prependUrl(baseUrl)
         )
     )
 
@@ -507,6 +513,11 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
         )
 
         const middlewareKeys = Array.from(onEndpointOptions.middleware, (tag) => `${tag.key}/Client`)
+        const redactedNames = HttpApi.getEndpointRedactedNames(api, group, endpoint)
+        const redactedParams = HttpApi.getEndpointRedactedParams(api, group, endpoint)
+        // Names declared on the API or group may belong to other endpoints.
+        const redactsPath = redactedParams.all ||
+          redactedParams.names.some((name) => endpoint.path.includes(`:${name}`))
 
         const endpointFn = Effect.fnUntraced(function*(
           request: {
@@ -519,12 +530,20 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
           } | undefined
         ) {
           let httpRequest = HttpClientRequest.make(endpoint.method)(endpoint.path)
+          let redactedPath: ClientPath | undefined
 
           if (request !== undefined) {
             // params
             if (encodeParams !== undefined) {
               const params = (yield* encodeParams(request.params)) as Record<string, string>
-              httpRequest = HttpClientRequest.setUrl(httpRequest, makeUrl(params))
+              const sent = makeUrl(params)
+              httpRequest = HttpClientRequest.setUrl(httpRequest, sent)
+              if (redactsPath) {
+                redactedPath = {
+                  sent: fullPath(sent),
+                  redacted: fullPath(makeUrl(params, redactedParams.all ? "*" : redactedParams.names))
+                }
+              }
             }
 
             // payload
@@ -575,13 +594,17 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
             httpRequest = HttpClientRequest.upgrade(httpRequest, upgrade.protocol)
           }
 
-          const response = yield* executeMiddleware(
+          const execute = executeMiddleware(
             group,
             endpoint,
             httpRequest,
             middlewareKeys,
             middlewareKeys.length - 1
           )
+          const named = redactedNames === undefined ? execute : withRedactedNames(execute, redactedNames)
+          const response = yield* (redactedPath === undefined
+            ? named
+            : Effect.provideService(named, CurrentClientPath, redactedPath))
 
           if (request?.responseMode === "response-only") {
             return response
@@ -602,6 +625,15 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
       }
     })
   })
+
+const withRedactedNames = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  redactedNames: HttpApi.EndpointRedactedNames
+): Effect.Effect<A, E, R> =>
+  effect.pipe(
+    Effect.updateService(UrlParams.CurrentRedactedNames, (names) => [...names, ...redactedNames.query]),
+    Effect.updateService(Headers.CurrentRedactedNames, (names) => [...names, ...redactedNames.headers])
+  )
 
 /**
  * Constructs a type-safe client for an HTTP API using the `HttpClient` service,
@@ -961,17 +993,19 @@ export const urlBuilder = <Api extends HttpApi.Constraint>(api: Api, options?: {
 
 const compilePath = (path: string, schema: Schema.Top | undefined) => {
   if (schema === undefined || !path.includes(":")) {
-    return (_: any) => path
+    return (_: any, _redacted?: ReadonlyArray<string> | "*") => path
   }
   const paramNames = HttpApiPath.getParamNames(schema)
-  return (params: Record<string, string | undefined>) =>
+  return (params: Record<string, string | undefined>, redacted?: ReadonlyArray<string> | "*") =>
     HttpApiPath.replaceParams(path, paramNames, (key, optional) => {
       const value = params[key]
       if (value === "." || value === "..") {
         // dot segments survive encoding and would be resolved by URL normalization
         throw new Error(`Invalid path parameter: ${key}`)
       }
-      if (value !== undefined) return encodeURIComponent(value)
+      if (value !== undefined) {
+        return redacted === "*" || redacted?.includes(key) ? "REDACTED" : encodeURIComponent(value)
+      }
       if (optional) return undefined
       throw new Error(`Missing path parameter: ${key}`)
     })
@@ -1017,7 +1051,7 @@ function toCodecArrayBufferWithHeaders(
     : HttpApiSchema.isWithHeaders(schema)
     ? { body: schema.schema, headers: schema.headers, toValue: HttpApiSchema.withHeaders }
     : { body: schema, headers: Schema.Unknown, toValue: (pair) => pair.body }
-  const decodeBody = Schema.decodeUnknownEffect(fromArrayBuffer(parts.body).pipe(Schema.decodeTo(parts.body)), options)
+  const decodeBody = Schema.decodeUnknownEffect(toBodyCodec(parts.body), options)
   const decodeHeaders = Schema.decodeUnknownEffect(parts.headers, headersOptions)
   return ResponsePair.pipe(Schema.decodeTo(
     HttpApiSchema.isWithHeaders(schema) ? schema : Schema.toType(schema),
@@ -1407,11 +1441,15 @@ const UnknownFromArrayBuffer = StringFromArrayBuffer.pipe(Schema.decodeTo(
 ))
 
 function toCodecArrayBuffer(schemas: readonly [Schema.Constraint, ...Array<Schema.Constraint>]): Schema.Top {
-  return Schema.Union(schemas.map(onSchema))
+  return Schema.Union(schemas.map(toBodyCodec))
+}
 
-  function onSchema(schema: Schema.Constraint) {
-    return fromArrayBuffer(schema).pipe(Schema.decodeTo(schema))
-  }
+function toBodyCodec(schema: Schema.Constraint): Schema.Top {
+  return fromArrayBuffer(schema).pipe(Schema.decodeTo(
+    HttpApiSchema.getResponseEncoding(schema.ast)._tag === "FormUrlEncoded"
+      ? Schema.toCodecArrayFromSingle(schema)
+      : schema
+  ))
 }
 
 function fromArrayBuffer(schema: Schema.Constraint): Schema.Top {

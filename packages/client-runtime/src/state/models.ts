@@ -12,6 +12,7 @@ import type {
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -21,6 +22,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
@@ -99,6 +101,11 @@ export interface ThreadRunSummary {
   readonly providerStartingLabel?: string;
   /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
   readonly providerStartingLabelMsg?: string;
+  /** The starting provider, so clients can show its logo beside the label. */
+  readonly providerStarting?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  };
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -114,6 +121,8 @@ export interface ThreadRuntimeSummary {
   readonly lastError: string | null;
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
+  /** The record `lastError` came from, with its change time so a repeated failure differs. */
+  readonly lastErrorSource?: string | null;
   readonly usageLimitResetAt?: string | null;
   readonly updatedAt: string;
 }
@@ -123,6 +132,34 @@ export type ThreadStructureRuntime = Omit<ThreadRuntimeSummary, "updatedAt">;
 
 export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | undefined): boolean {
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
+}
+
+export function resolveThreadConnectionStatus(
+  thread: Pick<EnvironmentThreadShell, "connectionPhase" | "runtime"> & {
+    readonly pendingBackgroundTasks?: EnvironmentThreadShell["pendingBackgroundTasks"] | undefined;
+  },
+): "connecting" | "reconnecting" | "offline" | null {
+  if (
+    !threadRuntimeIsActive(thread.runtime) &&
+    !(
+      thread.runtime?.status === "idle" &&
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    )
+  )
+    return null;
+  switch (thread.connectionPhase) {
+    case "connecting":
+      return "connecting";
+    case "reconnecting":
+      return "reconnecting";
+    case "available":
+    case "offline":
+    case "error":
+    case "unsupported":
+      return "offline";
+    default:
+      return null;
+  }
 }
 
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
@@ -146,6 +183,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 
 export interface EnvironmentThreadShell {
   readonly environmentId: EnvironmentId;
+  readonly connectionPhase?: EnvironmentConnectionPhase | undefined;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
@@ -160,6 +198,8 @@ export interface EnvironmentThreadShell {
   readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
+  /** The workflow run this thread is an agent step of, if it is one. */
+  readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -312,6 +352,7 @@ export function presentThreadShell(
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
+    workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,
@@ -372,16 +413,6 @@ export function scopeThreadShell(
   thread: OrchestrationV2ThreadShell,
 ): EnvironmentThreadShell {
   return presentThreadShell(environmentId, thread);
-}
-
-const THREAD_PROVIDER_STACK_LIMIT = 3;
-
-export function resolveThreadProviderStack(
-  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
-): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
-  return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }
 
 /**

@@ -52,7 +52,7 @@ export const run = Effect.fn("scenario.run")(
     );
     if (!(options.allowExit ?? [0]).includes(exitCode)) {
       return yield* new ScenarioError({
-        message: `${program} ${args.slice(0, 3).join(" ")} exited with ${exitCode}: ${stderr.trim().slice(-600)}`,
+        message: `${program} ${args.slice(0, 3).join(" ")} exited with ${exitCode}: ${(stderr.trim() || stdout.trim()).slice(-600)}`,
       });
     }
     return { stdout, stderr, exitCode: Number(exitCode) };

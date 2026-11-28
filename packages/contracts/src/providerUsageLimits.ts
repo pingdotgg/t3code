@@ -57,6 +57,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
       url: TrimmedNonEmptyString,
     }),
   ),
+  /** Limits need T3 to read the provider's sign-in, and the user has not allowed usage access yet. */
+  needsUsageAccess: Schema.optional(Schema.Literal(true)),
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
@@ -78,13 +80,35 @@ export const UsageLimitSourceAccount = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
   plan: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** The models the hub routes to this account. */
+  models: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   usageLimits: ServerProviderUsageLimits,
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
+export const HttpQuotaAccount = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  windows: Schema.Array(
+    Schema.Struct({
+      id: ServerProviderUsageWindow.fields.id,
+      kind: ServerProviderUsageWindow.fields.kind,
+      label: ServerProviderUsageWindow.fields.label,
+      usedPercent: ServerProviderUsageWindow.fields.usedPercent,
+      resetsAt: ServerProviderUsageWindow.fields.resetsAt,
+    }),
+  ),
+});
+
+export const HttpQuotaResponse = Schema.Struct({
+  version: Schema.Literal(1),
+  accounts: Schema.Array(HttpQuotaAccount),
+});
+
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
-  kind: Schema.Literal("cliproxy"),
+  kind: Schema.Literals(["cliproxy", "http"]),
   label: TrimmedNonEmptyString,
   /** Origin of the hub, which also serves the agents sent through it. */
   origin: Schema.optional(TrimmedNonEmptyString),
@@ -92,6 +116,9 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   endpoint: Schema.optional(TrimmedNonEmptyString),
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
+  quotaAccounts: Schema.optional(ForwardCompatibleArray(HttpQuotaAccount)),
+  /** Hub provider names of enabled accounts that T3 Code cannot read. */
+  unreadProviders: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   error: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;

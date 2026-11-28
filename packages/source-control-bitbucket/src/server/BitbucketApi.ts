@@ -122,6 +122,7 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
     retryAt: Schema.optional(Schema.Number),
+    userFacingDetail: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
@@ -463,7 +464,7 @@ function requireRepositoryLocator(
 
 function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator | null {
   const trimmed = remoteUrl.trim();
-  const scpMatch = /^[a-zA-Z0-9._-]+@[^:/]+:(.+)$/.exec(trimmed);
+  const scpMatch = /^[^-@/\\:\s][^/\\:\s]*@[^@:/]+:(.+)$/.exec(trimmed);
   if (scpMatch?.[1]) {
     return parseBitbucketRepositorySlug(scpMatch[1]);
   }
@@ -1103,8 +1104,20 @@ export const make = Effect.gen(function* () {
     getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
       return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
     }),
-    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
-      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function* (input) {
+      const locator = yield* resolveRepository(input);
+      return yield* getRepositoryFromLocator(locator).pipe(
+        Effect.mapError((error) => {
+          if (error._tag !== "BitbucketResponseError" || error.status !== 404) return error;
+          return new BitbucketResponseError({
+            ...error,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(
+              `${locator.workspace}/${locator.repoSlug}`,
+            ),
+          });
+        }),
+        Effect.map(normalizeRepositoryCloneUrls),
+      );
     }),
     createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
       return requireRepositoryLocator(input.repository).pipe(

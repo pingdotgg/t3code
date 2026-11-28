@@ -1,4 +1,4 @@
-import { type AntigravitySettings, UsageReadError } from "@t3tools/contracts";
+import { type AntigravitySettings, ProviderInstanceId, UsageReadError } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type {
@@ -26,6 +26,8 @@ export class AntigravityUsage extends Context.Service<
   {
     readonly scan: (input: {
       readonly instances: ReadonlyArray<ProviderUsageInstance<AntigravitySettings>>;
+      /** Configured instances that are off or not allowed; their T3-managed profiles stay unread. */
+      readonly unreadInstanceIds: ReadonlyArray<ProviderInstanceId>;
       readonly windowStartMs: number;
     }) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError>;
   }
@@ -62,29 +64,44 @@ const make = Effect.gen(function* () {
     return [...canonical];
   });
 
+  const profileDirectory = (instanceId: ProviderInstanceId) =>
+    resolveAntigravityInstanceDirectories(host.paths.stateDir, instanceId).pipe(
+      Effect.map((directories) => directories.profile),
+      Effect.provideService(Digest.Digest, digest),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Antigravity profile directory could not be resolved.",
+            cause,
+          }),
+      ),
+    );
+
   const scan: AntigravityUsage["Service"]["scan"] = Effect.fn("AntigravityUsage.scan")(function* ({
     instances,
+    unreadInstanceIds,
     windowStartMs,
   }) {
+    // No allowed instance means nothing to count, not even T3's own Antigravity profiles.
+    if (instances.length === 0) return [];
     const roots: Array<string> = [];
     for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
-    for (const { instanceId } of instances.filter((instance) => instance.configured)) {
-      const directories = yield* resolveAntigravityInstanceDirectories(
-        host.paths.stateDir,
-        instanceId,
-      ).pipe(
-        Effect.provideService(Digest.Digest, digest),
-        Effect.provideService(Path.Path, path),
-        Effect.mapError(
-          (cause) =>
-            new UsageReadError({
-              reason: "scanFailed",
-              detail: "Antigravity profile directory could not be resolved.",
-              cause,
-            }),
-        ),
-      );
-      roots.push(path.join(directories.profile, "antigravity-acp"));
+    for (const { instanceId } of instances) {
+      roots.push(path.join(yield* profileDirectory(instanceId), "antigravity-acp"));
+    }
+    const unreadProfiles = new Set<string>();
+    for (const instanceId of unreadInstanceIds)
+      unreadProfiles.add(yield* profileDirectory(instanceId));
+    // Profiles of removed or renamed instances keep their history on disk; keep counting it.
+    const profilesDir = path.join(host.paths.stateDir, "providers", "antigravity");
+    const profiles = yield* fileSystem
+      .readDirectory(profilesDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const profile of profiles) {
+      const profileDir = path.join(profilesDir, profile);
+      if (!unreadProfiles.has(profileDir)) roots.push(path.join(profileDir, "antigravity-acp"));
     }
     const conversationDirs = new Set<string>();
     for (const root of roots) {
@@ -128,6 +145,16 @@ export const antigravityUsageReader: ProviderUsageReader<AntigravitySettings, An
   kind: "scan",
   provider: "antigravity",
   rateModel: antigravityRateModel,
-  scan: ({ instances, windowStartMs }) =>
-    AntigravityUsage.pipe(Effect.flatMap((usage) => usage.scan({ instances, windowStartMs }))),
+  scan: ({ instances, settings, windowStartMs }) => {
+    const read = new Set(instances.map(({ instanceId }) => instanceId));
+    const unreadInstanceIds = Object.entries(settings.providerInstances)
+      .filter(
+        ([id, instance]) =>
+          instance.driver === "antigravity" && !read.has(ProviderInstanceId.make(id)),
+      )
+      .map(([id]) => ProviderInstanceId.make(id));
+    return AntigravityUsage.pipe(
+      Effect.flatMap((usage) => usage.scan({ instances, unreadInstanceIds, windowStartMs })),
+    );
+  },
 };

@@ -4,7 +4,6 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   isLiveSubagentTurnItem,
@@ -21,6 +20,7 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandlessCommandLabel,
   contextCompactionLabel,
   liveThoughtLine,
   toolItemForDisplay,
@@ -30,8 +30,9 @@ import {
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupSummaryKind,
-  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
   type ToolGroupSummaryKind,
+  type ViewedImage,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
   workEntryHiddenByToolCallVisibility,
@@ -155,7 +156,6 @@ export interface ThreadFeedMessage {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
-  readonly checkpointSummary?: ThreadCheckpointSummary;
 }
 
 export interface LocalThreadMessage {
@@ -211,7 +211,6 @@ type RawThreadFeedEntry =
 
 export type ThreadFeedEntry = ThreadFeedEntryContent & {
   readonly continuesWorkLog?: boolean;
-  readonly checkpointSummary?: ThreadCheckpointSummary;
 };
 
 type ThreadFeedEntryContent =
@@ -247,7 +246,7 @@ type ThreadFeedEntryContent =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
-      readonly paths: ReadonlyArray<string>;
+      readonly images: ReadonlyArray<ViewedImage>;
     }
   | {
       readonly type: "run-fold";
@@ -268,6 +267,8 @@ type ThreadFeedEntryContent =
       readonly label?: string;
       /** Shown instead of "Thinking" while the provider has not started a turn. */
       readonly providerStartingLabel?: string;
+      /** The starting provider's driver, whose logo replaces the thinking icon. */
+      readonly providerStartingDriver?: string;
     };
 
 export interface ThreadFeedLatestRun {
@@ -278,6 +279,7 @@ export interface ThreadFeedLatestRun {
   readonly turnEnded?: boolean;
   readonly providerStartingLabel?: string;
   readonly providerStartingLabelMsg?: string;
+  readonly providerStarting?: { readonly driver: string };
 }
 
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
@@ -300,6 +302,12 @@ export function workEntryRowLabel(
   const presentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
+  const commandless = commandlessCommandLabel(
+    entry,
+    liveActivityToolStatus(entry.toolLifecycleStatus, false),
+    resolve,
+  );
+  if (commandless) return commandless;
   const action = toolGroupAction(entry);
   const isToolRead = action === "read" && entry.itemType === "dynamic_tool";
   if (action === "code-search" || action === "search") {
@@ -444,6 +452,13 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
+export function isFeedbackRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "feedback_request"
+  );
+}
+
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -492,6 +507,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
+    item.type === "feedback_request" ||
     item.type === "link_request"
   );
 }
@@ -522,7 +538,7 @@ function itemLifecycleStatus(item: OrchestrationV2TurnItem): WorkLogToolLifecycl
       return "failed";
     case "cancelled":
     case "interrupted":
-      return "stopped";
+      return item.toolNonExecutionKind === "declined" ? "declined" : "stopped";
   }
 }
 
@@ -614,6 +630,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "zap";
     case "secret_request":
       return "lock";
+    case "feedback_request":
+      return "message";
     case "link_request":
       return "globe";
   }
@@ -688,6 +706,8 @@ function itemSummary(
       return resolve(msg("Thread created"));
     case "secret_request":
       return item.label;
+    case "feedback_request":
+      return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
     case "dynamic_tool": {
@@ -758,6 +778,8 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "feedback_request":
+      return item.preview.subject;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1476,7 +1498,8 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.completedAt === right.completedAt &&
       left.turnEnded === right.turnEnded &&
       left.providerStartingLabel === right.providerStartingLabel &&
-      left.providerStartingLabelMsg === right.providerStartingLabelMsg)
+      left.providerStartingLabelMsg === right.providerStartingLabelMsg &&
+      left.providerStarting?.driver === right.providerStarting?.driver)
   );
 }
 
@@ -1548,6 +1571,10 @@ function presentationRestart(
     const firstEntry = runId === null ? undefined : previous.firstEntryByRun.get(runId);
     if (firstEntry !== undefined && firstEntry < restart.entry) return null;
   }
+  // The reused rows hold the live run's fold, which a rebuilt tail would add again.
+  const liveRunId = unsettledRunId(latestRun);
+  const liveRunStart = liveRunId === null ? undefined : previous.firstEntryByRun.get(liveRunId);
+  if (liveRunStart !== undefined && liveRunStart < restart.entry) return null;
   return { ...restart, index };
 }
 
@@ -1931,10 +1958,16 @@ export function deriveThreadFeedPresentation(
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
+  const latestRow = result.at(-1);
+  const replyIsStreaming =
+    latestRow?.type === "message" &&
+    latestRow.message.role === "assistant" &&
+    latestRow.message.streaming;
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
     latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     (activeRunId === null || !compactionCommandRunIds.has(activeRunId)) &&
     !result.some(
       (row) =>
@@ -1958,41 +1991,9 @@ export function deriveThreadFeedPresentation(
         latestRun?.providerStartingLabelMsg === undefined
           ? latestRun?.providerStartingLabel
           : resolve(latestRun.providerStartingLabelMsg),
+        latestRun?.providerStarting?.driver,
       ),
     );
-  }
-  const checkpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
-  for (const entry of sourceFeed) {
-    if (entry.type === "message" && entry.message.checkpointSummary) {
-      checkpointByRunId.set(entry.message.checkpointSummary.runId, entry.message.checkpointSummary);
-    }
-  }
-  const workRowByRunId = new Map<RunId, number>();
-  for (let index = tailStart; index < result.length; index += 1) {
-    const row = result[index]!;
-    if (
-      (row.type === "run-fold" || row.type === "work-toggle") &&
-      row.runId !== null &&
-      checkpointByRunId.has(row.runId) &&
-      (row.type === "run-fold" || !workRowByRunId.has(row.runId))
-    ) {
-      workRowByRunId.set(row.runId, index);
-    }
-  }
-  for (const [runId, index] of workRowByRunId) {
-    result[index] = { ...result[index]!, checkpointSummary: checkpointByRunId.get(runId)! };
-  }
-  for (let index = tailStart; index < result.length; index += 1) {
-    const row = result[index]!;
-    if (
-      row.type !== "message" ||
-      !row.message.checkpointSummary ||
-      !workRowByRunId.has(row.message.checkpointSummary.runId)
-    )
-      continue;
-    const message = { ...row.message };
-    delete message.checkpointSummary;
-    result[index] = { ...row, message };
   }
   // Reused rows are final: the user message after them never continues a work log.
   for (let index = tailStart; index < result.length; index += 1) {
@@ -2069,6 +2070,15 @@ function runningSubagentsAtRunTail(feed: ReadonlyArray<ThreadFeedEntry>, runId: 
   let running = 0;
   for (let index = feed.length - 1; index >= 0; index -= 1) {
     const entry = feed[index]!;
+    // The run's own finished reply is the parent parking on the children, not new work.
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming &&
+      entry.message.runId === runId
+    ) {
+      continue;
+    }
     if (entry.type !== "activity-group" || entry.runId !== runId) break;
     const items = entry.activities.map((activity) => activity.projectedItem.item);
     if (items.some((item) => item.type !== "subagent")) break;
@@ -2104,12 +2114,14 @@ function thinkingRow(
   runId: RunId | null,
   label: string | null,
   providerStartingLabel: string | undefined,
+  providerStartingDriver: string | undefined,
 ) {
   if (
     cachedThinkingRow?.createdAt !== createdAt ||
     cachedThinkingRow.runId !== runId ||
     (cachedThinkingRow.label ?? null) !== label ||
-    cachedThinkingRow.providerStartingLabel !== providerStartingLabel
+    cachedThinkingRow.providerStartingLabel !== providerStartingLabel ||
+    cachedThinkingRow.providerStartingDriver !== providerStartingDriver
   ) {
     cachedThinkingRow = {
       type: "thinking",
@@ -2118,6 +2130,9 @@ function thinkingRow(
       runId,
       ...(label === null ? {} : { label }),
       ...(providerStartingLabel === undefined ? {} : { providerStartingLabel }),
+      ...(providerStartingLabel === undefined || providerStartingDriver === undefined
+        ? {}
+        : { providerStartingDriver }),
     };
   }
   return cachedThinkingRow;
@@ -2223,14 +2238,14 @@ function appendActivityGroupRows(
       activeTail && isTrailingRun,
       resolve,
     );
-    const paths = workEntriesViewedImagePaths(groupableRun.map((activity) => activity.workEntry));
-    if (paths.length > 0) {
+    const images = workEntriesViewedImages(groupableRun.map((activity) => activity.workEntry));
+    if (images.length > 0) {
       result.push({
         type: "viewed-images",
         id: `${groupId}:viewed-images`,
         createdAt: groupableRun[0]!.createdAt,
         runId: groupableRun[0]!.runId,
-        paths,
+        images,
       });
     }
     groupableRun = [];
@@ -2424,7 +2439,10 @@ function liveToolActivitySummary(
             ? resolve(msg("Stopped {program}", { program }))
             : resolve(msg("Ran {program}", { program }));
   }
-  return compactWorkEntryText(activity.detail ?? activity.summary);
+  return (
+    commandlessCommandLabel(activity.workEntry, status, resolve) ??
+    compactWorkEntryText(activity.detail ?? activity.summary)
+  );
 }
 
 interface ThreadFeedBuild {
@@ -2432,7 +2450,6 @@ interface ThreadFeedBuild {
   readonly locale: string | undefined;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
   readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
-  readonly checkpointSummaries: ReadonlyArray<ThreadCheckpointSummary> | undefined;
   readonly foldedAnswerRunIdByMessageId: ReadonlyMap<string, RunId | null>;
   readonly delegatedChildrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
@@ -2457,30 +2474,6 @@ function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
   if (left.size !== right.size) return false;
   for (const value of left) if (!right.has(value)) return false;
   return true;
-}
-
-// Summaries are re-derived whenever messages change, including streamed text,
-// so a new array often holds the same checkpoints.
-function checkpointSummariesEqual(
-  left: ReadonlyArray<ThreadCheckpointSummary> | undefined,
-  right: ReadonlyArray<ThreadCheckpointSummary> | undefined,
-): boolean {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left.length !== right.length) return false;
-  return left.every((summary, index) => {
-    const other = right[index]!;
-    return (
-      summary.checkpointId === other.checkpointId &&
-      summary.scopeId === other.scopeId &&
-      summary.runId === other.runId &&
-      summary.checkpointTurnCount === other.checkpointTurnCount &&
-      summary.checkpointRef === other.checkpointRef &&
-      summary.completedAt === other.completedAt &&
-      summary.status === other.status &&
-      summary.files === other.files &&
-      summary.assistantMessageId === other.assistantMessageId
-    );
-  });
 }
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
@@ -2517,13 +2510,12 @@ export function buildThreadFeed(
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
-    readonly checkpointSummaries?: ReadonlyArray<ThreadCheckpointSummary>;
     readonly cache?: ThreadFeedCache;
     readonly resolve?: MessageResolver;
     /** Keys the caches; text comes from `resolve`. */
     readonly locale?: string;
   },
-): ThreadFeedEntry[] {
+): ReadonlyArray<ThreadFeedEntry> {
   const anchoredMessages = options?.anchoredMessages ?? [];
   const resolve = options?.resolve ?? m;
   const locale = options?.locale;
@@ -2571,7 +2563,6 @@ export function buildThreadFeed(
     previous.locale === locale &&
     previous.attempts === options?.attempts &&
     previous.nodes === options?.nodes &&
-    checkpointSummariesEqual(previous.checkpointSummaries, options?.checkpointSummaries) &&
     mapsEqual(previous.foldedAnswerRunIdByMessageId, foldedAnswerRunIdByMessageId) &&
     setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun)
   ) {
@@ -2581,6 +2572,8 @@ export function buildThreadFeed(
       restartIndex -= 1;
     }
   }
+  // Unchanged rows rebuild the same feed; returning it keeps the screen's props equal.
+  if (restartIndex !== -1 && previous!.rows === visibleTurnItems) return previous!.feed;
   const restart = restartIndex === -1 ? null : previous!.restarts[restartIndex]!;
   const prefix = restart === null ? [] : previous!.feed.slice(0, restart.feedLength);
   const restarts = restart === null ? [] : previous!.restarts.slice(0, restartIndex + 1);
@@ -2767,18 +2760,8 @@ export function buildThreadFeed(
     if (insertionIndex === -1) entries.push(entry);
     else entries.splice(insertionIndex, 0, entry);
   }
-  const checkpointByMessageId = new Map(
-    (options?.checkpointSummaries ?? [])
-      .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
-      .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
-  );
   const grouped = groupAdjacentActivities(
-    entries.map((entry) => {
-      if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
-      const checkpointSummary = checkpointByMessageId.get(entry.message.id);
-      if (!checkpointSummary || checkpointSummary.runId !== entry.message.runId) return entry;
-      return { ...entry, message: { ...entry.message, checkpointSummary } };
-    }),
+    entries,
     delegatedChildrenByRun,
     // Anchored messages shift entries away from their rows; such a build is not reused.
     anchoredMessages.length > 0
@@ -2799,7 +2782,6 @@ export function buildThreadFeed(
             locale,
             attempts: options?.attempts,
             nodes: options?.nodes,
-            checkpointSummaries: options?.checkpointSummaries,
             foldedAnswerRunIdByMessageId,
             delegatedChildrenByRun,
             feed,

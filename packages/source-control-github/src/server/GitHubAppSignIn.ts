@@ -19,15 +19,9 @@ import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 
 import * as GitHubClient from "../shared/definition.ts";
-
-/**
- * The public client ID of the T3 Code for GitHub app, which the device flow needs (no secret).
- * Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
- */
-export const CLIENT_ID_VARIABLE = "T3CODE_GITHUB_APP_CLIENT_ID";
 
 const KIND = SourceControlProviderKind.make("github");
 const REQUEST_TIMEOUT = Duration.seconds(15);
@@ -107,7 +101,8 @@ const signInError = (host: string, reason: SourceControlSignInFailure, detail: s
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
-  const clientId = (yield* HostProcess.Environment)[CLIENT_ID_VARIABLE]?.trim() ?? "";
+  // Unset turns the app sign-in off: no app tokens, no sign-in, nothing for clients to show.
+  const clientId = Option.getOrElse((yield* FeatureFlags.FeatureFlags).githubAppClientId, () => "");
   const enabled = clientId !== "";
   const scope = yield* Effect.scope;
   const refreshLock = yield* Semaphore.make(1);
@@ -213,9 +208,15 @@ export const make = Effect.gen(function* () {
       },
       TokenResponse,
     ).pipe(Effect.mapError((cause) => new GitHubAppSessionError({ host, cause })));
-    if (response.error === "bad_refresh_token") {
-      // Final: the user revoked the app or the session lapsed.
-      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", { host });
+    if (
+      response.error === "bad_refresh_token" ||
+      response.error === "incorrect_client_credentials"
+    ) {
+      // Final: the user revoked the app, the session lapsed, or this server's client cannot refresh it.
+      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", {
+        host,
+        error: response.error,
+      });
       yield* replaceSession(host, session, null).pipe(Effect.ignore);
       return Option.none<string>();
     }

@@ -68,6 +68,8 @@ describe("UsageLimitRecoveryCard", () => {
       ["Manage usage", "Resume at reset", "Snooze until reset"],
     ],
   ])("shows one ChatGPT notice for %s (%s, reset %s)", (code, errorClass, resetAt, actions) => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: 0 });
     const container = document.createElement("div");
     const root = createRoot(container);
     using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
@@ -150,9 +152,19 @@ describe("UsageLimitRecoveryCard", () => {
         (button) => button.textContent === "Snooze until reset",
       );
     expect(snooze()?.disabled).toBe(false);
+    expect(container.textContent).toContain("Usage limit reached. Resets ");
+    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Resume at reset",
+      "Snooze until reset",
+    ]);
 
     act(() => vi.advanceTimersByTime(30 * DAY_MS));
 
     expect(snooze()?.disabled).toBe(true);
+    expect(container.textContent).toContain("Usage limit reached. Reset ");
+    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Resume now",
+      "Snooze until reset",
+    ]);
   });
 });

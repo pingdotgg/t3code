@@ -1,5 +1,6 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ProviderDriverKind,
   type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
@@ -7,7 +8,11 @@ import {
 import type { PiSettings } from "../settings.ts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -61,8 +66,6 @@ const PI_PRESENTATION = {
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
-// Earlier releases persist background set_thinking_level requests as the user's global default.
-export const MINIMUM_PI_VERSION = "0.84.3";
 
 const decodePiAuthCheck = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
@@ -433,6 +436,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = piModelsFromSettings(piSettings.customModels);
@@ -526,12 +530,19 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: `T3 Code could not determine the Pi version. Pi ${MINIMUM_PI_VERSION} or newer is required.`,
+        message: "T3 Code could not determine the Pi version. Update Pi, then refresh its status.",
       },
     });
   }
 
-  if (compareSemverVersions(version, MINIMUM_PI_VERSION) < 0) {
+  // Stop before discovery: releases the policy rates broken persist background
+  // set_thinking_level requests as the user's global default.
+  const broken = brokenVersionDetail({
+    name: "Pi",
+    version,
+    advisory: yield* compatibility(ProviderDriverKind.make("pi"), version),
+  });
+  if (broken !== undefined) {
     return buildServerProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
@@ -542,7 +553,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: `Pi ${version} is unsupported. Update to Pi ${MINIMUM_PI_VERSION} or newer.`,
+        message: broken,
       },
     });
   }

@@ -27,6 +27,7 @@ import {
   type RichTextMark,
 } from "~/composer-rich-text";
 import { caretTakesMarksBefore, serializeEditorDoc } from "~/composer-rich-text-doc";
+import { isPasteTransaction } from "~/composer-undo-grouping";
 
 // Styled text the selection touches becomes source text with the source mark,
 // parsed back once the selection leaves. History steps only replay on the shape
@@ -441,12 +442,33 @@ const markdownSourceKey = new PluginKey<MarkdownSourceState>("composer-markdown-
 
 function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   let view: EditorView | null = null;
+  // Rewriting under a held mouse reflows the text, and the browser's next
+  // hit-test moves the selection. A click normalizes once the button is
+  // released; a drag's range stays as dragged, since showing markers would
+  // still move the text under the pointer.
+  let mouseSelecting = false;
   return new Plugin<MarkdownSourceState>({
     key: markdownSourceKey,
     view(editorView) {
       view = editorView;
+      // On the window, so ProseMirror's own mouseup handler has placed the selection first.
+      const target = editorView.dom.ownerDocument.defaultView ?? editorView.dom.ownerDocument;
+      const release = () => {
+        if (!mouseSelecting) return;
+        mouseSelecting = false;
+        if (view?.state.selection.empty) {
+          view.dispatch(view.state.tr.setSelection(view.state.selection));
+        }
+      };
+      target.addEventListener("mouseup", release);
+      // A native drag or a context menu takes the mouseup.
+      target.addEventListener("dragstart", release);
+      target.addEventListener("contextmenu", release);
       return {
         destroy() {
+          target.removeEventListener("mouseup", release);
+          target.removeEventListener("dragstart", release);
+          target.removeEventListener("contextmenu", release);
           view = null;
         },
       };
@@ -469,7 +491,10 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
               (tr.docChanged
                 ? old.revealed.map((range) => mapRange(tr.mapping, range))
                 : old.revealed));
-        const redraw = tr.docChanged || detached !== old.detached || (detached && tr.selectionSet);
+        const redraw =
+          tr.docChanged ||
+          detached !== old.detached ||
+          (detached && tr.selectionSet && !mouseSelecting);
         return {
           decorations: redraw
             ? previewDecorations(state.doc, type, detached ? state.selection : null)
@@ -481,13 +506,19 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
     },
     props: {
       decorations: (state) => markdownSourceKey.getState(state)?.decorations,
+      handleDOMEvents: {
+        mousedown: (_, event) => {
+          mouseSelecting = event.button === 0;
+          return false;
+        },
+      },
     },
     appendTransaction(transactions, _, state) {
       if (transactions[0]?.getMeta(replayKey)) {
         return collapseRevealed(state, markdownSourceKey.getState(state)?.revealed ?? []);
       }
       // Rewriting text mid-composition would break the IME's preedit.
-      if (view?.composing) return null;
+      if (view?.composing || mouseSelecting) return null;
       // Rewrites appended to an undo or redo join its history step, which leaves
       // the other direction unmapped. The dispatch hook normalizes after it instead.
       if (transactions.some((tr) => isHistoryTransaction(tr) || tr.getMeta(markdownSourceKey))) {
@@ -496,9 +527,10 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
       const source = markdownSourceKey.getState(state);
       if (source?.detached) return normalizeDetached(state, source.revealed);
+      // A paste is not typing: the caret ends past the pasted text's closing markers.
       const tr = normalizeMarkdownSource(
         state,
-        transactions.some((item) => item.docChanged),
+        transactions.some((item) => item.docChanged && !isPasteTransaction(item)),
       );
       // With nothing to undo, a recorded rewrite would only add a no-op undo.
       if (tr && undoDepth(state) === 0) tr.setMeta("addToHistory", false);
