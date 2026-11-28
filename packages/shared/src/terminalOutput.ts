@@ -79,16 +79,22 @@ const discardedEmojiBases = new WeakMap<
   { readonly base: string; readonly selectorUnits: number }
 >();
 
+/** The emoji base a modifier after `preceding` would attach to, past any variation selectors. */
+function emojiBaseBefore(preceding: Iterable<string>): string | undefined {
+  for (const character of preceding) {
+    if (!VARIATION_SELECTOR.test(character)) {
+      return EMOJI_MODIFIER_BASE.test(character) ? character : undefined;
+    }
+  }
+  return undefined;
+}
+
 function isDetachedTailStart(
   character: string,
   precedingCharacters: () => Iterable<string>,
 ): boolean {
   if (DETACHED_MARK.test(character)) return true;
-  if (EMOJI_MODIFIER.test(character)) {
-    for (const preceding of precedingCharacters()) {
-      if (!VARIATION_SELECTOR.test(preceding)) return EMOJI_MODIFIER_BASE.test(preceding);
-    }
-  }
+  if (EMOJI_MODIFIER.test(character)) return emojiBaseBefore(precedingCharacters()) !== undefined;
   if (REGIONAL_INDICATOR.test(character)) {
     let odd = false;
     for (const preceding of precedingCharacters()) {
@@ -226,19 +232,14 @@ function trimLineStart(runs: Array<Run>, count: number, lineBudget?: number): nu
     dropped += 1;
   }
   if (lineBudget !== undefined && dropped === runs.length) {
-    for (const character of previousRunCharacters(
-      runs,
-      runs.length - 1,
-      runs.at(-1)!.text.length,
-    )) {
-      if (VARIATION_SELECTOR.test(character)) continue;
-      if (EMOJI_MODIFIER_BASE.test(character)) {
-        discardedEmojiBases.set(runs, {
-          base: character,
-          selectorUnits: Math.max(0, lineBudget - character.length + 1),
-        });
-      }
-      break;
+    const base = emojiBaseBefore(
+      previousRunCharacters(runs, runs.length - 1, runs.at(-1)!.text.length),
+    );
+    if (base !== undefined) {
+      discardedEmojiBases.set(runs, {
+        base,
+        selectorUnits: Math.max(0, lineBudget - base.length + 1),
+      });
     }
   }
   if (dropped > 0) runs.splice(0, dropped);
