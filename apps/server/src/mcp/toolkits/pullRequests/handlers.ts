@@ -64,6 +64,7 @@ import {
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
   type PullRequestTargetInput,
+  PullRequestOutsideThreadError,
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
   PullRequestProjectNotFoundError,
@@ -252,10 +253,11 @@ export function listThreadPullRequests(
 
 function projectForPullRequest(
   projects: ReadonlyArray<OrchestrationProjectShell>,
-  target: { readonly host: string; readonly repository: string },
+  target: { readonly host?: string | undefined; readonly repository: string },
   preferred: OrchestrationProjectShell | undefined,
 ): OrchestrationProjectShell | undefined {
   // Match the guide service's host-level repository key, including Azure DevOps org/project/_git/repo.
+  // Without a host, each project is matched on its own host.
   const matches = (project: OrchestrationProjectShell) => {
     const own = pullRequestSyncKey(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
@@ -600,8 +602,40 @@ const make = Effect.gen(function* () {
     return comments.map((comment) => placed.get(comment)!);
   });
 
+  /** The project that is a checkout of the repository an outside MCP client names. */
+  const projectNamed = Effect.fnUntraced(function* (repository: string) {
+    const known = yield* projects
+      .listShells()
+      .pipe(Effect.mapError((cause) => new PullRequestForgeError({ cause })));
+    const match = projectForPullRequest(known, { repository }, undefined);
+    const project =
+      match === undefined
+        ? undefined
+        : yield* pullRequests.addressedProject(match.id).pipe(Effect.mapError(forgeFailure));
+    if (project === undefined) return yield* new PullRequestProjectNotFoundError({ repository });
+    return project;
+  });
+
   /** The thread's checkout, its project, and the PR the input names (default: the branch's). */
   const locate = Effect.fn("PullRequestsToolkit.locate")(function* (input: ThreadPullRequestInput) {
+    const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+    if (scope.thread === undefined) {
+      if (input.repository === undefined || input.number === undefined) {
+        return yield* new PullRequestOutsideThreadError({ needs: "repository and number" });
+      }
+      const project = yield* projectNamed(input.repository);
+      const target = yield* resolveTarget(
+        { number: input.number, repository: input.repository },
+        project,
+      );
+      const ref: PullRequestRef = {
+        projectId: project.id,
+        host: target.host,
+        repository: target.repository,
+        number: target.number,
+      };
+      return { thread: undefined, project, target, ref };
+    }
     const thread = yield* requireThread(PullRequestForgeError, undefined);
     const project = yield* projectOf(thread, PullRequestForgeError);
     if (project === undefined) {
@@ -1095,10 +1129,16 @@ const make = Effect.gen(function* () {
     ),
     pull_request_list: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        const thread = yield* requireThread(PullRequestForgeError, undefined);
+        const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        const projectId =
+          input.repository !== undefined
+            ? (yield* projectNamed(input.repository)).id
+            : scope.thread === undefined
+              ? yield* new PullRequestOutsideThreadError({ needs: "repository" })
+              : (yield* requireThread(PullRequestForgeError, undefined)).projectId;
         const listed = yield* pullRequests
           .list({
-            projectId: thread.projectId,
+            projectId,
             state: input.state ?? "open",
             involvement: input.involvement ?? "all",
             limit: input.limit ?? 30,
@@ -1410,6 +1450,7 @@ const make = Effect.gen(function* () {
         // Like a push, a rerun makes a watch's finished checks stale, so the thread keeps working
         // until a read sees them run. The rerun already happened, so a failed reopen only logs.
         if (
+          thread !== undefined &&
           checks.some((check) => check.rerun) &&
           threadPullRequestsOf(thread).some((link) => link.watch?.checksPending !== undefined)
         ) {

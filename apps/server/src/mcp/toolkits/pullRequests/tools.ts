@@ -94,6 +94,15 @@ export class PullRequestThreadRequiredError extends Schema.TaggedError<PullReque
   }
 }
 
+export class PullRequestOutsideThreadError extends Schema.TaggedError<PullRequestOutsideThreadError>()(
+  "PullRequestOutsideThreadError",
+  { needs: Schema.String },
+) {
+  override get message(): string {
+    return `Pass ${this.needs}: this MCP client is not running inside a T3 thread.`;
+  }
+}
+
 export class PullRequestLinkFailedError extends Schema.TaggedError<PullRequestLinkFailedError>()(
   "PullRequestLinkFailedError",
   { cause: Schema.Defect() },
@@ -184,6 +193,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestUrlUnavailableError,
   PullRequestRepositoryInvalidError,
   PullRequestThreadRequiredError,
+  PullRequestOutsideThreadError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
@@ -661,6 +671,9 @@ const ListPullRequestsTool = Tool.make("pull_request_list", {
   description: "List PRs in this thread's repository, recently updated first.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
+    repository: Schema.optional(
+      TrimmedNonEmptyString.annotate({ description: "Default: this thread's." }),
+    ),
     state: Schema.optional(PullRequestListState.annotate({ description: "Default: open." })),
     involvement: Schema.optional(PullRequestInvolvement),
     query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
