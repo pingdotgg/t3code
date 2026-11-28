@@ -51,5 +51,5 @@ t3 thread show "$id"
 t3 thread list
 ```
 
-- Pass `--worktree <base-branch>`, `--title` / `--generate-title`, `--provider <id> --model <slug>`, `--option id=value` (e.g. `reasoningEffort=high` for Codex, `effort=high` for Claude), or `-` to read the prompt from stdin.
+- Pass `--worktree <base-branch>`, `--title` / `--generate-title`, `--provider <id> --model <slug>`, `--option id=value` (e.g. `reasoningEffort=high` for Codex, `effort=high` for Claude), `--runtime-mode <mode>` (otherwise the project's default permission mode, or the closest one below it the provider offers), or `-` to read the prompt from stdin.
 - `--wait` prints the reply and exits `1` on failure/stop or `2` when waiting for user input. Add `--json` for structured output including the thread ID.

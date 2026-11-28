@@ -262,6 +262,74 @@ it.effect(
     ),
 );
 
+it.effect("start forwards --runtime-mode to t3_thread_launch", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-thread-mode-" })
+      .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+    const cwd = path.join(root, "current");
+    const baseDir = path.join(root, "state");
+    yield* fs.makeDirectory(cwd);
+    yield* persistServerRuntimeState({
+      path: path.join(baseDir, "userdata", "server-runtime.json"),
+      state: yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      }),
+    });
+    const launches: Array<Record<string, unknown>> = [];
+    using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+      Effect.succeed({
+        call: (tool, args) => {
+          if (tool === "t3_project_list") {
+            return Effect.succeed({
+              structuredContent: {
+                projects: [
+                  { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
+                ],
+                nextCursor: null,
+              },
+            });
+          }
+          if (tool === "t3_thread_launch") {
+            launches.push(args as Record<string, unknown>);
+            return Effect.succeed({
+              structuredContent: { threadId, projectId: args.projectId, runId: null },
+            });
+          }
+          return Effect.die(`unexpected ${tool} call`);
+        },
+      }),
+    );
+    const runStart = (extra: ReadonlyArray<string>) =>
+      Command.runWith(threadCommand, { version: "0.0.0" })([
+        "start",
+        ".",
+        "hi",
+        "--json",
+        "--base-dir",
+        baseDir,
+        ...extra,
+      ]).pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd));
+    yield* runStart(["--runtime-mode", "auto"]);
+    yield* runStart([]);
+    assert.strictEqual(launches[0]?.runtimeMode, "auto");
+    assert.isUndefined(launches[1]?.runtimeMode);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
 it.effect("does not sign in to whatever took over a dead server's port", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
