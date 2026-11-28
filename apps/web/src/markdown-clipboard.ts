@@ -107,8 +107,16 @@ function tableSeparatorFor(headerCells: Element[]): string {
   return `| ${markers.join(" | ")} |`;
 }
 
+// Footers render after the body even when the source puts them first.
+function tableRows(table: Element): Element[] {
+  return [
+    ...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr"),
+    ...table.querySelectorAll(":scope > tfoot > tr"),
+  ];
+}
+
 function serializeTable(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  const rows = tableRows(table);
   if (rows.length === 0) return "";
   const lines: string[] = [];
   let emittedSeparator = false;
@@ -237,6 +245,94 @@ function escapeProse(text: string): string {
   });
 }
 
+/** Restores link destinations only when the HTML and plain clipboard describe the same text. */
+export function restorePastedMarkdownLinks(plain: string, html: string): string {
+  if (!plain || !/<a[\s>]/i.test(html)) return plain;
+  // Template contents stay inert, including resources and custom elements.
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const fragment = template.content;
+  const destinations = new Map<Node, string>();
+  for (const element of fragment.querySelectorAll("script, style, [hidden]")) element.remove();
+  for (const element of fragment.querySelectorAll<HTMLElement | SVGElement>("[style]")) {
+    if (element.style.display === "none") element.remove();
+  }
+  // Visibility inherits, but a visible descendant can override a hidden ancestor.
+  const invisible = new WeakSet<Element>();
+  const nodes = document.createNodeIterator(
+    fragment,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+  );
+  for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+    const inheritsHidden = node.parentElement !== null && invisible.has(node.parentElement);
+    if (node instanceof Text) {
+      if (inheritsHidden) node.remove();
+    } else if (node instanceof Element) {
+      const visibility =
+        node instanceof HTMLElement || node instanceof SVGElement ? node.style.visibility : "";
+      if (
+        visibility === "hidden" ||
+        visibility === "collapse" ||
+        (inheritsHidden && visibility !== "visible" && visibility !== "initial")
+      ) {
+        invisible.add(node);
+      }
+    }
+  }
+  for (const anchor of fragment.querySelectorAll("a[href]")) {
+    // Linked identifiers in API docs code samples must stay literal code.
+    if (anchor.closest("pre, code")) continue;
+    const href = anchor.getAttribute("href")?.trim() ?? "";
+    if (!/^(?:https?:\/\/|mailto:)/i.test(href)) continue;
+    let url: URL;
+    try {
+      url = new URL(href);
+    } catch {
+      continue;
+    }
+    const label = document.createTextNode(anchor.textContent ?? "");
+    anchor.replaceWith(label);
+    destinations.set(label, url.href);
+  }
+  if (destinations.size === 0) return plain;
+
+  // Match visible characters in order. The plain rendition owns line breaks and spacing.
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
+  const characters = plain.matchAll(/\S/g);
+  const parts: string[] = [];
+  let resultEnd = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    let start: number | undefined;
+    let end = 0;
+    for (const character of (node.textContent ?? "").matchAll(/\S/g)) {
+      const match = characters.next().value;
+      if (match?.[0] !== character[0]) return plain;
+      start ??= match.index;
+      end = match.index + 1;
+    }
+    const href = destinations.get(node);
+    if (href === undefined || start === undefined) continue;
+    const label = plain.slice(start, end);
+    if (label === href) continue;
+    const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)([!\\])$/, "$1\\$2");
+    const destination = href.replaceAll("&", "&amp;");
+    parts.push(
+      prefix,
+      label.replace(/\S(?:[^\n]*\S)?/g, (line) =>
+        markdownAnchor(escapeProse(line), destination, false),
+      ),
+    );
+    resultEnd = end;
+  }
+  if (!characters.next().done || parts.length === 0) return plain;
+  return parts.join("") + plain.slice(resultEnd);
+}
+
+function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
+}
+
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
@@ -251,8 +347,7 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   // GFM autolinks a bare address only when it fits this shape.
   if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
     return shown;
-  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  return markdownAnchor(label, href, inTableCell);
 }
 
 /**
@@ -273,7 +368,9 @@ function serializeChildren(node: Node, inTableCell = false): string {
 
 function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? "";
+    let text = node.textContent ?? "";
+    // A <br> already wrote the line ending that follows it.
+    if (node.previousSibling?.nodeName === "BR") text = text.replace(/^\n/, "");
     if (text.includes("\n") && text.trim().length === 0) return "\n";
     return escapeTablePipes(escapeProse(text), inTableCell);
   }
@@ -449,7 +546,7 @@ function csvCell(value: string): string {
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  const rows = tableRows(table);
   const lines: string[] = [];
   for (const row of rows) {
     const cells = [...row.children].filter(
@@ -459,6 +556,113 @@ export function serializeTableElementToCsv(table: Element): string {
     lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
   }
   return lines.join("\n");
+}
+
+// CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+const WIDE_GRAPHEME =
+  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+let graphemes: Intl.Segmenter | undefined;
+
+function monospaceWidth(text: string): number {
+  graphemes ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  let width = 0;
+  for (const { segment } of graphemes.segment(text)) width += WIDE_GRAPHEME.test(segment) ? 2 : 1;
+  return width;
+}
+
+function padToWidth(text: string, width: number, align: string): string {
+  const gap = width - monospaceWidth(text);
+  if (align === "right") return " ".repeat(gap) + text;
+  if (align === "center") {
+    const left = Math.floor(gap / 2);
+    return " ".repeat(left) + text + " ".repeat(gap - left);
+  }
+  return text + " ".repeat(gap);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  // Lay cells onto the grid the table renders, so values after a span stay under their headers.
+  // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
+  // Row groups in document order, with footers last as rendered; consecutive rows directly in
+  // the table form one group.
+  const groups: Element[][] = [];
+  const footers: Element[][] = [];
+  let looseRows: Element[] | undefined;
+  for (const child of table.children) {
+    if (child.tagName === "TR") {
+      if (!looseRows) groups.push((looseRows = []));
+      looseRows.push(child);
+      continue;
+    }
+    looseRows = undefined;
+    if (TABLE_SECTION_TAGS.has(child.tagName)) {
+      const rows = [...child.children].filter((row) => row.tagName === "TR");
+      (child.tagName === "TFOOT" ? footers : groups).push(rows);
+    }
+  }
+  groups.push(...footers);
+  const grid: Array<{ slots: Array<{ text: string; cell: Element }>; hasCells: boolean }> = [];
+  for (const groupRows of groups) {
+    const start = grid.length;
+    for (const _ of groupRows) grid.push({ slots: [], hasCells: false });
+    groupRows.forEach((row, offset) => {
+      const gridRow = grid[start + offset]!;
+      let column = 0;
+      for (const cell of row.children) {
+        if (cell.tagName !== "TH" && cell.tagName !== "TD") continue;
+        gridRow.hasCells = true;
+        while (gridRow.slots[column]) column++;
+        const text = csvCellText(cell).replace(/\s+/g, " ").trim();
+        const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
+        const remaining = groupRows.length - offset;
+        // rowspan="0" runs to the end of its row group.
+        const rowSpan = Math.min(tableCellSpan(cell, "rowSpan", "rowspan") || remaining, remaining);
+        for (let down = 0; down < rowSpan; down++) {
+          for (let across = 0; across < colSpan; across++) {
+            grid[start + offset + down]!.slots[column + across] = {
+              text: down === 0 && across === 0 ? text : "",
+              cell,
+            };
+          }
+        }
+        column += colSpan;
+      }
+    });
+  }
+  const rows = grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+  if (rows.length === 0) return { text: "", html: "" };
+  const columns = Math.max(...rows.map((gridRow) => gridRow.length));
+  const texts = rows.map((gridRow) =>
+    Array.from({ length: columns }, (_, column) => gridRow[column]?.text ?? ""),
+  );
+  const widths = Array.from({ length: columns }, (_, column) =>
+    Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
+  );
+  const aligns = widths.map((_, column) => {
+    const header = rows[0]?.[column]?.cell as HTMLElement | undefined;
+    return header?.style?.textAlign || header?.getAttribute("align") || "";
+  });
+  const line = (cells: string[]) =>
+    widths
+      .map((width, column) => padToWidth(cells[column] ?? "", width, aligns[column] ?? ""))
+      .join("  ")
+      .trimEnd();
+  const [header = [], ...body] = texts;
+  const lines = [
+    line(header),
+    widths.map((width) => "-".repeat(width)).join("  "),
+    ...body.map(line),
+  ];
+  const aligned = lines.join("\n");
+  const fence = codeFenceFor(aligned);
+  return {
+    text: `${fence}\n${aligned}\n${fence}`,
+    html: `<meta charset="utf-8"><pre>${escapeHtml(aligned)}</pre>`,
+  };
 }
 
 const TABLE_SECTION_TAGS = new Set(["THEAD", "TBODY", "TFOOT"]);
@@ -605,12 +809,19 @@ function parseTableSpan(value: string | null): number {
   return Number.isNaN(span) || span < 0 ? 1 : span;
 }
 
+// The DOM normalizes spans; the attribute fallback covers non-DOM callers.
+function tableCellSpan(
+  cell: Element,
+  property: "colSpan" | "rowSpan",
+  attribute: "colspan" | "rowspan",
+): number {
+  const span = (cell as Partial<HTMLTableCellElement>)[property];
+  return typeof span === "number" ? span : parseTableSpan(cell.getAttribute(attribute));
+}
+
 function htmlSpanAttributes(cell: Element): string {
-  // The DOM normalizes spans; the attribute fallback covers non-DOM callers.
-  const { colSpan, rowSpan } = cell as Partial<HTMLTableCellElement>;
-  const columns =
-    typeof colSpan === "number" ? colSpan : parseTableSpan(cell.getAttribute("colspan"));
-  const rows = typeof rowSpan === "number" ? rowSpan : parseTableSpan(cell.getAttribute("rowspan"));
+  const columns = tableCellSpan(cell, "colSpan", "colspan");
+  const rows = tableCellSpan(cell, "rowSpan", "rowspan");
   let attributes = columns > 1 ? ` colspan="${columns}"` : "";
   // rowspan="0" runs to the end of its section.
   if (rows !== 1) attributes += ` rowspan="${rows}"`;
