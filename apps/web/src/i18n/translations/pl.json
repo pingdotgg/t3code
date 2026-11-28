@@ -13076,8 +13076,8 @@
   "eb1fd384ad5919dd": "Notatka wewnętrzna",
   "b45f0b467e9406d0": "Odpowiedz klientowi",
   "d454bfdeea6f1129": "Otwórz podgląd",
-  "2c5dd03cec4ac860": "Jeszcze {count}",
-  "c5294f775712e9a2": "W tle",
   "8363b914aade0bdc": "Maksymalizuj panel ({shortcut})",
-  "6f9f7ac334779864": "Przywróć rozmiar panelu ({shortcut})"
+  "6f9f7ac334779864": "Przywróć rozmiar panelu ({shortcut})",
+  "2c5dd03cec4ac860": "Jeszcze {count}",
+  "c5294f775712e9a2": "W tle"
 }
