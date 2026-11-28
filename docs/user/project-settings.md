@@ -27,7 +27,7 @@ Use the **"Applying settings for …"** selector at the top of Settings (web/des
 
 Configure worktrees in **Settings → Worktrees** (environment default or project override):
 
-- **Repository root**: Worktrees need the repository root as the project. If the project is a subfolder of another repository, T3 Code refuses and names that repository's root instead of checking out the whole parent tree. To make the folder independent, run `git init` in it and create an initial commit.
+- **Projects inside another repository**: A project folder that sits inside a repository without being committed to it can't start a worktree; T3 Code names that repository's root instead of checking out the whole parent tree. Add the repository root as the project, or run `git init` in the folder and create an initial commit.
 
 - **Branch naming**: Choose a static prefix (default `t3/`), model-selected semantic prefix (`feat/`, `fix/`), or custom instructions. Falls back to the temporary branch name if generation fails or collides.
 - **Submodules** (under Advanced): Defaults to recursive checkout; set to **Top level only** or **Skip** (or `"worktreeSubmodules"` in `t3.json`) for repos with heavy nested submodules.

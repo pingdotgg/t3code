@@ -6609,13 +6609,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "--show-prefix"],
       { timeoutMs: 5_000 },
     );
-    if (prefix.stdout.trim() !== "") {
+    // A tracked subfolder is a monorepo package; an untracked one only sits inside the repository.
+    if (
+      prefix.stdout.trim() !== "" &&
+      (yield* executeGit(
+        "GitVcsDriver.createWorktree.checkTracked",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", "HEAD:./"],
+        { timeoutMs: 5_000, allowNonZeroExit: true },
+      )).exitCode !== 0
+    ) {
       const repositoryRoot = yield* readWorktreeRoot(input.cwd);
       return yield* new GitCommandError({
         operation: "GitVcsDriver.createWorktree",
         command: "git worktree add",
         cwd: input.cwd,
-        detail: `Cannot create a worktree from "${input.cwd}" because it is inside the Git repository at "${repositoryRoot ?? "an ancestor folder"}". Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
+        detail: `Cannot create a worktree from "${input.cwd}" because it is not tracked by the Git repository at "${repositoryRoot ?? "an ancestor folder"}" that contains it. Add the repository root as a project to create a worktree of that repository, or run git init in the project folder to give it its own repository.`,
       });
     }
     const targetBranch = input.newRefName ?? input.refName;

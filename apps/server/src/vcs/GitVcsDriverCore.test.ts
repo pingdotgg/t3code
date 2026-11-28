@@ -647,7 +647,7 @@ it.effect("marks the default branch of a primary remote that is not named origin
 );
 
 it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"] as const)(
-  "creates worktrees only from the repository root, checked from %s",
+  "refuses worktrees from folders the repository does not track, checked from %s",
   (location) =>
     Effect.scoped(
       Effect.gen(function* () {
