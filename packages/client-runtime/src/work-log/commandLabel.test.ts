@@ -8,6 +8,7 @@ describe("commandProgramName", () => {
     ['bash -lc -- "printf ok"', "printf"],
     ['bash -euo pipefail -c "ls -la"', "ls"],
     ['bash +x +o history -c "ls -la"', "ls"],
+    ["bash -n +n -c 'printf SHOULD_RUN'", "printf"],
     // fish runs `--` itself as the script; "printf ok" is a positional argument
     ['fish -c -- "printf ok"', "--"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
@@ -26,6 +27,8 @@ describe("commandProgramName", () => {
     ["zsh script.sh -c 'git status'", "zsh"],
     ["my-shell -c 'git status'", "my-shell"],
     ["$HOME/.bun/bin/bun test", "bun"],
+    ["bash -nc 'printf SHOULD_NOT_RUN'", "bash"],
+    ["zsh +o exec -c 'printf SHOULD_NOT_RUN'", "zsh"],
   ])("preserves ordinary programs and actual shell launches: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -195,6 +198,13 @@ describe("commandDisplayText with shell option terminators", () => {
     ['bash -eo pipefail -c "printf ok"', "printf ok"],
     ['fish -c -- "printf ok"', 'fish -c -- "printf ok"'],
     ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
+    ["bash -o noexec -c 'printf SHOULD_NOT_RUN'", "bash -o noexec -c 'printf SHOULD_NOT_RUN'"],
+    ["zsh --no-exec -c 'printf SHOULD_NOT_RUN'", "zsh --no-exec -c 'printf SHOULD_NOT_RUN'"],
+    ["bash -n +n -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -n -o exec -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -n -o _EXEC_ -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -oextendedglob -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -onoexec -c 'printf SHOULD_NOT_RUN'", "zsh -onoexec -c 'printf SHOULD_NOT_RUN'"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
