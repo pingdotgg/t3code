@@ -10,7 +10,7 @@ import { Button } from "../ui/button";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const STATUS_LABEL = {
-  pending: msg("Not started"),
+  pending: msg("Pending", { $context: "task step that has not started" }),
   running: msg("Running"),
   completed: msg("Completed"),
 } satisfies Record<OrchestrationV2PlanStep["status"], ReturnType<typeof msg>>;
