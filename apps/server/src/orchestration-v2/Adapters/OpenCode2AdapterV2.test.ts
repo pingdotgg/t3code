@@ -328,7 +328,7 @@ const colorForm = {
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
-    readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
+    readonly version?: "2.2.1" | "2.2.5" | "2.2.6" | "2.4.2";
     readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
     readonly lastRunOrdinal?: number;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
@@ -485,6 +485,85 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect.each(["browser", "pasted callback"] as const)("completes MCP OAuth via %s", (mode) =>
+    Effect.gen(function* () {
+      const location = { directory: WORK };
+      const query = { "location[directory]": WORK };
+      const integrationID = "mcp-snowflake";
+      const attemptID = "con_snowflake";
+      const url = "https://example.test/authorize";
+      const callbackUrl = "http://127.0.0.1:1234/callback?code=sample&state=sample";
+      const remote = mode === "pasted callback";
+      const time = { created: 1, expires: 1000 };
+      const mcp = {
+        name: "snowflake",
+        integrationID,
+        status: { status: "needs_auth", error: "Authorization required" },
+      };
+      const list = (data: ReadonlyArray<unknown>) => [
+        out("mcp.list", query),
+        reply("mcp.list", { location, data }),
+      ];
+      const status = (value: "pending" | "complete") => [
+        out("integration.oauth.status", { integrationID, attemptID, ...query }),
+        reply("integration.oauth.status", { location, data: { status: value, time } }),
+      ];
+      const { runtime, thread } = yield* resumed(
+        [
+          ...list([mcp]),
+          out("integration.get", { integrationID, ...query }),
+          reply("integration.get", {
+            location,
+            data: {
+              id: integrationID,
+              name: "Snowflake",
+              methods: [{ id: "oauth", type: "oauth", label: "OAuth" }],
+              connections: [],
+            },
+          }),
+          out("integration.oauth.connect", { integrationID, methodID: "oauth", ...query }),
+          reply("integration.oauth.connect", {
+            location,
+            data: { attemptID, url, time, mode: "auto", instructions: "Authorize" },
+          }),
+          ...list([mcp]),
+          ...status("pending"),
+          ...(remote
+            ? [
+                ...status("pending"),
+                out("integration.oauth.complete", {
+                  integrationID,
+                  attemptID,
+                  ...query,
+                  code: callbackUrl,
+                }),
+                reply("integration.oauth.complete", null),
+              ]
+            : []),
+          ...status("complete"),
+          ...list([{ ...mcp, status: { status: "connected" } }]),
+        ],
+        remote
+          ? {
+              version: "2.4.2",
+              shellRecovery: [
+                out("rpc.call", "<any>"),
+                reply("rpc.call", { output: null }),
+                out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+                reply("job.list", { data: [] }),
+              ],
+            }
+          : undefined,
+      );
+      const signIn = runtime.mcpSignIn!;
+      const input = { providerThread: thread, server: "snowflake" };
+      assert.deepEqual(yield* signIn.start(input), { authorizationUrl: url });
+      assert.deepEqual(yield* signIn.start(input), { authorizationUrl: url });
+      yield* signIn.complete({ ...input, callbackUrl });
+      assert.deepEqual(yield* signIn.start(input), { authorizationUrl: null });
+    }),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

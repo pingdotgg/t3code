@@ -6,6 +6,7 @@ import {
   AbsolutePath,
   Agent,
   Form,
+  Integration,
   Location,
   Model,
   Permission,
@@ -19,6 +20,7 @@ import * as Shell from "@opencode/schema/shell";
 import { Mcp } from "@opencode/schema/mcp";
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProviderMcpSignInError,
   isOrchestrationV2WorkActive,
   parseGoalCommand,
   type ChatAttachment,
@@ -340,6 +342,7 @@ interface OpenBlock {
 interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
+  readonly mcpSignInNotices: Set<string>;
   publishedBackgroundWork?: boolean;
   sessionScopedBackground?: boolean;
   readonly imageJobs: Map<
@@ -895,6 +898,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const clearing = new Map<string, Deferred.Deferred<void>>();
     const stagedReverts = new Set<string>();
     const sessionGates = yield* KeyedLock.make<string>();
+    const mcpSignInGates = yield* KeyedLock.make<string>();
+    const mcpSignIns = new Map<
+      string,
+      { readonly integrationID: Integration.ID; readonly attempt: Integration.Attempt }
+    >();
     const exclusive =
       (providerThread: OrchestrationV2ProviderThread) =>
       <A, E, R>(effect: Effect.Effect<A, E, R>) => {
@@ -918,6 +926,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ): ThreadState => ({
       sessionId,
       providerThread,
+      mcpSignInNotices: new Set(),
       imageJobs: new Map(),
       goalRevision: 0,
       goalFresh: false,
@@ -3481,6 +3490,45 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       sessionId: string | undefined,
       held = false,
     ) {
+      if (event.type === "mcp.status.changed") {
+        const directory = event.location?.directory;
+        if (directory === undefined) return;
+        const states = [...threads.values()].filter(
+          (state) => state.directory === directory && state.active !== undefined,
+        );
+        if (states.length === 0) return;
+        const server = event.data.server;
+        const listed = yield* client.mcp
+          .list({ location: { directory } })
+          .pipe(Effect.timeout("1 second"), Effect.option);
+        if (Option.isNone(listed)) return;
+        const mcp = listed.value.data.find((entry) => entry.name === server);
+        for (const state of states) {
+          const turn = state.active;
+          if (turn === undefined) continue;
+          if (mcp?.status.status !== "needs_auth" || mcp.integrationID === undefined) {
+            state.mcpSignInNotices.delete(server);
+            continue;
+          }
+          if (state.mcpSignInNotices.has(server)) continue;
+          state.mcpSignInNotices.add(server);
+          const now = yield* DateTime.now;
+          const nativeId = `${turn.providerTurn.id}:mcp-sign-in:${server}`;
+          yield* emit({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...itemBase(state, turn, nativeId, "completed", now, now, now),
+              nodeId: turn.input.rootNodeId,
+              type: "system_notice",
+              title: `MCP server ${server} needs a sign-in`,
+              message: `Sign in to ${server} to use it with OpenCode.`,
+              mcpSignIn: { server },
+            },
+          });
+        }
+        return;
+      }
       const ended =
         !held && (event.type === "unreadable.execution.ended" || executionEnd(event.type))
           ? threads.get(sessionId ?? "")
@@ -4920,6 +4968,37 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         .pipe(Effect.asVoid);
     });
 
+    const isMcpSignInError = Schema.is(ProviderMcpSignInError);
+    const withMcpSignIn = Effect.fn("OpenCode2Adapter.withMcpSignIn")(
+      function* <A, E>(
+        input: { readonly providerThread: OrchestrationV2ProviderThread; readonly server: string },
+        run: (location: { readonly directory: string }, key: string) => Effect.Effect<A, E>,
+      ) {
+        const nativeId = input.providerThread.nativeThreadRef?.nativeId;
+        const state = nativeId == null ? undefined : threads.get(nativeId);
+        if (state === undefined || state.providerThread.id !== input.providerThread.id) {
+          return yield* new ProviderMcpSignInError({
+            server: input.server,
+            detail: "The OpenCode session has ended. Send a message, then sign in again.",
+          });
+        }
+        const key = `${state.directory.length}:${state.directory}:${input.server}`;
+        return yield* mcpSignInGates.withLock(key, run({ directory: state.directory }, key));
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.timeout("15 seconds"),
+          Effect.mapError((cause) =>
+            isMcpSignInError(cause)
+              ? cause
+              : new ProviderMcpSignInError({
+                  server: input.server,
+                  detail: "OpenCode could not process this MCP sign-in.",
+                }),
+          ),
+        ),
+    );
+
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId,
       driver,
@@ -4928,6 +5007,112 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return session;
       },
       events: Stream.fromQueue(events),
+      mcpSignIn: {
+        start: Effect.fn("OpenCode2Adapter.mcpSignIn.start")((input) =>
+          withMcpSignIn(input, (location, key) =>
+            Effect.gen(function* () {
+              const { server } = input;
+              const { data } = yield* client.mcp.list({ location });
+              const mcp = data.find((entry) => entry.name === server);
+              if (mcp?.status.status === "connected") {
+                mcpSignIns.delete(key);
+                return { authorizationUrl: null };
+              }
+              if (mcp?.status.status !== "needs_auth" || mcp.integrationID === undefined) {
+                return yield* new ProviderMcpSignInError({
+                  server,
+                  detail: "OpenCode does not currently report that this MCP server needs OAuth.",
+                });
+              }
+              const integrationID = mcp.integrationID;
+              const previous = mcpSignIns.get(key);
+              if (previous?.integrationID === integrationID) {
+                const status = yield* client.integration.oauth
+                  .status({
+                    integrationID,
+                    location,
+                    attemptID: previous.attempt.attemptID,
+                  })
+                  .pipe(Effect.option);
+                if (Option.isSome(status) && status.value.data.status === "pending") {
+                  return { authorizationUrl: previous.attempt.url };
+                }
+              }
+              const integration = yield* client.integration.get({ integrationID, location });
+              const method = integration.data?.methods.find(
+                (entry) => entry.type === "oauth" && !entry.form?.length,
+              );
+              if (method?.type !== "oauth") {
+                return yield* new ProviderMcpSignInError({
+                  server,
+                  detail: "This MCP server needs an interactive form. Sign in from OpenCode.",
+                });
+              }
+              const { data: attempt } = yield* client.integration.oauth.connect({
+                integrationID,
+                methodID: method.id,
+                location,
+              });
+              const authorizationUrl = URL.parse(attempt.url);
+              if (
+                authorizationUrl?.protocol !== "https:" &&
+                authorizationUrl?.protocol !== "http:"
+              ) {
+                return yield* new ProviderMcpSignInError({
+                  server,
+                  detail: "OpenCode returned an invalid MCP authorization URL.",
+                });
+              }
+              mcpSignIns.set(key, { integrationID, attempt });
+              return { authorizationUrl: attempt.url };
+            }),
+          ),
+        ),
+        complete: Effect.fn("OpenCode2Adapter.mcpSignIn.complete")((input) =>
+          withMcpSignIn(input, (location, key) =>
+            Effect.gen(function* () {
+              const { server, callbackUrl } = input;
+              const signIn = mcpSignIns.get(key);
+              if (signIn === undefined) {
+                return yield* new ProviderMcpSignInError({
+                  server,
+                  detail: "Start the sign-in again.",
+                });
+              }
+              const request = {
+                location,
+                integrationID: signIn.integrationID,
+                attemptID: signIn.attempt.attemptID,
+              };
+              let { data: status } = yield* client.integration.oauth.status(request);
+              if (status.status === "pending") {
+                if (compareSemverVersions(connection.version, "2.4.2") < 0) {
+                  return yield* new ProviderMcpSignInError({
+                    server,
+                    detail:
+                      "Finish in a browser on the OpenCode host or update OpenCode to paste a callback URL.",
+                  });
+                }
+                yield* client.integration.oauth.complete({ ...request, code: callbackUrl });
+                ({ data: status } = yield* client.integration.oauth.status(request).pipe(
+                  Effect.repeat({
+                    until: ({ data }) => data.status !== "pending",
+                    schedule: Schedule.spaced("250 millis"),
+                  }),
+                ));
+              }
+              mcpSignIns.delete(key);
+              if (status.status !== "complete") {
+                return yield* new ProviderMcpSignInError({
+                  server,
+                  detail:
+                    "OpenCode could not complete this authorization. Start the sign-in again.",
+                });
+              }
+            }),
+          ),
+        ),
+      },
       // Idle release must wait for background children and held wakes after parent settlement.
       hasPendingBackgroundWork: Effect.sync(() => [...threads.values()].some(owesWork)),
       hasPendingBackgroundWorkForThread: (providerThread) =>
