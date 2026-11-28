@@ -26,6 +26,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
+  parseGoalCommand,
   ProjectId,
   type PullRequestCheck,
   type PullRequestDetail,
@@ -14074,6 +14075,26 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const run = projection.runs[0]!;
       const now = yield* DateTime.now;
+      if (scenario === "resume") {
+        const providerThread = projection.providerThreads.find(
+          (candidate) => candidate.id === run.providerThreadId,
+        );
+        assert(providerThread !== undefined);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:goal:${scenario}`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...providerThread,
+                goal: { objective: "Finish the change", status: "usage_limited" },
+              },
+            },
+          ],
+        });
+      }
       const resetAt =
         scenario === "invalid-snooze"
           ? "not-a-date"
@@ -14521,11 +14542,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         scenario === "resume-started" ||
         scenario === "resume-untagged"
       ) {
-        assert.deepInclude(after.messages.at(-1), {
-          text: "Continue where you left off.",
+        const message = after.messages.at(-1)!;
+        assert.deepInclude(message, {
+          text: scenario === "resume" ? "/goal continue" : "Continue where you left off.",
           createdBy: "agent",
           creationSource: "server",
         });
+        if (scenario === "resume") assert.deepEqual(parseGoalCommand(message), { type: "resume" });
         const continuation = after.runs.at(-1)!;
         assert.equal(continuation.status, "starting");
         if (scenario === "resume-started") {
