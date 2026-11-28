@@ -31,7 +31,12 @@ class T3AgentNotificationsModule : Module() {
     }
 
     Function("setThreadOnScreen") { path: String? ->
-      AgentNotifications.setThreadOnScreen(path)
+      val context = appContext.reactContext
+      if (context != null) {
+        AgentNotifications.setThreadOnScreen(context, path)
+      } else {
+        AgentNotifications.setThreadOnScreen(path)
+      }
     }
 
     Function("openLiveUpdateSettings") {

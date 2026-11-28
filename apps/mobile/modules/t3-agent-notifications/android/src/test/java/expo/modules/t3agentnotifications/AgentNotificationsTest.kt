@@ -381,6 +381,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
       "activity_phase" to "running",
     )
     AgentNotifications.receive(context, data)
+    AgentNotifications.setThreadOnScreen("/threads/environment/other")
     val working = manager.activeNotifications.single().notification
     assertEquals(
       "Update dashboard",
@@ -823,5 +824,105 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
     shadowOf(manager).setNotificationsEnabled(false)
     AgentNotifications.receive(context, update("revoked-permission", true))
     assertEquals(5, manager.activeNotifications.size)
+  }
+
+  @Test
+  fun foregroundOnScreenCompletionHidesFinishedActivityAndStaysHiddenOnReplay() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(context, update("running", true))
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+
+    val completion = finished("on-screen-done", System.currentTimeMillis() + 900000)
+    AgentNotifications.receive(context, completion)
+    assertTrue(manager.activeNotifications.isEmpty())
+
+    lifecycle.currentState = Lifecycle.State.CREATED
+    AgentNotifications.receive(context, completion.filterKeys { !it.startsWith("alert_") })
+    assertTrue(manager.activeNotifications.isEmpty())
+  }
+
+  @Test
+  fun viewingFinishedThreadClearsRetainedActivityWithoutClearingActiveWork() {
+    val expiresAt = System.currentTimeMillis() + 900000
+    AgentNotifications.receive(context, update("running", true))
+    AgentNotifications.setThreadOnScreen(context, "/threads/environment/thread")
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+
+    AgentNotifications.setThreadOnScreen(context, null)
+    val completion = finished("retained", expiresAt).filterKeys { !it.startsWith("alert_") }
+    AgentNotifications.receive(context, completion)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+
+    AgentNotifications.setThreadOnScreen(context, "/threads/environment/thread")
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    // Replaying the same completion after viewing must not restore the card.
+    AgentNotifications.setThreadOnScreen(context, null)
+    AgentNotifications.receive(context, completion)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    // Viewing one thread does not clear a multi-row finished card with another result.
+    val multiRow = finished("multi-retained", expiresAt + 60000)
+      .filterKeys { !it.startsWith("alert_") } +
+      ("activity_line_1" to "Done\tMuted thread\tOther project")
+    AgentNotifications.receive(context, multiRow)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    AgentNotifications.setThreadOnScreen(context, "/threads/environment/thread")
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+  }
+
+  @Test
+  fun groupedCompletionAlertHidesFinishedMultiRowActivity() {
+    val expiresAt = System.currentTimeMillis() + 900000
+    val partialGrouped = finished("grouped-partial", expiresAt) + mapOf(
+      "activity_line_1" to "Done\tMuted thread\tOther project",
+      "alert_title" to "2 agents finished",
+      "alert_body" to "Test thread, Second thread",
+      "alert_path" to "/",
+    )
+    // A grouped alert without full-card coverage leaves the multi-row finished card visible.
+    AgentNotifications.receive(context, partialGrouped)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+
+    val coveredGrouped = finished("grouped-done", expiresAt + 60000) + mapOf(
+      "activity_line_1" to "Done\tSecond thread\tOther project",
+      "alert_title" to "2 agents finished",
+      "alert_body" to "Test thread, Second thread",
+      "alert_path" to "/",
+      "alert_covers_activity" to "true",
+    )
+    AgentNotifications.receive(context, coveredGrouped)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+    assertTrue(manager.activeNotifications.any { it.id == "grouped-done".hashCode() })
+
+    AgentNotifications.receive(context, coveredGrouped.filterKeys { !it.startsWith("alert_") })
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    // A later multi-row finished card with the same hero row and expiry but a different
+    // second row must not reuse the covered terminal key.
+    val differentRows = coveredGrouped.filterKeys { !it.startsWith("alert_") } +
+      ("activity_line_1" to "Done\tThird thread\tThird project")
+    AgentNotifications.receive(context, differentRows)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+  }
+
+  @Test
+  fun groupedAlertDoesNotHideDifferentConversationsWithIdenticalTitles() {
+    val covered = finished("grouped-done", System.currentTimeMillis() + 900000) + mapOf(
+      "activity_line_1" to "Done\tSecond thread\tOther project",
+      "activity_terminal_id" to "first-pair",
+      "alert_path" to "/",
+      "alert_covers_activity" to "true",
+    )
+    AgentNotifications.receive(context, covered)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    val replay = covered.filterKeys { !it.startsWith("alert_") }
+    AgentNotifications.receive(context, replay)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    AgentNotifications.receive(context, replay + ("activity_terminal_id" to "second-pair"))
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
   }
 }
