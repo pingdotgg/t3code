@@ -54,26 +54,34 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           placement = "append",
           keepExisting = false,
         }) {
-          const existing = yield* sql<{ readonly ordinal: number }>`
-          SELECT ordinal
-          FROM orchestration_v2_turn_item_positions
-          WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
-          LIMIT 1
+          const [existing] = yield* sql<{
+            readonly ordinal: number | null;
+            readonly run_ordinal: number | null;
+          }>`
+          SELECT
+            (
+              SELECT ordinal
+              FROM orchestration_v2_turn_item_positions
+              WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+              LIMIT 1
+            ) AS ordinal,
+            ${
+              runId === null || suppliedRunOrdinal !== undefined
+                ? sql`NULL`
+                : sql`(
+                    SELECT ordinal
+                    FROM orchestration_v2_projection_runs
+                    WHERE thread_id = ${threadId} AND run_id = ${runId}
+                    LIMIT 1
+                  )`
+            } AS run_ordinal
         `;
-          const runRows =
-            runId === null || suppliedRunOrdinal !== undefined
-              ? []
-              : yield* sql<{ readonly ordinal: number }>`
-                SELECT ordinal
-                FROM orchestration_v2_projection_runs
-                WHERE thread_id = ${threadId} AND run_id = ${runId}
-                LIMIT 1
-              `;
-          const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
+          const runOrdinal = suppliedRunOrdinal ?? existing?.run_ordinal ?? null;
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
           const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
-          const current = existing[0]?.ordinal;
-          if (current !== undefined) {
+          const current = existing?.ordinal ?? null;
+          let written: ReadonlyArray<{ readonly ordinal: number }>;
+          if (current !== null) {
             // A steer that missed its turn starts the next run; it moves into that run's range.
             if (
               keepExisting ||
@@ -82,7 +90,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
             ) {
               return current;
             }
-            yield* sql`
+            written = yield* sql<{ readonly ordinal: number }>`
             UPDATE orchestration_v2_turn_item_positions
             SET ordinal = (
               SELECT COALESCE(MAX(ordinal), ${lowerBound}) + 1
@@ -92,9 +100,10 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 AND ordinal <= ${upperBound}
             )
             WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+            RETURNING ordinal
           `;
           } else {
-            yield* sql`
+            written = yield* sql<{ readonly ordinal: number }>`
             INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
             SELECT
               ${threadId},
@@ -109,14 +118,19 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
               AND ordinal >= ${lowerBound}
               AND ordinal <= ${upperBound}
             ON CONFLICT(thread_id, turn_item_id) DO NOTHING
+            RETURNING ordinal
           `;
           }
-          const rows = yield* sql<{ readonly ordinal: number }>`
-          SELECT ordinal
-          FROM orchestration_v2_turn_item_positions
-          WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
-          LIMIT 1
-        `;
+          // ON CONFLICT returns no row when another allocation placed the item first.
+          const rows =
+            written.length > 0
+              ? written
+              : yield* sql<{ readonly ordinal: number }>`
+                SELECT ordinal
+                FROM orchestration_v2_turn_item_positions
+                WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
+                LIMIT 1
+              `;
           const ordinal = rows[0]?.ordinal;
           if (ordinal === undefined) {
             return yield* new TurnItemPositionStoreError({
