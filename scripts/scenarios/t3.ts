@@ -60,6 +60,8 @@ export interface T3Thread {
 }
 
 export interface T3 extends T3State {
+  /** Registers a project created through the UI for deletion during fixture teardown. */
+  readonly trackProject: (id: string) => void;
   /**
    * Opens the app, signed in, at a path or on a thread `t3.thread` returned. Opening the thread
    * by its link is the reliable way to reach it: a sidebar row covers its own title text.
@@ -214,6 +216,9 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
 
   return {
     cli,
+    trackProject: (id: string) => {
+      projects.push(ProjectId.make(id));
+    },
     state: {
       project: (title, files = {}) => runPromise(project(title, files)),
       thread: (input) => runPromise(thread(input)),
@@ -325,9 +330,10 @@ export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string
 
 export const test = base.extend<{ t3: T3 }>({
   t3: async ({ app, browser }, use) => {
-    const { state, cleanup } = makeState(T3_HOME);
+    const { state, cleanup, trackProject } = makeState(T3_HOME);
     await use({
       ...state,
+      trackProject,
       open: async (target = "/") => {
         const baseUrl = app.baseUrl ?? "";
         await browser.setCookies(await runPromise(signIn(baseUrl)));
