@@ -14,7 +14,7 @@ import {
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
-import { useThreadRecap, type ThreadRecapTarget } from "./ThreadRecapSheet";
+import type { ThreadRecapTarget } from "./ThreadRecapSheet";
 
 export function ThreadHeader(props: {
   readonly title: string;
@@ -36,13 +36,9 @@ export function ThreadHeader(props: {
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const recapTarget = props.draft ? null : (props.recapTarget ?? null);
-  const recap = useThreadRecap(recapTarget);
-  const showRecap =
-    recapTarget !== null &&
-    ((recap?.text !== null && recap?.text !== undefined) || recap?.status === "pending");
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = [
-    ...(showRecap && recapTarget !== null
+    ...(recapTarget !== null
       ? [
           {
             accessibilityLabel: gt("Open thread recap"),

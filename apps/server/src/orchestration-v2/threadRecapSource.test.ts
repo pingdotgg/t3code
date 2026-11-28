@@ -53,6 +53,9 @@ describe("deriveThreadRecapSource", () => {
     expect(
       derive({ messages: [msg("m1", "assistant", "Working", { streaming: true })] }).isSettled,
     ).toBe(false);
+    expect(
+      derive({ messages: [msg("m1", "user", "Fix")], runs: [run(1, "queued")] }).isSettled,
+    ).toBe(true);
   });
 
   it("selects only new delta messages after coveredMessageId and ignores system/workflow scripts", () => {

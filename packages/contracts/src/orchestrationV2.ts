@@ -4188,7 +4188,6 @@ export type OrchestrationV2ThreadRecapStatus = typeof OrchestrationV2ThreadRecap
 export const OrchestrationV2ThreadRecap = Schema.Struct({
   status: OrchestrationV2ThreadRecapStatus,
   text: Schema.NullOr(Schema.String),
-  updatedAt: Schema.NullOr(Schema.String),
 });
 export type OrchestrationV2ThreadRecap = typeof OrchestrationV2ThreadRecap.Type;
 

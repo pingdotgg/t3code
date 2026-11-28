@@ -76,6 +76,7 @@ export const DELETED_THREAD_CONTENT_TABLES = [
   "orchestration_v2_projection_runtime_requests",
   "orchestration_v2_projection_plans",
   "mcp_app_model_context",
+  "thread_recaps",
   // A legacy thread's transcript source; deleting it means the importer has nothing to restore.
   "projection_thread_messages",
 ] as const;

@@ -56,10 +56,11 @@ export function ThreadDetailsRecap({
             {text}
           </p>
         ) : (
-          <p aria-label={gt("Generating recap")} className="flex flex-col gap-1.5 px-2.5 py-1">
-            <span className="block h-2.5 w-full rounded bg-muted-foreground/15" />
-            <span className="block h-2.5 w-4/5 rounded bg-muted-foreground/10" />
-          </p>
+          <div role="status" className="flex flex-col gap-1.5 px-2.5 py-1">
+            <span className="sr-only">{gt("Generating recap")}</span>
+            <span aria-hidden className="block h-2.5 w-full rounded bg-muted-foreground/15" />
+            <span aria-hidden className="block h-2.5 w-4/5 rounded bg-muted-foreground/10" />
+          </div>
         )
       ) : (
         <span className="hidden" />

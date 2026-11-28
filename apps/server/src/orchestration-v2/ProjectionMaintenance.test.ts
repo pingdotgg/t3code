@@ -471,11 +471,23 @@ it.effect("a deleted thread keeps only its tombstone", () =>
     yield* writeThread(live, now);
     const liveProjection = yield* projections.getThreadProjection(live.id);
     assert.equal(yield* searchMatches("secret in thread:purge-deleted"), 1);
+    yield* Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`
+        INSERT INTO thread_recaps (thread_id, text, source_signature, updated_at)
+        VALUES (${deleted.id}, 'secret recap', 'sig', ${DateTime.formatIso(now)})
+      `,
+    );
 
     yield* deleteThread(deleted, now);
     assert.isAbove(yield* maintenance.purgeDeletedThread(deleted.id), 0);
 
     assert.equal(yield* contentRowCount(deleted.id), 0);
+    const recaps = yield* Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`SELECT 1 FROM thread_recaps WHERE thread_id = ${deleted.id}`,
+    );
+    assert.equal(recaps.length, 0);
     assert.equal(yield* searchMatches("secret in thread:purge-deleted"), 0);
     assert.deepEqual(yield* remainingEventIds(deleted.id), [
       "event:purge:thread:purge-deleted",

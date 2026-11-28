@@ -288,6 +288,28 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("generates thread recaps outside the project", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { recap: "Fixed reconnects." } }),
+        cwdMustNotBe: process.cwd(),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadRecap({
+            cwd: process.cwd(),
+            newMaterial: "User: fix reconnects",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.recap).toBe("Fixed reconnects.");
+        }),
+    ),
+  );
+
   it.effect("sends thread title instructions to the provider prompt", () =>
     withFakeClaudeEnv(
       {

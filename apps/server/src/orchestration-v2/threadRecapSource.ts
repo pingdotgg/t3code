@@ -7,13 +7,14 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
 } from "@t3tools/contracts";
+import { limitSection } from "@t3tools/provider-core/server/textGenerationUtils";
 import * as DateTime from "effect/DateTime";
+
+import { isActiveRun } from "./ThreadManagementService.ts";
 
 const MAX_INITIAL_MESSAGES = 6;
 const MAX_DELTA_MESSAGES = 4;
 const MAX_MESSAGE_CHARS = 600;
-const MAX_MATERIAL_CHARS = 4_000;
-const MAX_STATE_CHARS = 1_200;
 const MAX_CHANGED_FILES = 5;
 
 export interface ThreadRecapSourceInput {
@@ -36,27 +37,6 @@ export interface ThreadRecapSource {
   readonly currentState: string;
 }
 
-function compactText(value: string, maxChars: number): string {
-  const compacted = value.replace(/\s+/gu, " ").trim();
-  if (compacted.length <= maxChars) {
-    return compacted;
-  }
-  const end = Math.max(0, maxChars - 15);
-  const last = compacted.charCodeAt(end - 1);
-  const safeEnd = last >= 0xd800 && last <= 0xdbff ? end - 1 : end;
-  return `${compacted.slice(0, safeEnd).trimEnd()}... [truncated]`;
-}
-
-function limitText(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-  const end = Math.max(0, maxChars - 15);
-  const last = value.charCodeAt(end - 1);
-  const safeEnd = last >= 0xd800 && last <= 0xdbff ? end - 1 : end;
-  return `${value.slice(0, safeEnd).trimEnd()}\n[truncated]`;
-}
-
 function isRecappableMessage(message: OrchestrationV2ConversationMessage): boolean {
   return (
     (message.role === "user" || message.role === "assistant") &&
@@ -68,7 +48,7 @@ function isRecappableMessage(message: OrchestrationV2ConversationMessage): boole
 
 function formatMessage(message: OrchestrationV2ConversationMessage): string {
   const speaker = message.role === "user" ? "User" : "Assistant";
-  const text = compactText(message.text, MAX_MESSAGE_CHARS);
+  const text = limitSection(message.text.replace(/\s+/gu, " ").trim(), MAX_MESSAGE_CHARS);
   const attachments =
     message.attachments.length > 0
       ? ` [Attachments: ${message.attachments.map((attachment) => attachment.name).join(", ")}]`
@@ -86,13 +66,10 @@ function messageSignature(message: OrchestrationV2ConversationMessage): string {
 }
 
 function latestRunOf(runs: ReadonlyArray<OrchestrationV2Run>): OrchestrationV2Run | null {
-  let latest: OrchestrationV2Run | null = null;
-  for (const run of runs) {
-    if (latest === null || run.ordinal >= latest.ordinal) {
-      latest = run;
-    }
-  }
-  return latest;
+  return runs.reduce<OrchestrationV2Run | null>(
+    (latest, run) => (latest === null || run.ordinal >= latest.ordinal ? run : latest),
+    null,
+  );
 }
 
 function buildCurrentState(input: {
@@ -116,36 +93,22 @@ function buildCurrentState(input: {
     lines.push("Pending: proposed plan awaiting decision");
   }
 
-  let latestFiles: ReadonlyArray<string> = [];
-  for (let index = input.checkpoints.length - 1; index >= 0; index -= 1) {
-    const checkpoint = input.checkpoints[index];
-    if (checkpoint && checkpoint.files.length > 0) {
-      latestFiles = checkpoint.files.slice(0, MAX_CHANGED_FILES).map((file) => file.path);
-      break;
-    }
-  }
-  if (latestFiles.length > 0) {
-    lines.push(`Latest changed files: ${latestFiles.join(", ")}`);
+  const latestFiles = input.checkpoints.findLast(
+    (checkpoint) => checkpoint.files.length > 0,
+  )?.files;
+  if (latestFiles) {
+    const paths = latestFiles.slice(0, MAX_CHANGED_FILES).map((file) => file.path);
+    lines.push(`Latest changed files: ${paths.join(", ")}`);
   }
 
-  return limitText(lines.join("\n"), MAX_STATE_CHARS);
-}
-
-function isActiveRunStatus(status: OrchestrationV2Run["status"]): boolean {
-  return (
-    status === "queued" ||
-    status === "preparing" ||
-    status === "starting" ||
-    status === "running" ||
-    status === "waiting"
-  );
+  return lines.join("\n");
 }
 
 export function deriveThreadRecapSource(input: ThreadRecapSourceInput): ThreadRecapSource {
   const hasStreamingMessage = input.messages.some(
     (message) => (message.role === "user" || message.role === "assistant") && message.streaming,
   );
-  const hasActiveRun = input.runs.some((run) => isActiveRunStatus(run.status));
+  const hasActiveRun = input.runs.some(isActiveRun);
   const isSettled = !hasStreamingMessage && !hasActiveRun;
 
   const recappableMessages = input.messages.filter(isRecappableMessage);
@@ -187,10 +150,10 @@ export function deriveThreadRecapSource(input: ThreadRecapSourceInput): ThreadRe
     hasActiveProposedPlan ? "plan" : "",
   ].join("|");
 
-  const newMaterial = limitText(
-    [`Thread: ${input.thread.title}`, ...selectedMessages.map(formatMessage)].join("\n"),
-    MAX_MATERIAL_CHARS,
-  );
+  const newMaterial = [
+    `Thread: ${input.thread.title}`,
+    ...selectedMessages.map(formatMessage),
+  ].join("\n");
 
   return {
     isSettled,

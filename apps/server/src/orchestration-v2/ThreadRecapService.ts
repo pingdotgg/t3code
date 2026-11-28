@@ -19,6 +19,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as ThreadRecaps from "../persistence/ThreadRecaps.ts";
+import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -26,29 +27,19 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { deriveThreadRecapSource } from "./threadRecapSource.ts";
 
-const DEFAULT_INITIAL_THREAD_RECAP_IDLE_MS = 12_000;
-const DEFAULT_REFRESH_THREAD_RECAP_IDLE_MS = 35_000;
+const INITIAL_IDLE_MS = 12_000;
+const REFRESH_IDLE_MS = 35_000;
 
-const EMPTY_RECAP: OrchestrationV2ThreadRecap = {
-  status: "idle",
-  text: null,
-  updatedAt: null,
-};
+const EMPTY_RECAP: OrchestrationV2ThreadRecap = { status: "idle", text: null };
 
 interface ThreadRecapEntry {
   readonly ref: SubscriptionRef.SubscriptionRef<OrchestrationV2ThreadRecap>;
   subscribers: number;
   persisted: ThreadRecaps.PersistedThreadRecap | null;
-  hydrated: boolean;
   timerFiber: Fiber.Fiber<void, never> | null;
   scheduledSignature: string | null;
   inFlightSignature: string | null;
   failedSignature: string | null;
-}
-
-export interface ThreadRecapServiceOptions {
-  readonly initialIdleMs?: number;
-  readonly refreshIdleMs?: number;
 }
 
 export class ThreadRecapService extends Context.Service<
@@ -58,7 +49,7 @@ export class ThreadRecapService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadRecapService") {}
 
-function shouldEvaluateForEvent(event: OrchestrationV2DomainEvent, hasTimer: boolean): boolean {
+function shouldEvaluateForEvent(event: OrchestrationV2DomainEvent): boolean {
   switch (event.type) {
     case "run.created":
     case "run.updated":
@@ -75,7 +66,7 @@ function shouldEvaluateForEvent(event: OrchestrationV2DomainEvent, hasTimer: boo
       if (event.payload.workflowScript === true) {
         return false;
       }
-      return !event.payload.streaming || hasTimer;
+      return !event.payload.streaming;
     default:
       return false;
   }
@@ -85,23 +76,27 @@ function toWireRecap(
   persisted: ThreadRecaps.PersistedThreadRecap | null,
   status: OrchestrationV2ThreadRecap["status"],
 ): OrchestrationV2ThreadRecap {
-  return {
-    status,
-    text: persisted?.text ?? null,
-    updatedAt: persisted?.updatedAt ?? null,
-  };
+  return { status, text: persisted?.text ?? null };
 }
 
 function sameWireRecap(a: OrchestrationV2ThreadRecap, b: OrchestrationV2ThreadRecap): boolean {
-  return a.status === b.status && a.text === b.text && a.updatedAt === b.updatedAt;
+  return a.status === b.status && a.text === b.text;
 }
 
-const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function* (
-  options?: ThreadRecapServiceOptions,
-) {
-  const initialIdleMs = options?.initialIdleMs ?? DEFAULT_INITIAL_THREAD_RECAP_IDLE_MS;
-  const refreshIdleMs = options?.refreshIdleMs ?? DEFAULT_REFRESH_THREAD_RECAP_IDLE_MS;
+function clearSchedule(entry: ThreadRecapEntry) {
+  entry.timerFiber = null;
+  entry.scheduledSignature = null;
+  entry.inFlightSignature = null;
+}
 
+const logFailure = (message: string, annotations?: Record<string, unknown>) =>
+  Effect.catchCause((cause: Cause.Cause<unknown>) =>
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.interrupt
+      : Effect.logWarning(message, { ...annotations, cause }),
+  );
+
+const make = Effect.fn("ThreadRecapService.make")(function* () {
   const repository = yield* ThreadRecaps.ThreadRecapRepository;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -118,16 +113,12 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
     threadLock.withLock(threadId, effect);
 
   const publish = (entry: ThreadRecapEntry, next: OrchestrationV2ThreadRecap) =>
-    SubscriptionRef.modify(entry.ref, (current) =>
-      sameWireRecap(current, next) ? [undefined, current] : [undefined, next],
-    );
+    SubscriptionRef.set(entry.ref, next);
 
   // Traced by the enclosing service operation; forkIn avoids waiting on a fiber while holding threadLock.
   const cancelTimer = Effect.fnUntraced(function* (entry: ThreadRecapEntry) {
     const fiber = entry.timerFiber;
-    entry.timerFiber = null;
-    entry.scheduledSignature = null;
-    entry.inFlightSignature = null;
+    clearSchedule(entry);
     if (fiber !== null) {
       yield* Effect.forkIn(Fiber.interrupt(fiber), serviceScope);
     }
@@ -136,13 +127,8 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
   const loadPersisted = (threadId: ThreadId) =>
     repository.get(threadId).pipe(
       Effect.map(Option.getOrNull),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("Failed to load persisted thread recap", { threadId, cause }).pipe(
-              Effect.as(null),
-            ),
-      ),
+      logFailure("Failed to load persisted thread recap", { threadId }),
+      Effect.map((persisted) => persisted ?? null),
     );
 
   const readSource = Effect.fn("ThreadRecapService.readSource")(function* (
@@ -194,9 +180,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
         }
         const settings = yield* serverSettings.getSettings.pipe(Effect.option);
         if (Option.isNone(settings) || !settings.value.threadRecapEnabled) {
-          entry.timerFiber = null;
-          entry.scheduledSignature = null;
-          entry.inFlightSignature = null;
+          clearSchedule(entry);
           yield* publish(entry, toWireRecap(entry.persisted, "idle"));
           return null;
         }
@@ -208,17 +192,13 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
           current.source.signature !== scheduledSignature ||
           current.source.signature === entry.persisted?.sourceSignature
         ) {
-          entry.timerFiber = null;
-          entry.scheduledSignature = null;
-          entry.inFlightSignature = null;
+          clearSchedule(entry);
           yield* publish(entry, toWireRecap(entry.persisted, "idle"));
           return null;
         }
         const project = yield* projects.get(current.thread.projectId).pipe(Effect.option);
         if (Option.isNone(project) || Option.isNone(project.value)) {
-          entry.timerFiber = null;
-          entry.scheduledSignature = null;
-          entry.inFlightSignature = null;
+          clearSchedule(entry);
           entry.failedSignature = scheduledSignature;
           yield* publish(entry, toWireRecap(entry.persisted, "error"));
           return null;
@@ -294,6 +274,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
 
         const latest = yield* readSource(threadId, entry.persisted);
         if (latest === null) {
+          yield* publish(entry, toWireRecap(entry.persisted, "idle"));
           return false;
         }
         // Discard stale generation if newer messages arrived while the model ran.
@@ -312,13 +293,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
         };
         yield* repository
           .put(nextPersisted)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("Failed to persist thread recap", { threadId, cause }),
-            ),
-          );
+          .pipe(logFailure("Failed to persist thread recap", { threadId }));
         entry.persisted = nextPersisted;
         entry.failedSignature = null;
         yield* publish(entry, toWireRecap(nextPersisted, "idle"));
@@ -341,11 +316,6 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
         if (!entry || entry.subscribers <= 0) {
           return;
         }
-        if (!entry.hydrated) {
-          entry.persisted = yield* loadPersisted(threadId);
-          entry.hydrated = true;
-          yield* publish(entry, toWireRecap(entry.persisted, "idle"));
-        }
 
         const settings = yield* serverSettings.getSettings.pipe(Effect.option);
         if (Option.isNone(settings) || !settings.value.threadRecapEnabled) {
@@ -357,6 +327,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
         const current = yield* readSource(threadId, entry.persisted);
         if (current === null) {
           yield* cancelTimer(entry);
+          yield* publish(entry, toWireRecap(entry.persisted, "idle"));
           return;
         }
 
@@ -386,7 +357,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
 
         yield* cancelTimer(entry);
         entry.scheduledSignature = source.signature;
-        const delayMs = entry.persisted?.text ? refreshIdleMs : initialIdleMs;
+        const delayMs = entry.persisted?.text ? REFRESH_IDLE_MS : INITIAL_IDLE_MS;
         entry.timerFiber = yield* Effect.forkIn(
           runGeneration(threadId, source.signature, delayMs),
           serviceScope,
@@ -395,6 +366,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
     );
   });
 
+  // The stored row goes with the thread's content purge; this only clears live viewers.
   const handleThreadDeleted = Effect.fn("ThreadRecapService.handleThreadDeleted")(function* (
     threadId: ThreadId,
   ) {
@@ -405,48 +377,31 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
         if (entry) {
           yield* cancelTimer(entry);
           entry.persisted = null;
-          entry.hydrated = true;
           entry.failedSignature = null;
           yield* publish(entry, EMPTY_RECAP);
         }
-        yield* repository
-          .delete(threadId)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("Failed to delete thread recap", { threadId, cause }),
-            ),
-          );
       }),
     );
   });
 
-  yield* Effect.forkScoped(
+  yield* forkParked(
     orchestrator.streamDomainEvents.pipe(
       Stream.runForEach((event) => {
         if (event.type === "thread.deleted") {
           return handleThreadDeleted(event.threadId);
         }
         const entry = entries.get(event.threadId);
-        if (!entry || entry.subscribers <= 0) {
-          return Effect.void;
-        }
-        if (!shouldEvaluateForEvent(event, entry.timerFiber !== null)) {
+        if (!entry || entry.subscribers <= 0 || !shouldEvaluateForEvent(event)) {
           return Effect.void;
         }
         return evaluate(event.threadId);
       }),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("Thread recap event watcher failed", { cause }),
-      ),
+      logFailure("Thread recap event watcher failed"),
     ),
   );
 
   const settingsChanges = yield* serverSettings.subscribeChanges;
-  yield* Effect.forkScoped(
+  yield* forkParked(
     settingsChanges.pipe(
       Stream.map((settings) => settings.threadRecapEnabled),
       Stream.changes,
@@ -456,11 +411,7 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
           discard: true,
         }),
       ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("Thread recap settings watcher failed", { cause }),
-      ),
+      logFailure("Thread recap settings watcher failed"),
     ),
   );
 
@@ -480,7 +431,6 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
                 ref,
                 subscribers: 0,
                 persisted,
-                hydrated: true,
                 timerFiber: null,
                 scheduledSignature: null,
                 inFlightSignature: null,
@@ -515,7 +465,4 @@ const makeWithOptions = Effect.fn("ThreadRecapService.makeWithOptions")(function
   return ThreadRecapService.of({ subscribe });
 });
 
-export const layerWithOptions = (options?: ThreadRecapServiceOptions) =>
-  Layer.effect(ThreadRecapService, makeWithOptions(options));
-
-export const layer = layerWithOptions();
+export const layer = Layer.effect(ThreadRecapService, make());

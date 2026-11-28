@@ -70,20 +70,20 @@ export function sanitizeThreadRecap(raw: string, previousRecap?: string): string
     .replace(/\s+/gu, " ")
     .trim();
   const fallback = previousRecap?.trim().replace(/\s+/gu, " ") ?? "";
-  const candidate = normalized.length > 0 ? normalized : fallback;
-  if (candidate.length === 0) {
-    return "";
+  return clipWithEllipsis(normalized.length > 0 ? normalized : fallback, MAX_THREAD_RECAP_CHARS);
+}
+
+function clipWithEllipsis(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
   }
-  if (candidate.length <= MAX_THREAD_RECAP_CHARS) {
-    return candidate;
-  }
-  let end = MAX_THREAD_RECAP_CHARS - 3;
-  const previous = candidate.charCodeAt(end - 1);
-  const next = candidate.charCodeAt(end);
+  let end = maxChars - 3;
+  const previous = value.charCodeAt(end - 1);
+  const next = value.charCodeAt(end);
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${candidate.slice(0, end).trimEnd()}...`;
+  return `${value.slice(0, end).trimEnd()}...`;
 }
 
 export function sanitizeThreadTitle(raw: string): string {
@@ -102,17 +102,7 @@ export function sanitizeThreadTitle(raw: string): string {
     return "New thread";
   }
 
-  if (normalized.length <= MAX_THREAD_TITLE_CHARS) {
-    return normalized;
-  }
-
-  let end = MAX_THREAD_TITLE_CHARS - 3;
-  const previous = normalized.charCodeAt(end - 1);
-  const next = normalized.charCodeAt(end);
-  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
-    end -= 1;
-  }
-  return `${normalized.slice(0, end).trimEnd()}...`;
+  return clipWithEllipsis(normalized, MAX_THREAD_TITLE_CHARS);
 }
 
 function cliLabel(cliName: string): string {

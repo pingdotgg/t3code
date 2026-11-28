@@ -222,7 +222,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     // One fixed folder: Claude Code keeps a ~/.claude/projects entry for every cwd it runs in.
     const titleDirectory = path.join(serverConfig.providerStatusCacheDir, "claude-title");
     const workingDirectory =
-      operation === "generateThreadTitle"
+      operation === "generateThreadTitle" || operation === "generateThreadRecap"
         ? yield* fileSystem.makeDirectory(titleDirectory, { recursive: true }).pipe(
             Effect.as(titleDirectory),
             Effect.mapError((cause) =>

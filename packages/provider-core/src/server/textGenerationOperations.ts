@@ -92,6 +92,18 @@ export const generatedThreadTitle = (raw: string) => {
     : Effect.succeed(title);
 };
 
+export const generatedThreadRecap = (raw: string, previousRecap: string | undefined) => {
+  const recap = sanitizeThreadRecap(raw, previousRecap);
+  return recap.length === 0
+    ? Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadRecap",
+          detail: "The model returned an empty thread recap.",
+        }),
+      )
+    : Effect.succeed({ recap });
+};
+
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
@@ -193,14 +205,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         currentState: input.currentState,
       }),
     });
-    const recap = sanitizeThreadRecap(generated.recap, input.previousRecap);
-    if (recap.length === 0) {
-      return yield* new TextGenerationError({
-        operation: "generateThreadRecap",
-        detail: "The model returned an empty thread recap.",
-      });
-    }
-    return { recap };
+    return yield* generatedThreadRecap(generated.recap, input.previousRecap);
   });
 
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =

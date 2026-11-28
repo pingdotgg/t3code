@@ -51,6 +51,12 @@ export function useAvailableSettingsSearchItems() {
         environment.connection.phase === "connected" &&
         environment.serverConfig?.environment.capabilities.agentFeedback === true,
     ) === true;
+  const hasThreadRecapEnvironment =
+    environments.some(
+      (environment) =>
+        environment.connection.phase === "connected" &&
+        environment.serverConfig?.environment.capabilities.threadRecap === true,
+    ) === true;
   const hasTextGeneratorsEnvironment =
     environments.some(
       (environment) =>
@@ -90,6 +96,7 @@ export function useAvailableSettingsSearchItems() {
     hasPeerLinkHost,
     hasFastWorktreeCheckoutEnvironment,
     hasAgentFeedbackEnvironment,
+    hasThreadRecapEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
     hasSecretProvidersEnvironment,

@@ -73,6 +73,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly agentFeedbackOnly?: boolean;
+  readonly threadRecapOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -90,6 +91,7 @@ export interface SettingsSearchAvailability {
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   readonly hasAgentFeedbackEnvironment?: boolean;
+  readonly hasThreadRecapEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
@@ -598,6 +600,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Thread recaps"),
     to: "/settings/labs",
     scope: "environment",
+    threadRecapOnly: true,
     searchTerms: [msg("beta recap summary thread details catch up live note")],
   },
   {
@@ -1725,6 +1728,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.agentFeedbackOnly || availability.hasAgentFeedbackEnvironment === true) &&
+      (!item.threadRecapOnly || availability.hasThreadRecapEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
       (!item.secretProvidersOnly || availability.hasSecretProvidersEnvironment === true),
   );

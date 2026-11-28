@@ -24,6 +24,7 @@ import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalo
 import { isMuseUsageLimitFailure } from "./usageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import {
+  generatedThreadRecap,
   generatedThreadTitle,
   investigationUnsupported,
   TranscriptionPostProcessingOutput,
@@ -38,7 +39,6 @@ import {
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeThreadRecap,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 
@@ -397,14 +397,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       }),
       modelSelection: input.modelSelection,
     });
-    const recap = sanitizeThreadRecap(generated.recap, input.previousRecap);
-    if (recap.length === 0) {
-      return yield* new TextGenerationError({
-        operation: "generateThreadRecap",
-        detail: "The model returned an empty thread recap.",
-      });
-    }
-    return { recap };
+    return yield* generatedThreadRecap(generated.recap, input.previousRecap);
   });
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn("MuseTextGeneration.generateTranscriptionPostProcessing")(function* (input) {

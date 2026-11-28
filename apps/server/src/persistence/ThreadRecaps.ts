@@ -31,7 +31,6 @@ export class ThreadRecapRepository extends Context.Service<
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<PersistedThreadRecap>, ThreadRecapRepositoryError>;
     readonly put: (recap: PersistedThreadRecap) => Effect.Effect<void, ThreadRecapRepositoryError>;
-    readonly delete: (threadId: ThreadId) => Effect.Effect<void, ThreadRecapRepositoryError>;
   }
 >()("t3/persistence/ThreadRecaps/ThreadRecapRepository") {}
 
@@ -97,22 +96,6 @@ const make = Effect.gen(function* () {
             new PersistenceSqlError({
               operation: "putThreadRecap",
               correlation: { threadId: recap.threadId },
-              cause,
-            }),
-        ),
-      );
-    }),
-    delete: Effect.fn("ThreadRecapRepository.delete")(function (threadId) {
-      return sql`
-        DELETE FROM thread_recaps
-        WHERE thread_id = ${threadId}
-      `.pipe(
-        Effect.asVoid,
-        Effect.mapError(
-          (cause) =>
-            new PersistenceSqlError({
-              operation: "deleteThreadRecap",
-              correlation: { threadId },
               cause,
             }),
         ),

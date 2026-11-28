@@ -324,6 +324,7 @@ function ThreadRecapRow() {
   const updateSettings = useUpdateScopedSettings();
   const gt = useGT();
   if (
+    connectedEnvironments.length === 0 ||
     connectedEnvironments.some(
       (environment) => environment.serverConfig?.environment.capabilities.threadRecap !== true,
     )

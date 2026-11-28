@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, describe, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -117,16 +118,10 @@ const makeHarness = (
       FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
     );
 
-    const scope = yield* Scope.make();
-    const ctx = yield* Layer.buildWithScope(
-      ThreadRecapService.layerWithOptions({ initialIdleMs: 1_000, refreshIdleMs: 2_000 }).pipe(
-        Layer.provide(deps),
-      ),
-      scope,
+    const service = Context.get(
+      yield* Layer.build(ThreadRecapService.layer.pipe(Layer.provide(deps))),
+      ThreadRecapService.ThreadRecapService,
     );
-    const service = ctx.mapUnsafe.get(
-      ThreadRecapService.ThreadRecapService.key,
-    ) as ThreadRecapService.ThreadRecapService["Service"];
 
     const subscribe = () =>
       Effect.gen(function* () {
@@ -160,7 +155,6 @@ const makeHarness = (
           yield* Ref.set(settingsRef, next);
           yield* PubSub.publish(settingsPubSub, next);
         }),
-      close: () => Scope.close(scope, Exit.void),
     };
   });
 
@@ -179,11 +173,11 @@ describe("ThreadRecapService", () => {
           },
         );
         const sub = yield* h.subscribe();
-        yield* TestClock.adjust(Duration.millis(5_000));
+        yield* TestClock.adjust(Duration.millis(40_000));
         assert.strictEqual(calls, 0);
 
         yield* h.setEnabled(true);
-        yield* TestClock.adjust(Duration.millis(1_000));
+        yield* TestClock.adjust(Duration.millis(12_000));
         yield* Effect.yieldNow;
         assert.strictEqual(calls, 1);
         assert.strictEqual(sub.received.at(-1)?.text, "Auth refactor: moved middleware.");
@@ -195,11 +189,10 @@ describe("ThreadRecapService", () => {
         yield* sub.close();
 
         const resub = yield* h.subscribe();
-        yield* TestClock.adjust(Duration.millis(5_000));
+        yield* TestClock.adjust(Duration.millis(40_000));
         assert.strictEqual(calls, 1);
         assert.strictEqual(resub.received[0]?.text, "Auth refactor: moved middleware.");
         yield* resub.close();
-        yield* h.close();
       }),
   );
 
@@ -213,9 +206,8 @@ describe("ThreadRecapService", () => {
       const sub = yield* h.subscribe();
       yield* TestClock.adjust(Duration.millis(500));
       yield* sub.close();
-      yield* TestClock.adjust(Duration.millis(5_000));
+      yield* TestClock.adjust(Duration.millis(40_000));
       assert.strictEqual(calls, 0);
-      yield* h.close();
     }),
   );
 
@@ -236,21 +228,19 @@ describe("ThreadRecapService", () => {
         }),
       );
       const sub = yield* h.subscribe();
-      yield* TestClock.adjust(Duration.millis(1_000));
+      yield* TestClock.adjust(Duration.millis(12_000));
       yield* Deferred.await(started);
 
       yield* Ref.set(h.messagesRef, [msg("m1", "user", "First"), msg("m2", "assistant", "Second")]);
-      yield* h.emit();
       yield* Deferred.succeed(release, undefined);
       yield* TestClock.adjust(Duration.zero);
-      yield* TestClock.adjust(Duration.millis(1_000));
+      yield* TestClock.adjust(Duration.millis(12_000));
       yield* TestClock.adjust(Duration.zero);
 
       assert.strictEqual(calls, 2);
       assert.isFalse(sub.received.some((entry) => entry.text === "Stale recap."));
       assert.strictEqual(sub.received.at(-1)?.text, "Fresh recap.");
       yield* sub.close();
-      yield* h.close();
     }),
   );
 
@@ -266,23 +256,62 @@ describe("ThreadRecapService", () => {
           : Effect.succeed({ recap: "Recovered recap." });
       });
       const sub = yield* h.subscribe();
-      yield* TestClock.adjust(Duration.millis(1_000));
+      yield* TestClock.adjust(Duration.millis(12_000));
       yield* Effect.yieldNow;
       assert.strictEqual(calls, 1);
       assert.strictEqual(sub.received.at(-1)?.status, "error");
 
       yield* h.emit();
-      yield* TestClock.adjust(Duration.millis(5_000));
+      yield* TestClock.adjust(Duration.millis(40_000));
       assert.strictEqual(calls, 1);
 
       yield* Ref.set(h.messagesRef, [msg("m1", "user", "Try recap"), msg("m2", "assistant", "Ok")]);
       yield* h.emit();
-      yield* TestClock.adjust(Duration.millis(1_000));
+      yield* TestClock.adjust(Duration.millis(12_000));
       yield* Effect.yieldNow;
       assert.strictEqual(calls, 2);
       assert.strictEqual(sub.received.at(-1)?.text, "Recovered recap.");
       yield* sub.close();
-      yield* h.close();
+    }),
+  );
+
+  it.effect("clears a live recap when its thread is deleted", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness(true, [msg("m1", "user", "Delete me")], () =>
+        Effect.succeed({ recap: "Doomed recap." }),
+      );
+      const sub = yield* h.subscribe();
+      yield* TestClock.adjust(Duration.millis(12_000));
+      yield* Effect.yieldNow;
+      assert.strictEqual(sub.received.at(-1)?.text, "Doomed recap.");
+
+      yield* h.emit("thread.deleted");
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(sub.received.at(-1), { status: "idle", text: null });
+      yield* sub.close();
+    }),
+  );
+
+  it.effect("drops an in-flight recap when Labs is turned off", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const h = yield* makeHarness(true, [msg("m1", "user", "Labs off")], () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ recap: "Late recap." }),
+        ),
+      );
+      const sub = yield* h.subscribe();
+      yield* TestClock.adjust(Duration.millis(12_000));
+      yield* Deferred.await(started);
+
+      yield* h.setEnabled(false);
+      yield* Deferred.succeed(release, undefined);
+      yield* TestClock.adjust(Duration.zero);
+      assert.isFalse(sub.received.some((entry) => entry.text === "Late recap."));
+      assert.strictEqual(sub.received.at(-1)?.status, "idle");
+      yield* sub.close();
     }),
   );
 });
