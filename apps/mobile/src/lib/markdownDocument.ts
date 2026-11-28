@@ -479,10 +479,16 @@ function singleTildeOffsets(raw: string): number[] {
   const unclosed = new Set<string>();
   const skipTo = (index: number, closer: string) => {
     if (unclosed.has(closer)) return -1;
-    let close = raw.indexOf(closer, index);
-    if (closer.startsWith("$"))
+    let close = -1;
+    if (closer.startsWith("$")) {
+      close = raw.indexOf(closer, index);
       while (close !== -1 && WORD_CHAR.test(raw[close + closer.length] ?? ""))
         close = raw.indexOf(closer, close + 1);
+    } else {
+      // As in md4c, backslashes pair up, so a doubled backslash cannot close `\(` or `\[`.
+      for (let at = index; at + 1 < raw.length && close === -1; at += raw[at] === "\\" ? 2 : 1)
+        if (raw[at] === "\\" && raw[at + 1] === closer[1]) close = at;
+    }
     if (close === -1) unclosed.add(closer);
     return close === -1 ? -1 : close + closer.length - 1;
   };
