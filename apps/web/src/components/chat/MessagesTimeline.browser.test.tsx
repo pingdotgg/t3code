@@ -1120,6 +1120,46 @@ describe("MessagesTimeline messages", () => {
     expect(snapshot().findings).toEqual([]);
   });
 
+  it("reports a blank stretch that heals before the delayed gap checks look", async () => {
+    setup();
+    localStorage.removeItem("t3dev:timeline-gap-reports");
+    using _timers = fakeTimers();
+    const props = baseProps();
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `flash-${index}`),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const blankReports = () =>
+      timelineGapDevApi
+        .gapReports()
+        .filter(
+          (report): report is { phase: string; durationMs: number; missingRows: unknown[] } =>
+            (report as { phase?: string }).phase === "blank stretch",
+        );
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 119:"));
+    // The recorder is a lazy chunk; it samples once it has mounted.
+    await vi.waitFor(() => expect(timelineGapDevApi.checkGapsNow()).not.toEqual([]));
+    const state = props.listRef.current!.getState();
+    const slots = Array.from({ length: state.endBuffered - state.startBuffered + 1 }, (_, i) => {
+      const slot = state.elementAtIndex(state.startBuffered + i)!;
+      return { slot, parent: slot.parentNode!, next: slot.nextSibling };
+    });
+    try {
+      for (const { slot } of slots) slot.remove();
+      await act(() => vi.advanceTimersByTimeAsync(400));
+    } finally {
+      for (const { slot, parent, next } of slots.toReversed()) parent.insertBefore(slot, next);
+    }
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(blankReports()).toHaveLength(1);
+    const [report] = blankReports();
+    expect(report!.durationMs).toBeGreaterThanOrEqual(100);
+    expect(report!.durationMs).toBeLessThan(2000);
+    expect(report!.missingRows).toHaveLength(slots.length);
+  });
+
   it("scrolls from the keyboard once F6 moves into the conversation", async () => {
     setup();
     const props = baseProps();

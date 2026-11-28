@@ -57,7 +57,11 @@ import {
 } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
-import { ActOnEnvironmentPicker, type PerformPullRequestAction } from "./PullRequestDetailActions";
+import {
+  ActOnEnvironmentPicker,
+  PullRequestCloseMenuItem,
+  type PerformPullRequestAction,
+} from "./PullRequestDetailActions";
 import {
   PULL_REQUEST_MERGE_METHOD_LABELS,
   pullRequestActionMenuHasGroup,
@@ -558,28 +562,12 @@ export function PullRequestActionsMenu({
         {detail.state === "open" && can("close") ? (
           <>
             <MenuSeparator />
-            <MenuItem
-              closeOnClick={inlineConfirm.isArmed("close")}
-              aria-label={
-                inlineConfirm.isArmed("close")
-                  ? gt("Confirm close?")
-                  : gt(
-                      "Close {term, select, mr {merge request} cr {change request} other {pull request}}",
-                      { term: changeRequestTermKind(terminology) },
-                    )
-              }
-              variant="destructive"
-              disabled={actionPending}
-              {...inlineConfirm.props("close", () => void perform("close"))}
-            >
-              <PullRequestGlyph.closed className="size-3.5" />
-              {inlineConfirm.isArmed("close")
-                ? gt("Confirm close?")
-                : gt(
-                    "Close {term, select, mr {merge request} cr {change request} other {pull request}}",
-                    { term: changeRequestTermKind(terminology) },
-                  )}
-            </MenuItem>
+            <PullRequestCloseMenuItem
+              singular={terminology.singular}
+              actionPending={actionPending}
+              perform={perform}
+              inlineConfirm={inlineConfirm}
+            />
           </>
         ) : detail.state === "closed" && can("reopen") ? (
           <>

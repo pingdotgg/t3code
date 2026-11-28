@@ -297,6 +297,31 @@ it("keeps a merge and a review on the head the reader was shown until they load 
   );
 });
 
+it("closes the pull request from the merge button's menu after a second press", async () => {
+  setup();
+  command.mockResolvedValue({ _tag: "Success", value: undefined });
+  shown.detail = {
+    ...detail,
+    mergeability: "mergeable",
+    mergeCapabilities: { merge: false, squash: true, rebase: false },
+    capabilities: { ...detail.capabilities, actions: ["merge", "close"], mergeMethods: ["squash"] },
+    viewerPermissions: { ...detail.viewerPermissions, actions: ["merge", "close"] },
+  };
+  await using screen = await render(panel());
+  await screen.getByRole("button", { name: "More merge actions" }).click();
+  const items = page.getByRole("menuitem");
+  await expect.element(items.last()).toHaveAccessibleName("Close pull request");
+  await items.last().click();
+  await expect.element(items.last()).toHaveAccessibleName("Confirm close?");
+  expect(command).not.toHaveBeenCalled();
+  await items.last().click();
+  await vi.waitFor(() =>
+    expect(command).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ action: "close" }) }),
+    ),
+  );
+});
+
 it("reads the first diff page once the pointer rests on the Code tab", async () => {
   setup();
   await using screen = await render(panel());

@@ -1654,6 +1654,8 @@ export function PullRequestDetailPanel({
         updateMethods={updateMethods}
         showCheckout={context === "page"}
         checkoutMenuItems={checkoutMenuItems}
+        showsClose={detail.state === "open" && can("close")}
+        singular={terminology.singular}
       />
     );
   const finishedState =
