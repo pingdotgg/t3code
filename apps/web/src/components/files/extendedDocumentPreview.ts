@@ -238,6 +238,8 @@ async function odfHtml(
     "table:table": "table",
     "table:table-row": "tr",
     "table:table-cell": "td",
+    "text:ruby": "ruby",
+    "text:ruby-text": "rt",
   };
   const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
   const tag =
