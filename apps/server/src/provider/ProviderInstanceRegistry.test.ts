@@ -1200,63 +1200,90 @@ describe("ProviderInstanceRegistry secret environment", () => {
     });
   });
 
-  it.effect("keeps providers available after their credential reload is interrupted", () =>
-    Effect.gen(function* () {
-      const first = ProviderInstanceId.make("first");
-      const second = ProviderInstanceId.make("second");
-      const secondBuildStarted = yield* Deferred.make<void>();
-      const finishSecondBuild = yield* Deferred.make<void>();
-      let credential = "original";
-      let pauseSecondBuild = false;
-      const driver: AnyProviderDriver = {
-        driverKind,
-        metadata: { displayName: "Fake" },
-        configSchema: Schema.Unknown,
-        defaultConfig: () => ({}),
-        create: (input) =>
-          Effect.gen(function* () {
-            if (input.instanceId === second && pauseSecondBuild) {
-              yield* Deferred.succeed(secondBuildStarted, undefined);
-              yield* Deferred.await(finishSecondBuild);
-            }
-            return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+  it.effect.each(["rebuild", "reloadSecrets"] as const)(
+    "%s publishes live providers with rotated credentials after interruption",
+    (operation) =>
+      Effect.gen(function* () {
+        const first = ProviderInstanceId.make("first");
+        const second = ProviderInstanceId.make("second");
+        const rebuilding = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        let revision = "original";
+        // Closing an instance built with the old credential drops it from the resolver's cache,
+        // so a secret read after retirement would come back empty.
+        let cacheInvalidated = false;
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "Fake" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const continuationKey = input.environment[0]?.value ?? "missing";
+              let open = true;
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  open = false;
+                  if (continuationKey === "original") cacheInvalidated = true;
+                }),
+              );
+              if (input.instanceId === second && revision === "rotated") {
+                yield* Deferred.succeed(rebuilding, undefined);
+                yield* Deferred.await(finish);
+              }
+              const instance: Partial<ProviderInstance> = {
+                instanceId: input.instanceId,
+                enabled: input.enabled,
+                continuationIdentity: { driverKind, continuationKey },
+                refreshModels: () => Effect.sync(() => expect(open).toBe(true)),
+              };
+              return instance as ProviderInstance;
+            }),
+        };
+        const entry = {
+          driver: driverKind,
+          config: {},
+          environment: [{ name: "API_KEY", value: secret, sensitive: true }],
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [first]: entry, [second]: entry },
+        }).pipe(
+          Effect.provideService(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            invalidate: () => Effect.void,
+            read: (references) =>
+              Effect.sync(() => references.map(() => (cacheInvalidated ? undefined : revision))),
           }),
-      };
-      const entry = {
-        driver: driverKind,
-        config: {},
-        environment: [{ name: "API_KEY", value: secret, sensitive: true }],
-      };
-      const { registry, mutator } = yield* makeProviderInstanceRegistry({
-        drivers: [driver],
-        configMap: { [first]: entry, [second]: entry },
-      }).pipe(
-        Effect.provideService(SecretResolver.SecretResolver, {
-          label: (provider) => Effect.succeed(provider),
-          read: (references) => Effect.sync(() => references.map(() => credential)),
-          invalidate: () => Effect.void,
-        }),
-      );
-      // Ensure any deferred startup builds are complete before rotating the secret.
-      yield* mutator.reloadSecrets();
-      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
-        first,
-        second,
-      ]);
+        );
+        yield* mutator.reloadSecrets();
+        revision = "rotated";
+        const update =
+          operation === "rebuild" ? mutator.rebuild([first, second]) : mutator.reloadSecrets();
+        const updateFiber = yield* update.pipe(Effect.forkChild);
+        const started = yield* Effect.raceFirst(
+          Deferred.await(rebuilding).pipe(Effect.as(true)),
+          Fiber.await(updateFiber).pipe(Effect.as(false)),
+        );
+        expect(started).toBe(true);
+        yield* Fiber.interrupt(updateFiber).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.await(updateFiber);
 
-      credential = "rotated";
-      pauseSecondBuild = true;
-      const reload = yield* mutator.reloadSecrets().pipe(Effect.forkChild);
-      yield* Deferred.await(secondBuildStarted);
-      yield* Fiber.interrupt(reload).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.succeed(finishSecondBuild, undefined);
-      yield* Fiber.await(reload);
-
-      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
-        first,
-        second,
-      ]);
-    }),
+        const instances = yield* registry.listInstances;
+        expect(
+          instances.map(({ instanceId, continuationIdentity }) => [
+            instanceId,
+            continuationIdentity.continuationKey,
+          ]),
+        ).toEqual([
+          [first, "rotated"],
+          [second, "rotated"],
+        ]);
+        for (const instance of instances) {
+          yield* instance.refreshModels?.() ?? Effect.void;
+        }
+      }),
   );
 
   it.effect("keeps a working instance live when a reload cannot read its secret", () => {
