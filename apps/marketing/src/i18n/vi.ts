@@ -54,7 +54,7 @@ export const vi: Messages = {
     commitPush: "Commit & push",
     gitTitle: "Một nút bấm để commit, push và tạo PR.",
     gitBody:
-      "Mỗi luồng agent ghi vào nhánh riêng của nó. Khi mọi thứ ổn, một nút bấm sẽ mở PR trên GitHub với tiêu đề, nội dung và changelog được tạo sẵn. Không cần múa terminal.",
+      "Mỗi luồng agent ghi vào nhánh riêng của nó. Khi mọi thứ ổn, một nút bấm sẽ mở PR trên GitHub với tiêu đề, nội dung và changelog được tạo sẵn. Không cần loay hoay với terminal.",
     gitPoints: [
       "Tiêu đề & nội dung PR tạo tự động",
       "Xem lại diff ngay trong giao diện trước khi push",
@@ -64,13 +64,16 @@ export const vi: Messages = {
     openTitle: "Không thích chỗ nào thì fork nó.",
     openPoints: [
       { lead: "Thay đổi giao diện.", rest: "Tùy chỉnh mọi bề mặt theo gu của bạn." },
-      { lead: "Thêm một agent.", rest: "Kết nối tool, model và luồng làm việc của riêng bạn." },
-      { lead: "Phát hành bản build của riêng bạn.", rest: "Tự host hoặc phân phối như sản phẩm của bạn." },
+      { lead: "Thêm một agent.", rest: "Kết nối tool, model và quy trình của riêng bạn." },
+      {
+        lead: "Phát hành bản build của riêng bạn.",
+        rest: "Tự host hoặc phân phối như sản phẩm của bạn.",
+      },
     ],
     stars: "{stars} sao",
     forkOnGithub: "Fork trên GitHub",
     browseSource: "Xem mã nguồn",
-    ctaTitle: "Agent của bạn xứng đáng hơn một terminal.",
+    ctaTitle: "Agent của bạn xứng đáng với thứ tốt hơn một terminal.",
     ctaSub:
       "T3 Code miễn phí, mã nguồn mở và nhanh. Cài đặt, kết nối harness bạn đã trả tiền, rồi để các agent bắt tay vào việc.",
     otherPlatforms: "Nền tảng khác",
@@ -82,8 +85,8 @@ export const vi: Messages = {
     breadcrumb: "Tải xuống",
     heading: "Tải T3 Code",
     channelLabel: "Kênh phát hành",
-    stable: "Stable",
-    nightly: "Nightly",
+    stable: "Ổn định",
+    nightly: "Hằng đêm",
     intelNote: "Dùng Mac Intel? {link}.",
     intelLink: "Tải bản build x64",
     armNote: "Dùng ARM? Tải {deb} hoặc {appimage} cho arm64.",
@@ -92,8 +95,8 @@ export const vi: Messages = {
     terminal: "Terminal",
     tryOnce: "Hoặc thử một lần mà không cần cài đặt:",
     allBuilds: "Mọi bản build đều có trên {link}",
-    releasesPage: "Trang GitHub releases",
-    builtAgo: "Build {age}",
-    releasesFallback: "Releases",
+    releasesPage: "trang phát hành GitHub",
+    builtAgo: "Đã build {age}",
+    releasesFallback: "Bản phát hành",
   },
 };
