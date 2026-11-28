@@ -1,7 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import { getFileViewedRange, isGitLfsPointerDiff, isLineInFileDiff } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
   hunks: ReadonlyArray<{
@@ -32,6 +32,25 @@ describe("isLineInFileDiff", () => {
   it("keeps the two sides apart, since one line number means two lines", () => {
     expect(isLineInFileDiff(file, "right", 43)).toBe(true);
     expect(isLineInFileDiff(file, "left", 40)).toBe(false);
+  });
+});
+
+describe("isGitLfsPointerDiff", () => {
+  const hunk = { deletionStart: 1, deletionCount: 0, additionStart: 1, additionCount: 3 };
+  const file = (hunks: ReadonlyArray<typeof hunk>, additionLines: ReadonlyArray<string>) =>
+    ({ name: "art/logo.png", hunks, additionLines }) as unknown as FileDiffMetadata;
+
+  it("reads a patch of a Git LFS pointer as the pointer, not the file", () => {
+    const pointer = [
+      "version https://git-lfs.github.com/spec/v1\n",
+      "oid sha256:5a8f16132efe3eb67a8dea335571beac2745147010dabcedde78dbe708e6bccd\n",
+      "size 104158\n",
+    ];
+    expect(isGitLfsPointerDiff(file([hunk], pointer))).toBe(true);
+    expect(
+      isGitLfsPointerDiff(file([hunk], ["# version https://git-lfs.github.com/spec/v1\n"])),
+    ).toBe(false);
+    expect(isGitLfsPointerDiff(file([], []))).toBe(false);
   });
 });
 

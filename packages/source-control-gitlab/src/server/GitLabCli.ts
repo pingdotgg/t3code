@@ -313,6 +313,7 @@ export class GitLabCli extends Context.Service<
       /** Keeps sensitive payloads out of argv. */
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
+      readonly onStdoutChunk?: (chunk: Uint8Array) => void;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError>;
 
     readonly listMergeRequests: (input: {
@@ -571,6 +572,7 @@ export const make = Effect.gen(function* () {
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        ...(input.onStdoutChunk === undefined ? {} : { onStdoutChunk: input.onStdoutChunk }),
       })
       .pipe(Effect.mapError(mapError));
   });

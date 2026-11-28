@@ -29,6 +29,8 @@ export interface SourceControlMediaRequest {
   readonly headers: Readonly<Record<string, string>>;
   /** `owner/name` of the change request the media is in, else of the checkout it was shown in. */
   readonly repository?: string;
+  /** The checkout the media was shown in, for a host that fetches through its CLI. */
+  readonly cwd?: string;
 }
 
 /** The server side of a definition's `credentials.appSignIn`. */

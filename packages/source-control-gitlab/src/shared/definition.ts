@@ -12,6 +12,7 @@ import {
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
+import { gitLabMediaUrl, gitLabRawFileUrl } from "./gitLabMedia.ts";
 import { icon } from "./icon.ts";
 import { gitLabReferenceAutolinks } from "./referenceAutolinks.ts";
 
@@ -134,4 +135,6 @@ export const definition = defineSourceControl({
     const identity = withCanonicalKey(saved);
     return isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link);
   },
+  mediaUrl: gitLabMediaUrl,
+  rawFileUrl: gitLabRawFileUrl,
 });
