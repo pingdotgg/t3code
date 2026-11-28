@@ -507,6 +507,7 @@ function ConnectionsSettingsContent({
     parsedTailscaleServePort >= 1 &&
     parsedTailscaleServePort <= 65_535;
 
+  const isChangingTailscaleServePort = desktopServerExposureState?.tailscaleServeEnabled === true;
   const pendingTailscaleServeBaseUrl = resolveTailscaleServeBaseUrl(
     pendingTailscaleServeEndpoint,
     parsedTailscaleServePort,
@@ -629,7 +630,7 @@ function ConnectionsSettingsContent({
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = () => {
     setDisableTailscaleServeDialogOpen(true);
   };
 
@@ -1154,19 +1155,32 @@ function ConnectionsSettingsContent({
           : missingTailscaleEndpointDescription(desktopServerExposureState, m)
       }
       control={
-        tailscaleHttpsEndpoint ? (
-          <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
-            disabled={isUpdatingTailscaleServe}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
-              }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
-            }}
-            aria-label={gt("Enable Tailscale HTTPS")}
-          />
+        tailscaleHttpsEndpoint || desktopServerExposureState?.tailscaleServeEnabled ? (
+          <div className="flex items-center gap-2">
+            {desktopServerExposureState?.tailscaleServeEnabled && tailscaleHttpsEndpoint ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isUpdatingTailscaleServe}
+                onClick={() => handleStartTailscaleServeSetup(tailscaleHttpsEndpoint)}
+              >
+                {gt("Change port")}
+              </Button>
+            ) : null}
+            <Switch
+              checked={desktopServerExposureState?.tailscaleServeEnabled === true}
+              disabled={isUpdatingTailscaleServe}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  if (tailscaleHttpsEndpoint)
+                    handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
+                  return;
+                }
+                handleStartTailscaleServeDisable();
+              }}
+              aria-label={gt("Enable Tailscale HTTPS")}
+            />
+          </div>
         ) : null
       }
       managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
@@ -1743,13 +1757,23 @@ function ConnectionsSettingsContent({
             <DialogPopup className="max-w-md">
               <DialogHeader>
                 <DialogTitle>
-                  <T>Set up Tailscale HTTPS?</T>
+                  {isChangingTailscaleServePort ? (
+                    gt("Change the Tailscale HTTPS port?")
+                  ) : (
+                    <T>Set up Tailscale HTTPS?</T>
+                  )}
                 </DialogTitle>
                 <DialogDescription>
-                  <T>
-                    T3 Code will restart the local backend with Tailscale Serve enabled and ask
-                    Tailscale to proxy HTTPS traffic to this backend.
-                  </T>
+                  {isChangingTailscaleServePort ? (
+                    gt(
+                      "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
+                    )
+                  ) : (
+                    <T>
+                      T3 Code will restart the local backend with Tailscale Serve enabled and ask
+                      Tailscale to proxy HTTPS traffic to this backend.
+                    </T>
+                  )}
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel>
@@ -1808,6 +1832,8 @@ function ConnectionsSettingsContent({
                       <Spinner size="sm" />
                       <T>Restarting…</T>
                     </>
+                  ) : isChangingTailscaleServePort ? (
+                    gt("Change port")
                   ) : (
                     gt("Enable")
                   )}

@@ -13093,5 +13093,8 @@
   "c63d942911808821": "Zielony",
   "75f923f6e3e41def": "Biały",
   "04cabf0f2aa08368": "Czarny",
-  "a992afd4cdaa1317": "Anuluj rysowanie"
+  "a992afd4cdaa1317": "Anuluj rysowanie",
+  "6ec34d0f383d27f9": "Zmień port",
+  "dcb0b4880837ff9a": "Zmienić port HTTPS Tailscale?",
+  "2c7cfee3209c4133": "Zmiana portu usuwa starą trasę Serve. Upewnij się, że zapisane klienty mają inną dostępną trasę; po ponownym uruchomieniu dodaj do nich nową trasę HTTPS."
 }
