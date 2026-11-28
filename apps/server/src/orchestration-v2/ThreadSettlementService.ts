@@ -531,19 +531,29 @@ export const make = Effect.gen(function* () {
       );
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
-    // A thread with no link of its own does not settle from a pull request another thread links,
-    // archived threads included.
+    // The project checkout is on whatever branch was last checked out, so there a thread with no link
+    // of its own does not settle from a pull request another thread links, archived threads
+    // included. A worktree holds one branch's work, so its threads settle with that branch's PR.
+    const inProjectCheckout = (thread: (typeof lookupCandidates)[number]) => {
+      const cwd = lookupCwdByThreadId.get(thread.id);
+      return cwd === undefined || cwd === projects.get(thread.projectId)?.workspaceRoot;
+    };
     const explicitlyLinked = new Set(
-      groups.size === 0
-        ? []
-        : (yield* projections.getThreadsWithPullRequests(undefined, {
+      lookupCandidates.some(inProjectCheckout)
+        ? (yield* projections.getThreadsWithPullRequests(undefined, {
             includeArchived: true,
           })).flatMap((thread) =>
             visibleThreadPullRequests(thread.pullRequests ?? []).map(threadPullRequestKeyOf),
-          ),
+          )
+        : [],
     );
-    const ownedByAnotherThread = (pullRequest: GitManager.GitBranchPullRequest | null) => {
-      if (pullRequest === null || pullRequest.state === "open") return false;
+    const ownedByAnotherThread = (
+      thread: (typeof lookupCandidates)[number],
+      pullRequest: GitManager.GitBranchPullRequest | null,
+    ) => {
+      if (pullRequest === null || pullRequest.state === "open" || !inProjectCheckout(thread)) {
+        return false;
+      }
       const key = branchPullRequestKey(pullRequest);
       return key !== null && explicitlyLinked.has(key);
     };
@@ -578,6 +588,7 @@ export const make = Effect.gen(function* () {
       if (
         thread.linkedPullRequest == null &&
         reference != null &&
+        inProjectCheckout(thread) &&
         explicitlyLinked.has(threadPullRequestKeyOf(legacyThreadPullRequestKey(reference)))
       ) {
         return undefined;
@@ -663,12 +674,12 @@ export const make = Effect.gen(function* () {
       );
       noPullRequestRechecks.record(key, nowMs, remembered !== null);
       if (refresh || remembered === null || remembered.state === "open") {
-        return ownedByAnotherThread(remembered) ? undefined : remembered;
+        return ownedByAnotherThread(thread, remembered) ? undefined : remembered;
       }
       // A deferred thread confirms first: a reused branch can have a new open PR.
       if (
         !hasDeferred &&
-        (ownedByAnotherThread(remembered) || !(yield* wouldSettle(group, remembered)))
+        (ownedByAnotherThread(thread, remembered) || !(yield* wouldSettle(group, remembered)))
       ) {
         return undefined;
       }
@@ -676,7 +687,7 @@ export const make = Effect.gen(function* () {
         { cwd, branch: thread.branch },
         { freshGitState: true },
       );
-      return ownedByAnotherThread(fresh) ? undefined : fresh;
+      return ownedByAnotherThread(thread, fresh) ? undefined : fresh;
     });
 
     // A merge, a shell close and a thread's own events read at once; only scheduled sweeps wait.
