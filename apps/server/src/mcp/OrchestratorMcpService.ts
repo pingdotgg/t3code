@@ -3031,6 +3031,27 @@ const make = Effect.gen(function* () {
         !isRetryOfAcceptedDelegation &&
         (yield* threadLaunch.isNonGitProject(parent.thread.projectId))
       ) {
+        // The child gets a copy of the project folder, which leaves out a repository the parent's
+        // own folder is (one a Scratch thread made, say), so it would start without that code.
+        const parentCheckout = parent.thread.worktreePath;
+        const parentIsRepositoryRoot =
+          parentCheckout !== null &&
+          (yield* gitDriver
+            .execute({
+              operation: "OrchestratorMcpService.delegateTask",
+              cwd: parentCheckout,
+              args: ["rev-parse", "--show-prefix"],
+            })
+            .pipe(
+              Effect.map((result) => result.stdout.trim() === ""),
+              Effect.orElseSucceed(() => false),
+            ));
+        if (parentIsRepositoryRoot) {
+          return yield* failure(
+            "invalid_request",
+            `Isolation "worktree" copies the project folder, not the Git repository in this thread's folder (${parentCheckout}), so the child would start without it. Use isolation "shared" to work in the parent's checkout.`,
+          );
+        }
         // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
         workspaceStrategy = { type: "worktree", baseRef: "HEAD" };
       } else if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
