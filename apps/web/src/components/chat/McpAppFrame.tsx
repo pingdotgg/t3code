@@ -10,6 +10,8 @@ import {
   type McpAppHostContext,
 } from "@t3tools/client-runtime/mcp-apps";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isStandaloneIssueLink } from "@t3tools/client-runtime/issue-links";
 import {
   clampMcpAppHeight,
   MCP_APP_COLOR_SCHEME_PARAM,
@@ -30,13 +32,19 @@ import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
 import { isElectron } from "~/env";
 import { m } from "~/i18n/messages";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
+import { issueTrackerEnvironment } from "~/state/issueTrackers";
+import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { attachMcpAppDocumentLink } from "./mcpAppDocumentLink";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
@@ -80,6 +88,9 @@ function saveBlob(blob: Blob, name: string) {
   // Browsers may start downloading after the click's task; defer revocation.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Read fresh each time: an awaited read can outlast the click's activation. */
+const hasTransientActivation = () => navigator.userActivation?.isActive === true;
 
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -170,6 +181,23 @@ export function McpAppFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
+  const conversationRef = scopeThreadRef(props.environmentId, props.conversationThreadId);
+  const openChangeRequestLink = useOpenChangeRequestLink(conversationRef);
+  const openIssueLink = useOpenIssueLink(conversationRef);
+  const readTrackers = useAtomQueryRunner(issueTrackerEnvironment.connections, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  // Read ahead, as messages do, so a link the app opens resolves inside the click's activation
+  // window; a browser fallback after a slow read would be blocked as a popup.
+  const issuesEnabled =
+    useServerConfigs().get(props.environmentId)?.environment.capabilities.issues === true;
+  const trackers =
+    useEnvironmentQuery(
+      issuesEnabled
+        ? issueTrackerEnvironment.connections({ environmentId: props.environmentId, input: {} })
+        : null,
+    ).data ?? undefined;
 
   // Read live values without rebuilding the host and losing the app session.
   const readLive = useStableCallback(() => ({
@@ -182,6 +210,10 @@ export function McpAppFrame(props: {
     updateModelContext,
     displayMode,
     toolDefinition,
+    openChangeRequestLink,
+    openIssueLink,
+    readTrackers,
+    trackers,
   }));
   const hostRef = useRef<McpAppHost | null>(null);
 
@@ -317,7 +349,49 @@ export function McpAppFrame(props: {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
           throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
         }
-        window.open(url, "_blank", "noopener,noreferrer");
+        const current = readLive();
+        // Only a standalone tracker's link needs the bindings. They are normally read already;
+        // a click before that read finishes waits for it.
+        const trackers = !isStandaloneIssueLink(url)
+          ? undefined
+          : (current.trackers ??
+            (await current
+              .readTrackers({ environmentId: current.props.environmentId, input: {} })
+              .then((result) => (result._tag === "Success" ? result.value : undefined))));
+        const click = {
+          metaKey: false,
+          ctrlKey: false,
+          preventDefault: () => undefined,
+          stopPropagation: () => undefined,
+        };
+        if (
+          current.openChangeRequestLink(click, url) ||
+          current.openIssueLink(click, url, undefined, trackers)
+        ) {
+          // The link opened in the conversation's panel, which full screen would cover.
+          setDisplayMode("inline");
+          return;
+        }
+        const openExternally = () => window.open(url, "_blank", "noopener,noreferrer");
+        if (hasTransientActivation()) {
+          openExternally();
+          return;
+        }
+        // The tracker read outlasted the click's activation, so the browser would block the tab;
+        // the toast's button is a fresh click. Full screen is a top-layer popover that would cover
+        // the toast, so the app returns inline first.
+        setDisplayMode("inline");
+        const id = toastManager.add({
+          title: url,
+          timeout: 15_000,
+          actionProps: {
+            children: m(msg("Open link")),
+            onClick: () => {
+              openExternally();
+              toastManager.close(id);
+            },
+          },
+        });
       },
       sendMessage: async (text) => {
         const send = readLive().props.onSendMessage;

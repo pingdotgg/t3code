@@ -34,9 +34,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { m } from "../../i18n/messages";
 import { shareGeneratedAttachment } from "../../lib/attachmentDownload";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
+import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useAssetUrlState } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useThreadShell } from "../../state/entities";
@@ -202,6 +202,7 @@ export function ThreadMcpApp(props: {
   const conversation = useThreadShell(
     scopeThreadRef(props.environmentId, props.conversationThreadId),
   );
+  const navigateToLink = useNavigateToPullRequest();
   const awaitingUser =
     conversation?.hasPendingApprovals === true || conversation?.hasPendingUserInput === true;
   const live = {
@@ -216,6 +217,14 @@ export function ThreadMcpApp(props: {
     insets,
     toolDefinition,
     navigation,
+    // Issue and pull request links open their screens, the way they do from a message.
+    openLink: (url: string) =>
+      navigateToLink(
+        url,
+        conversation
+          ? { environmentId: props.environmentId, projectId: conversation.projectId }
+          : null,
+      ),
   };
   const latest = useRef(live);
   // The attached WebView owns its host; state lets the tool-call effect pair
@@ -357,7 +366,7 @@ export function ThreadMcpApp(props: {
         ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
-        if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
+        if (!(await latest.current.openLink(url))) {
           throw new McpAppHostRefusal({ message: "The link could not be opened." });
         }
       },
