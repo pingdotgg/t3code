@@ -15,17 +15,14 @@ import {
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
-  SETTINGS_NAV_GROUPS,
+  settingsNavGroups,
+  SETTINGS_NAV_LABELS,
+  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
   sourceControlHostSettingsSearchId,
   type SettingsSearchItem,
 } from "./settingsSearch";
-
-vi.mock("~/env", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/env")>()),
-  isSecretsFeatureEnabled: false,
-}));
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
@@ -67,6 +64,26 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     const spanish = (message: string) => (message === "Word wrap" ? "Ajuste de línea" : message);
     expect(searchSettings("ajuste", ITEMS, spanish).map((item) => item.id)).toEqual(["word-wrap"]);
+    const sourceControlItems: ReadonlyArray<SettingsSearchItem> = [
+      { id: "commit-style", title: "Commit style", to: "/settings/source-control" },
+    ];
+    for (const [section, nav] of [
+      ["Versionshantering och ärenden", "Versioner och ärenden"],
+      ["Page title", "Navigation: localized suffix"],
+    ] as const) {
+      const translate = (message: string) =>
+        message === SETTINGS_NAV_LABELS["/settings/source-control"]
+          ? nav
+          : message === SETTINGS_SECTION_LABELS["/settings/source-control"]
+            ? section
+            : message;
+      for (const query of [section, nav]) {
+        expect(
+          searchSettings(query, sourceControlItems, translate).map((item) => item.id),
+          query,
+        ).toEqual(["commit-style"]);
+      }
+    }
     for (const query of ["fallback", "fallback agent", "fallback model"]) {
       expect(searchSettings(query)[0]).toMatchObject({
         id: "fallback-model",
@@ -76,9 +93,50 @@ describe("searchSettings", () => {
     }
   });
 
-  it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
-    expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).not.toContain("/settings/secrets");
-    expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
+  it("ranks a setting by its displayed title in the active language", () => {
+    const items: ReadonlyArray<SettingsSearchItem> = [
+      { id: "dictation", title: "Dictation", to: "/settings/general", searchTerms: ["language"] },
+      {
+        id: "speech-language",
+        title: "Speech language",
+        to: "/settings/general",
+        searchTerms: ["dictation"],
+      },
+      { id: "language", title: "Language", to: "/settings/general" },
+    ];
+    const german: Record<string, string> = {
+      "Speech language": "Diktiersprache",
+      language: "Sprache",
+      Language: "Sprache",
+    };
+    const ids = (query: string) =>
+      searchSettings(query, items, (message) => german[message] ?? message).map((item) => item.id);
+
+    expect(ids("Sprache")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Language")).toEqual(["language", "speech-language", "dictation"]);
+  });
+
+  it("shows the Secrets page in nav and search only when an environment enables secret providers", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    for (const enabled of [false, true]) {
+      const navPaths = settingsNavGroups(enabled).flatMap((group) => group.paths);
+      const searchPaths = searchSettings(
+        "1password",
+        filterAvailableSettingsSearchItems({
+          ...availability,
+          hasSecretProvidersEnvironment: enabled,
+        }),
+      ).map((item) => item.to);
+      expect(navPaths.includes("/settings/secrets")).toBe(enabled);
+      expect(searchPaths.includes("/settings/secrets")).toBe(enabled);
+    }
   });
 
   it("finds where subagents and side chats open by any of its names", () => {
@@ -107,6 +165,13 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    const contextualItems: ReadonlyArray<SettingsSearchItem> = [
+      { id: "source", title: "Example", to: "/settings/source-control" },
+      { id: "access", title: "Example", to: "/settings/access" },
+    ];
+    for (const query of ["ci", "md", "min", "io", "eyik"]) {
+      expect(searchSettings(query, contextualItems), query).toEqual([]);
+    }
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {
@@ -155,6 +220,7 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
       "linked-environments",
+      "agent-feedback",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -225,14 +291,32 @@ describe("searchSettings", () => {
     for (const [title, id] of [
       ["Automatic worktree cleanup", "storage-worktrees"],
       ["Delete settled worktrees", "storage-worktrees"],
+      ["Delete worktrees with deleted threads", "storage-worktrees"],
+      ["Delete merged worktrees", "storage-worktrees"],
       ["Delete old browser artifacts", "storage-artifacts"],
       ["Delete old rotated logs", "storage-artifacts"],
       ["Custom search URL", "browser-search-engine"],
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["ChatGPT account", "providers"],
+      ["Live Processes", "diagnostics"],
+      ["Most Common Failures", "diagnostics"],
+      ["Top Span Names", "diagnostics"],
+      ["Slowest Spans", "diagnostics"],
+      ["Third-party notices", "open-source-licenses"],
+      ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
+    }
+  });
+
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
     }
   });
 
@@ -264,7 +348,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    for (const id of ["response-streaming", "speech-project-dictionary"]) {
+    for (const id of ["response-streaming", "speech-project-dictionary", "project-actions"]) {
       expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
     }
     for (const scope of ["all", "environment", "project"] as const) {

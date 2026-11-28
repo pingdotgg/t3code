@@ -325,39 +325,46 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const normalizeTrackedFolders = (
+  const normalizeTrackedFolders = Effect.fn("ProjectService.normalizeTrackedFolders")(function* (
     projectId: ProjectId,
     workspaceRoot: string,
     folders: ReadonlyArray<ProjectTrackedFolder>,
     known: ReadonlyArray<ProjectTrackedFolder> = [],
-  ) => {
+  ) {
     const invalid = (detail: string) => Effect.fail(new ProjectInvalidError({ projectId, detail }));
+    const realPath = (target: string) =>
+      fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
+    // Compared by what a symlink points at, so an alias cannot pass for another folder.
+    const realRoot = yield* realPath(workspaceRoot);
     const normalized: Array<ProjectTrackedFolder> = [];
+    const seen = new Set<string>();
     // The server finds the repositories inside the project folder itself; callers add the rest.
     for (const folder of folders.filter((entry) => entry.discovered !== true)) {
       if (!path.isAbsolute(folder.path)) {
-        return invalid(`Tracked folder '${folder.path}' must be an absolute path.`);
+        return yield* invalid(`Tracked folder '${folder.path}' must be an absolute path.`);
       }
       const folderPath = path.resolve(folder.path);
-      if (isWithinRoot(path, workspaceRoot, folderPath)) {
-        return invalid(
-          folderPath === workspaceRoot
+      const real = yield* realPath(folderPath);
+      if (isWithinRoot(path, workspaceRoot, folderPath) || isWithinRoot(path, realRoot, real)) {
+        return yield* invalid(
+          folderPath === workspaceRoot || real === realRoot
             ? "The project's own folder is always part of it; track other folders."
             : `Tracked folder '${folderPath}' contains the project's own folder.`,
         );
       }
-      if (normalized.some((existing) => existing.path === folderPath)) {
-        return invalid(`Tracked folder '${folderPath}' is listed twice.`);
+      if (seen.has(real)) {
+        return yield* invalid(`Tracked folder '${folderPath}' is listed twice.`);
       }
+      seen.add(real);
       normalized.push({ path: folderPath, name: folder.name });
     }
     if (normalized.length > PROJECT_TRACKED_FOLDERS_MAX) {
-      return invalid(
+      return yield* invalid(
         `A project tracks at most ${PROJECT_TRACKED_FOLDERS_MAX} added folders; ${normalized.length} were given.`,
       );
     }
     // Only a folder being added has to be there: one already tracked may have gone missing since.
-    return Effect.forEach(
+    return yield* Effect.forEach(
       normalized.filter((folder) => !known.some((existing) => existing.path === folder.path)),
       (folder) =>
         fileSystem.stat(folder.path).pipe(
@@ -369,7 +376,7 @@ export const make = Effect.gen(function* () {
         ),
       { discard: true },
     ).pipe(Effect.andThen(withDiscovered(workspaceRoot, normalized)));
-  };
+  });
 
   // Git for Windows can't trust an index written inside the distro and rereads every file across the
   // share, so git status can hit its timeout. Checked before normalizing, which already stats the share.
@@ -391,6 +398,9 @@ export const make = Effect.gen(function* () {
     refine?: (
       current: ProjectStore.ProjectRow | undefined,
     ) => Effect.Effect<ProjectCommand | null, ProjectServiceError>,
+    // Runs under the same lock only when this call commits, so retries skip it and writes keep
+    // the commit order.
+    onCommitted?: Effect.Effect<void, ProjectOperationError>,
   ) {
     const { projectId } = initial;
     const dispatchError = (cause: unknown) =>
@@ -424,13 +434,14 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
+        const { receipt, committed } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
         });
+        if (committed && onCommitted !== undefined) yield* onCommitted;
         return { receipt };
       }
       const receipt = yield* eventSink.commitRejectedProjectCommand({
@@ -534,6 +545,51 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  // Once project settings are folded, project defaults resolve from Settings only, where the app's editor saves them.
+  const saveProjectSettings = (
+    projectId: ProjectId,
+    input: Pick<
+      ProjectUpdateInput,
+      "scripts" | "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull"
+    >,
+  ) =>
+    input.scripts === undefined &&
+    input.defaultModelSelection === undefined &&
+    input.defaultThreadEnvMode === undefined &&
+    input.autoPull === undefined
+      ? Effect.void
+      : serverSettings.getSettings.pipe(
+          // A patch replaces the project's whole entry, so its other overrides are carried over.
+          Effect.flatMap(({ projectSettingsOverrides }) => {
+            const entry = {
+              ...projectSettingsOverrides[projectId],
+              ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
+              ...(input.defaultModelSelection == null
+                ? {}
+                : { defaultModelSelection: input.defaultModelSelection }),
+              ...(input.defaultThreadEnvMode == null
+                ? {}
+                : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+              ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
+            };
+            // A cleared project default inherits the machine's setting again.
+            if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+            if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+            return serverSettings.updateSettings({
+              projectSettingsOverrides: { [projectId]: entry },
+            });
+          }),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "dispatch-project-command",
+                projectId,
+                cause,
+              }),
+          ),
+        );
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
@@ -548,15 +604,19 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         input.trackedFolders ?? [],
       );
-      yield* commit({
-        type: "project.create",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        trackedFolders,
-      });
+      yield* commit(
+        {
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot,
+          ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+          trackedFolders,
+        },
+        undefined,
+        saveProjectSettings(input.projectId, { scripts: input.scripts }),
+      );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -639,6 +699,7 @@ export const make = Effect.gen(function* () {
           );
           return { ...command, trackedFolders };
         }),
+        saveProjectSettings(input.projectId, input),
       );
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);

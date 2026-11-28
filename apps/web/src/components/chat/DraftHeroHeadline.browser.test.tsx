@@ -21,7 +21,7 @@ import {
 } from "../../../test/fakeEnvironment";
 import { render } from "../../../test/render";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock(
   "../../../../../packages/client-runtime/src/connection/driver.ts",
   async (importOriginal) => {

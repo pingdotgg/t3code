@@ -1568,7 +1568,8 @@ const makeResponse = Effect.fnUntraced(
             isFailure: status !== "completed",
             result: status === "completed"
               ? { result: part.result }
-              : { status, result: part.result }
+              : { status, result: part.result },
+            providerExecuted: true
           })
           break
         }

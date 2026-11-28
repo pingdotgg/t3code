@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The probe fixture uses a Node macrotask boundary.
+import * as NodeTimersPromises from "node:timers/promises";
 import {
   EnvironmentId,
   EventId,
@@ -20,7 +22,7 @@ import {
   LINKED_THREAD_RETRY_MS,
   type LinkedThreadView,
 } from "./linkedThread.ts";
-import { v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
+import { v2MessageRow, v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
 
 const snapshot = (
   snapshotSequence: number,
@@ -163,6 +165,83 @@ it.effect("loads the turns before a snapshot's window once per request", () =>
   }).pipe(Effect.scoped),
 );
 
+it.effect("brings back the turns a closed view had loaded when it opens again", () =>
+  Effect.gen(function* () {
+    const older = v2MessageRow("Older", 1);
+    const recent = v2MessageRow("Recent", 2);
+    const latest = v2MessageRow("Latest", 3);
+    const window = (
+      snapshotSequence: number,
+      historyCursor: string,
+      row: typeof recent,
+    ): OrchestrationV2ThreadStreamItem => ({
+      kind: "snapshot",
+      snapshotSequence,
+      projection: { ...v2Projection, turnItems: [row.item], visibleTurnItems: [row] },
+      historyCursor,
+      hasMoreHistory: true,
+    });
+    const pages: Record<string, Pick<OrchestrationV2ThreadHistoryPage, "items" | "nextCursor">> = {
+      "before-recent": { items: [older], nextCursor: "before-older" },
+      "before-latest": { items: [recent], nextCursor: "before-recent" },
+    };
+    const asked: string[] = [];
+    const follow = (
+      items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+      previous: LinkedThreadView | null,
+    ) =>
+      Effect.gen(function* () {
+        const views = yield* Queue.unbounded<LinkedThreadView>();
+        yield* followLinkedThread({
+          items: Stream.fromIterable(items).pipe(Stream.concat(Stream.never)),
+          historyPage: (cursor) =>
+            Effect.sync(() => {
+              asked.push(cursor);
+              return { ...pages[cursor]!, snapshotSequence: 3, hasMoreHistory: true };
+            }),
+          previous,
+        }).pipe(
+          Stream.runForEach((view) => Queue.offer(views, view)),
+          Effect.forkScoped,
+        );
+        return views;
+      });
+    const settled = Effect.fnUntraced(function* (views: Queue.Queue<LinkedThreadView>) {
+      let view = yield* Queue.take(views);
+      while (view.history.loading) view = yield* Queue.take(views);
+      return view;
+    });
+    const rows = (view: LinkedThreadView) =>
+      view.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId);
+
+    const first = yield* follow([window(1, "before-recent", recent), retitled(2, "Renamed")], null);
+    (yield* Queue.take(first)).loadEarlier();
+    yield* Queue.take(first); // Loading.
+    yield* Queue.take(first); // The earlier page.
+    const closed = yield* Queue.take(first);
+    expect([rows(closed), closed.thread.sequence]).toEqual([
+      [older.sourceItemId, recent.sourceItemId],
+      2,
+    ]);
+
+    // Nothing changed while the view was closed: the rows it held are shown as they were.
+    const same = yield* settled(yield* follow([window(2, "before-recent", recent)], closed));
+    expect([rows(same), same.thread.historyCursor]).toEqual([
+      [older.sourceItemId, recent.sourceItemId],
+      "before-older",
+    ]);
+    expect(asked).toEqual(["before-recent"]);
+
+    // The thread moved on: pages are read again until the oldest row it showed is back.
+    const moved = yield* settled(yield* follow([window(3, "before-latest", latest)], closed));
+    expect([rows(moved), moved.thread.historyCursor]).toEqual([
+      [older.sourceItemId, recent.sourceItemId, latest.sourceItemId],
+      "before-older",
+    ]);
+    expect(asked).toEqual(["before-recent", "before-latest", "before-recent"]);
+  }).pipe(Effect.scoped),
+);
+
 describe("connectLinkedEnvironment", () => {
   const lan = "http://192.168.1.20:3773";
   const tailnet = "https://vm.tail.ts.net";
@@ -177,16 +256,22 @@ describe("connectLinkedEnvironment", () => {
     credential: "ONE-TIME",
     expiresAt: DateTime.makeUnsafe(0),
   };
+  const unsupported: PeerLinkClientPairingResult = {
+    type: "unsupported",
+    reason: "link_access",
+    ...target,
+  };
   const connect = (
     pairing: PeerLinkClientPairingResult | null,
-    reachable: ReadonlyArray<string>,
+    reachable: ReadonlyArray<string> | ((host: string) => Promise<boolean>),
     paired = true,
   ) => {
     const pairs: Array<{ host: string; pairingCode: string }> = [];
     return connectLinkedEnvironment({
       label: "vm (saved name)",
       requestPairing: async () => pairing,
-      reaches: async (host) => reachable.includes(host),
+      reaches:
+        typeof reachable === "function" ? reachable : async (host) => reachable.includes(host),
       pair: async (input) => {
         pairs.push(input);
         return paired;
@@ -202,6 +287,42 @@ describe("connectLinkedEnvironment", () => {
     expect((await connect(credential, [tailnet, lan])).pairs[0]?.host).toBe(lan);
   });
 
+  it.each([
+    {
+      name: "redeems at an alternate after the preferred probe fails",
+      pairing: credential,
+      preferredReachable: false,
+      expected: {
+        outcome: { type: "connected" },
+        pairs: [{ host: tailnet, pairingCode: "ONE-TIME" }],
+      },
+    },
+    {
+      name: "prefills the preferred address even when an alternate answers first",
+      pairing: unsupported,
+      preferredReachable: true,
+      expected: { outcome: { type: "manual", label: "VM", host: lan }, pairs: [] },
+    },
+  ])("$name without waiting for a silent last address", async (row) => {
+    const last = "https://other.example.test";
+    const preferred = Promise.withResolvers<boolean>();
+    const silent = Promise.withResolvers<boolean>();
+    const connecting = connect({ ...row.pairing, urls: [lan, tailnet, last] }, (host) => {
+      if (host === lan) return preferred.promise;
+      if (host === last) return silent.promise;
+      queueMicrotask(() => preferred.resolve(row.preferredReachable));
+      return Promise.resolve(true);
+    });
+    try {
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Let the already runnable probe continuations finish while the last probe stays pending.
+      const pending = NodeTimersPromises.setImmediate("still waiting for an address");
+      expect(await Promise.race([connecting, pending])).toEqual(row.expected);
+    } finally {
+      silent.resolve(false);
+      preferred.resolve(false);
+    }
+  });
+
   it("says the machine is out of reach, and spends nothing, when no address answers", async () => {
     expect(await connect(credential, [])).toEqual({
       outcome: { type: "unreachable", label: "VM" },
@@ -210,11 +331,6 @@ describe("connectLinkedEnvironment", () => {
   });
 
   it("leaves pairing to the user when the link cannot do it, with an address filled in", async () => {
-    const unsupported: PeerLinkClientPairingResult = {
-      type: "unsupported",
-      reason: "link_access",
-      ...target,
-    };
     const manual = (host: string | null) => ({
       outcome: { type: "manual", label: "VM", host },
       pairs: [],

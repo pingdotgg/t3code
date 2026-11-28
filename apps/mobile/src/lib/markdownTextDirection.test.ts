@@ -30,6 +30,12 @@ describe("markdownWithTextDirection", () => {
     );
   });
 
+  it("marks a byte order mark paragraph whose Hebrew is written as character references", () => {
+    expect(markdownWithTextDirection("\uFEFFAPI &#x5D0; &#x5D1;")).toBe(
+      `\uFEFF${RLM}API &#x5D0; &#x5D1;`,
+    );
+  });
+
   it("skips code and keeps task list checkboxes intact", () => {
     const markdown = "```\nconst a = 'مرحبا';\n```\n\n- [ ] npm تشغيل الأوامر من المجلد الرئيسي";
     expect(markdownWithTextDirection(markdown)).toBe(

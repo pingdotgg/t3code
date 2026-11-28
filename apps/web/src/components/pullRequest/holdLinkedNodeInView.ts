@@ -37,3 +37,28 @@ export function holdLinkedNodeInView(
   }
   return stop;
 }
+
+/**
+ * Keeps the scroller at `scrollTop` while content loads in under it, until the user scrolls or the
+ * returned stop runs. A remounted tab can render before the content that reached that offset.
+ */
+export function holdScrollTop(
+  scroller: HTMLElement,
+  scrollTop: number,
+  onStop: () => void,
+): () => void {
+  const controller = new AbortController();
+  const stop = () => {
+    unobserve();
+    controller.abort();
+    onStop();
+  };
+  const unobserve = observeResize([...scroller.children], () => {
+    scroller.scrollTop = scrollTop;
+  });
+  for (const type of USER_SCROLL_INTENT) {
+    scroller.addEventListener(type, stop, { passive: true, signal: controller.signal });
+  }
+  scroller.scrollTop = scrollTop;
+  return stop;
+}

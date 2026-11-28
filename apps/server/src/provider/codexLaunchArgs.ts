@@ -1,4 +1,5 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
@@ -12,13 +13,19 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
-// T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
-export const codexAppServerArgs = (launchArgs?: string) => [
-  "app-server",
-  "-c",
-  "thread_unload_delay_secs=0",
-  ...codexLaunchArgv(launchArgs),
-];
+export const codexUsesStrictConfig = (launchArgs?: string) =>
+  codexLaunchArgv(launchArgs).includes("--strict-config");
+
+export const codexAppServerArgs = (launchArgs?: string, strictConfigVersion?: string | null) => {
+  const args = codexLaunchArgv(launchArgs);
+  // Strict config rejects this key before Codex 0.154. Leave unknown versions untouched.
+  const setUnloadDelay =
+    !args.includes("--strict-config") ||
+    (strictConfigVersion != null &&
+      parseSemver(strictConfigVersion) !== null &&
+      compareSemverVersions(strictConfigVersion, "0.154.0") >= 0);
+  return ["app-server", ...(setUnloadDelay ? ["-c", "thread_unload_delay_secs=0"] : []), ...args];
+};
 
 interface LaunchArgFilter {
   readonly switches: ReadonlySet<string>;

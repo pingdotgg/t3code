@@ -11,8 +11,12 @@ export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
 
 export function createNativeSourceStyle(
   codeSurface: ResolvedMobileCodeSurface,
+  fonts: { readonly code: string; readonly ui: string; readonly uiBold: string },
 ): NativeReviewDiffStyle {
   return {
+    codeFontFamily: fonts.code,
+    uiFontFamily: fonts.ui,
+    uiBoldFontFamily: fonts.uiBold,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_SOURCE_CONTENT_WIDTH,
     changeBarWidth: 0,

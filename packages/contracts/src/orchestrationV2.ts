@@ -8,6 +8,12 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  AgentFeedbackPreview,
+  AgentFeedbackRequestStatus,
+  AgentFeedbackTrace,
+} from "./agentFeedback.ts";
+import {
+  GitRefName,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -71,6 +77,7 @@ import {
 import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
+  ProviderApprovalPushHooks,
   ProviderApprovalOption,
   ProviderInteractionMode,
   ProviderRequestKind,
@@ -155,6 +162,18 @@ export const OrchestrationV2LinkedSender = Schema.Struct({
 });
 export type OrchestrationV2LinkedSender = typeof OrchestrationV2LinkedSender.Type;
 
+/**
+ * The workflow run a thread is an agent step of, with the step's name. `environmentId` is where
+ * the run lives, which is another environment for a step that runs through a link.
+ */
+export const OrchestrationV2WorkflowOrigin = Schema.Struct({
+  environmentId: EnvironmentId,
+  runId: TrimmedNonEmptyString,
+  workflow: TrimmedNonEmptyString,
+  step: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WorkflowOrigin = typeof OrchestrationV2WorkflowOrigin.Type;
+
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
@@ -172,12 +191,19 @@ export const OrchestrationV2AppThreadLineage = Schema.Struct({
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   rootThreadId: ThreadId,
   sideChat: Schema.optional(Schema.Boolean),
+  /** An agent step of a workflow run, which the thread's `workflowRun` names. */
+  workflowStep: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
 
-/** Subagents and side chats live inside their parent's view, never in thread lists. */
+/**
+ * Subagents and side chats live inside their parent's view, and a workflow run's agent steps
+ * inside the run's, never in thread lists.
+ */
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
-  lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+  lineage.relationshipToParent !== "subagent" &&
+  lineage.sideChat !== true &&
+  lineage.workflowStep !== true;
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -481,7 +507,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -492,6 +518,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -538,7 +565,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
     ),
   ),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
-  /** Set by a rename until a generated title replaces it; absent reads as false. */
+  /** Set by a rename or a naming launch until a generated title replaces it; absent reads false. */
   titleRenamed: Schema.optional(Schema.Boolean),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
@@ -730,6 +757,8 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
+  /** Reopened for a follow-up after a Stop; the tasks that Stop interrupted still need the Stop note. */
+  reopenedAfterStop: Schema.optionalKey(Schema.Literal(true)),
   nextGeneration: PositiveInt,
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
@@ -756,17 +785,17 @@ export type OrchestrationV2RunBackgroundWorkCancelled =
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(GitRefName),
   }),
   Schema.Struct({
     type: Schema.Literal("existing_worktree"),
     worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(GitRefName),
   }),
   Schema.Struct({
     type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
+    baseRef: GitRefName,
+    branch: Schema.optional(GitRefName),
     startFromOrigin: Schema.optional(Schema.Boolean),
     repositories: Schema.optional(
       Schema.Array(Schema.Struct({ path: TrimmedNonEmptyString }))
@@ -803,6 +832,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** The sender asked for a separate turn; it is not an ordering barrier for a later auto send. */
+  explicitQueue: Schema.optional(Schema.Literal(true)),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -871,6 +902,10 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** The thread's modes when this attempt's turn started. A later change reaches only the next turn. */
+  startedModes: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 
@@ -1089,6 +1124,13 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
       }),
     ).check(Schema.isMaxLength(32)),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * The slow step a provider is in while it starts a turn, such as `plugins`. A string, because
+   * clients already released reject a literal they do not know; they show the ones they do.
+   */
+  startupPhase: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  /** Set by a session that serves several threads: the one thread whose start the phase describes. */
+  startupPhaseThreadId: Schema.optionalKey(ThreadId),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
@@ -1192,6 +1234,8 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),
+  /** MCP app notes already in the Claude session's history: note key to a digest of its text. */
+  claudeDeliveredAppContext: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
@@ -1334,8 +1378,16 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
+  /** True when the provider dropped this turn's request before persisting it to native history. */
+  promptDropped: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
+
+export function isDeliveredProviderTurn(
+  turn: Pick<OrchestrationV2ProviderTurn, "promptDropped">,
+): boolean {
+  return turn.promptDropped !== true;
+}
 
 /** Codex goals can span multiple native turns within one attempt. */
 export function latestProviderTurnForAttempt<
@@ -1685,13 +1737,21 @@ const OrchestrationV2ProviderFailureMessage = TrimmedNonEmptyString.check(
 );
 const OrchestrationV2ProviderFailureCode = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
-/** Producers must redact credentials before construction. */
+export const GoogleAccountVerificationUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(4_096),
+  Schema.isPattern(
+    /^https:\/\/accounts\.google\.com\/(?:v3\/)?signin\/continue\?[^\s\p{Cc}\\#]+$/u,
+  ),
+);
+
+/** Producers must redact credentials from diagnostic text before construction. */
 export const OrchestrationV2ProviderFailure = Schema.Struct({
   class: OrchestrationV2ProviderFailureClass,
   message: OrchestrationV2ProviderFailureMessage,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  verificationUrl: Schema.optionalKey(GoogleAccountVerificationUrl),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
@@ -1756,7 +1816,7 @@ const OrchestrationV2TurnItemBaseFields = {
 } as const;
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
-  fileName: TrimmedNonEmptyString,
+  fileName: Schema.NonEmptyString,
   line: Schema.optional(PositiveInt),
   column: Schema.optional(PositiveInt),
   preview: Schema.optional(Schema.String),
@@ -1838,6 +1898,19 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/**
+ * A report the user asked the agent to send to the T3 team, shown for approval. Send stores and
+ * sends exactly `preview`, with `conversationTrace` as its trace if the user included the
+ * conversation. Once answered, the card keeps only what was sent.
+ */
+const OrchestrationV2FeedbackRequestFields = {
+  type: Schema.Literal("feedback_request"),
+  preview: AgentFeedbackPreview,
+  /** The preview's trace with message text, sent instead if the user includes the conversation. */
+  conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
+  feedbackStatus: AgentFeedbackRequestStatus,
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1867,6 +1940,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider sent this mid-turn, apart from the turn's answer. */
+    delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
@@ -1947,6 +2022,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -2041,6 +2117,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2344,7 +2424,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -2357,6 +2437,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2451,14 +2532,19 @@ export function isLiveSubagentShell(
 
 /**
  * A settled top-level thread settled before `beforeMs`. Shells that omit older settled threads
- * count every such thread, so the server and clients share this one rule.
+ * count every such thread, so the server and clients share this one rule. A task delegated from a
+ * linked environment never is: only the client knows whether it lists it under its parent.
  */
 export function isOlderSettledThreadShell(
-  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "settledOverride" | "settledAt">,
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "delegatedFrom" | "settledOverride" | "settledAt"
+  >,
   beforeMs: number,
 ): boolean {
   return (
     isListedThreadLineage(thread.lineage) &&
+    thread.delegatedFrom == null &&
     thread.settledOverride === "settled" &&
     thread.settledAt !== null &&
     DateTime.toEpochMillis(thread.settledAt) < beforeMs
@@ -2762,6 +2848,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider sent this mid-turn, apart from the turn's answer. */
+    delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -2841,6 +2929,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -2931,6 +3020,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3244,15 +3337,18 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
     title: TrimmedNonEmptyString,
+    titleRenamed: Schema.optional(Schema.Boolean),
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
-    branch: Schema.NullOr(TrimmedNonEmptyString),
+    branch: Schema.NullOr(GitRefName),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    /** Only the server sets this, for a thread that is a workflow run's agent step. */
+    workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3401,10 +3497,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
     regenerateTitle: Schema.optional(Schema.Boolean),
-    branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    branch: Schema.optional(Schema.NullOr(GitRefName)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-    expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedBranch: Schema.optional(Schema.NullOr(GitRefName)),
     /** A message queued in the same commit, so a workspace change cannot settle the thread first. */
     continuation: Schema.optional(Schema.Struct({ messageId: MessageId, text: Schema.String })),
     /** Reject unless no message or run has landed on this thread. */
@@ -3479,7 +3575,7 @@ export const OrchestrationV2Command = Schema.Union([
     snapshotSequence: NonNegativeInt,
     expected: Schema.Struct({
       workspaceRoot: TrimmedNonEmptyString,
-      branch: Schema.NullOr(TrimmedNonEmptyString),
+      branch: Schema.NullOr(GitRefName),
       worktreePath: Schema.NullOr(TrimmedNonEmptyString),
       linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
       branchPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
@@ -3550,6 +3646,7 @@ export const OrchestrationV2Command = Schema.Union([
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+    explicitQueue: Schema.optional(Schema.Literal(true)),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,
@@ -3648,6 +3745,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),
+    modelSelection: Schema.optional(ModelSelection),
     context: Schema.optional(OrchestrationMessageContext),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3961,6 +4059,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     fields: Schema.optional(Schema.Array(OrchestrationV2SecretRequestField)),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
+  /** Internal so no client can mark a report sent without it being stored and sent. */
+  Schema.Struct({
+    type: Schema.Literal("feedback_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    preview: AgentFeedbackPreview,
+    conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
+    feedbackStatus: AgentFeedbackRequestStatus,
+  }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no
    * client can mark a request linked without the link being made.
@@ -4178,10 +4288,10 @@ export type OrchestrationV2GetWorktreeThreadIdsInput =
   typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
 
 /**
- * The client's thread search. With `olderSettledBefore`, the result also carries the rows of the
- * best matching threads settled before it, which shells that omit older settled threads leave out:
- * title, branch, pull request and project matches (in `projectIds` when given), then message hits.
- * Send the extra keys only to servers that advertise `shellOlderSettled`.
+ * The client's thread search, limited to `projectIds` when given (older servers ignore it). With
+ * `olderSettledBefore`, the result also carries the rows of the best matching threads settled
+ * before it, which shells that omit older settled threads leave out. Send that and the other extra
+ * keys only to servers that advertise `shellOlderSettled`.
  */
 export const OrchestrationV2SearchThreadsInput = Schema.Struct({
   ...OrchestrationSearchThreadsInput.fields,

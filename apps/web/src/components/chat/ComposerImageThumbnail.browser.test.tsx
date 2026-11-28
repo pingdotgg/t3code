@@ -13,7 +13,12 @@ it("keeps a native preview available after thumbnail generation has failed", asy
   using _bitmap = vi
     .spyOn(window, "createImageBitmap")
     .mockRejectedValue(new Error("Thumbnail decoder unavailable"));
-  expect(await createComposerImageThumbnail(file)).toBeNull();
+  vi.stubGlobal("Worker", undefined);
+  try {
+    expect(await createComposerImageThumbnail(file)).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 
   const container = document.createElement("div");
   const holdLoad = (event: Event) => event.stopPropagation();

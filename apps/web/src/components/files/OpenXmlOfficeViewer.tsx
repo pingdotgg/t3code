@@ -1,7 +1,8 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { msg, T, useGT } from "gt-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 import {
   FileSurfaceLoading,
@@ -45,8 +46,10 @@ export default function OfficeViewer(props: {
   readonly sizeBytes?: number;
 }) {
   const gt = useGT();
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>();
+  const submitPassword = useRef<((password: string) => void) | null>(null);
   const [details, setDetails] = useState("");
   const fail = useStableCallback((cause: unknown) =>
     setError(previewErrorText(cause, m(msg("Could not render this Office document.")))),
@@ -68,13 +71,19 @@ export default function OfficeViewer(props: {
       controller.abort();
       worker.terminate();
     };
-    const timer = setTimeout(
-      () =>
-        failure(
-          new Error(m(msg("This document took too long to preview. Open it in another app."))),
-        ),
-      30000,
-    );
+    const startTimeout = () =>
+      setTimeout(
+        () =>
+          failure(
+            new Error(m(msg("This document took too long to preview. Open it in another app."))),
+          ),
+        30_000,
+      );
+    let timer = startTimeout();
+    submitPassword.current = (password) => {
+      timer = startTimeout();
+      worker.postMessage({ type: "unlock", password }, []);
+    };
     worker.addEventListener("error", () =>
       failure(new Error(m(msg("Could not load the Office viewer.")))),
     );
@@ -84,7 +93,8 @@ export default function OfficeViewer(props: {
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
       clearTimeout(timer);
-      if (event.data.type === "error") failure(new Error(previewFailureText(event.data)));
+      if (event.data.type === "password") setIncorrectPassword(event.data.incorrect);
+      else if (event.data.type === "error") failure(new Error(previewFailureText(event.data)));
       else if ("bytes" in event.data) {
         setPrepared(event.data);
         worker.terminate();
@@ -97,6 +107,7 @@ export default function OfficeViewer(props: {
       })
       .catch(failure);
     return () => {
+      submitPassword.current = null;
       controller.abort();
       worker.terminate();
       clearTimeout(timer);
@@ -115,6 +126,16 @@ export default function OfficeViewer(props: {
           {gt("{error} Save it or open it in another app.", { error })}
         </p>
       </div>
+    );
+  if (incorrectPassword !== null)
+    return (
+      <FilePasswordPrompt
+        incorrect={incorrectPassword}
+        onSubmit={(password) => {
+          setIncorrectPassword(null);
+          submitPassword.current?.(password);
+        }}
+      />
     );
   if (!prepared) return <FileSurfaceLoading />;
   const Viewer = props.kind === "docx" ? WordDocument : Presentation;

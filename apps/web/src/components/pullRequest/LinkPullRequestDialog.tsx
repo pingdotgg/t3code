@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-link-input";
 import { useAtomValue } from "@effect/atom-react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 
@@ -67,7 +67,9 @@ function LinkPullRequestDialog({
   onOpenChange,
 }: LinkPullRequestDialogProps) {
   const gt = useGT();
+  const resolveMessage = useMessages();
   const inputRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
   const [reference, setReference] = useState("");
   const [dirty, setDirty] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -90,20 +92,26 @@ function LinkPullRequestDialog({
     }
   }
 
-  const resolved = resolveLinkPullRequestInput({
-    reference,
-    project: ownProject,
-    hasProject: (reference) => linking.canLink(reference.url),
-  });
+  const resolved = resolveLinkPullRequestInput(
+    {
+      reference,
+      project: ownProject,
+      hasProject: (reference) => linking.canLink(reference.url),
+    },
+    resolveMessage,
+  );
 
   const submit = async () => {
+    if (submittingRef.current) return;
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
+    submittingRef.current = true;
     setSubmitError(null);
     setPending(true);
     const result = await settlePromise(() =>
       linking.changeLink(threadRef, resolved.link.url, true),
     );
+    submittingRef.current = false;
     setPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
@@ -142,12 +150,20 @@ function LinkPullRequestDialog({
             ref={inputRef}
             placeholder={gt("Pull request URL or #42")}
             value={reference}
+            readOnly={pending}
             onChange={(event) => {
               setDirty(true);
               setReference(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
+              if (
+                event.key !== "Enter" ||
+                event.repeat ||
+                event.nativeEvent.isComposing ||
+                event.keyCode === 229
+              ) {
+                return;
+              }
               event.preventDefault();
               void submit();
             }}

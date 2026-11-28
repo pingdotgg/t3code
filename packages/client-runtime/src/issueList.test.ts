@@ -144,6 +144,35 @@ describe("issueFilterScopes", () => {
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
   });
 
+  it("offers the same team key of two Linear accounts as two scopes", () => {
+    const first = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const second = hold(
+      answer({
+        trackers: [tracker({})],
+        scopes: [first, { ...first, projectId: "home" as ProjectId }],
+      }),
+    );
+    const other = hold(
+      answer({ trackers: [tracker({})], scopes: [{ ...first, projectId: "o" as ProjectId }] }),
+    );
+    // Older servers name no scopes; their rows stand in, once per team on that server.
+    const older = hold(
+      answer({ trackers: [tracker({})], entries: [linearRow, { ...linearRow, key: "ENG-2" }] }),
+    );
+    const count = (...pages: ReadonlyArray<ReturnType<typeof hold>>) =>
+      issueFilterScopes(
+        new Map(pages.map((page, index) => [`env-${index}` as EnvironmentId, page])),
+        [],
+      ).length;
+    expect([count(second), count(second, other), count(other, second)]).toEqual([2, 3, 3]);
+    expect([count(older), count(older, second), count(second, older)]).toEqual([1, 3, 3]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [

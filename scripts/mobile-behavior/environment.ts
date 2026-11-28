@@ -25,7 +25,9 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
@@ -120,14 +122,34 @@ function writeScratch(baseDir: string) {
   return { workspace, control };
 }
 
+/** Extras a caller layers on the scratch workspace, such as mobile:metrics' fake GitHub. */
+export interface EnvironmentOptions {
+  /** Runs on the committed scratch repository before the server starts. */
+  readonly prepareWorkspace?: (
+    workspace: string,
+  ) => Effect.Effect<void, { readonly message: string }>;
+  readonly serverEnv?: Readonly<Record<string, string>>;
+}
+
 /** Starts the server in the caller's scope; the scope's end stops it. */
-export const startEnvironment = Effect.fn("environment.start")(function* (input: {
-  readonly baseDir: string;
-  /** Origin the device uses to reach this machine, without a port. */
-  readonly deviceHost: string;
-}) {
+export const startEnvironment = Effect.fn("environment.start")(function* (
+  input: {
+    readonly baseDir: string;
+    /** Origin the device uses to reach this machine, without a port. */
+    readonly deviceHost: string;
+  } & EnvironmentOptions,
+) {
   NodeFS.rmSync(input.baseDir, { recursive: true, force: true });
   const { workspace, control } = writeScratch(input.baseDir);
+  if (input.prepareWorkspace)
+    yield* input
+      .prepareWorkspace(workspace)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentError({ message: `Preparing the workspace failed: ${cause.message}` }),
+        ),
+      );
   const home = NodePath.join(input.baseDir, "home");
   NodeFS.mkdirSync(home, { recursive: true });
   const port = yield* freePort();
@@ -151,7 +173,11 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
           workspace,
         ],
         // A scratch HOME keeps the user's own skills and config out of the app under test.
-        { cwd: REPO_ROOT, stdio: ["ignore", log, log], env: { ...process.env, HOME: home } },
+        {
+          cwd: REPO_ROOT,
+          stdio: ["ignore", log, log],
+          env: { ...process.env, ...input.serverEnv, HOME: home },
+        },
       ),
     ),
     (child) => Effect.sync(() => child.kill("SIGTERM")),
@@ -302,6 +328,25 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
     return yield* new EnvironmentError({ message: `Thread ${threadId} never settled.` });
   });
 
+  /** Whether a message with `text` is persisted in the thread; false when none lands in 30 seconds. */
+  const delivered = Effect.fn("environment.delivered")(function* (
+    threadId: ThreadId,
+    text: string,
+  ) {
+    const head = yield* client["orchestration.subscribeThread"]({ threadId }).pipe(
+      Stream.filter((item) =>
+        item.kind === "snapshot"
+          ? item.projection.messages.some((message) => message.text === text)
+          : item.kind === "event" &&
+            item.event.type === "message.updated" &&
+            item.event.payload.text === text,
+      ),
+      Stream.runHead,
+      Effect.timeoutOption("30 seconds"),
+    );
+    return Option.isSome(Option.flatten(head));
+  });
+
   /** A settled thread of `turns` request and reply pairs, for scroll and jank cases. */
   const longThread = Effect.fn("environment.longThread")(function* (title: string, turns: number) {
     const threadId = yield* launch(title, "Summarize the module. [[eval:stream:400:0]]");
@@ -361,6 +406,7 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
       for (const thread of threads)
         if ((yield* projection(thread.id)).runs.length) yield* settled(thread.id);
     }),
+    delivered,
     waitForPendingInput: (threadId: ThreadId) =>
       until("a pending question", threadId, (value) =>
         value.runtimeRequests.find((request) => request.status === "pending"),
@@ -385,6 +431,25 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
         ),
         Effect.asVoid,
       ),
+    /** A side chat forked from `source`'s latest settled point, as the app's own command does. */
+    forkSideChat: Effect.fn("environment.forkSideChat")(function* (
+      source: ThreadId,
+      title: string,
+    ) {
+      const targetThreadId = ThreadId.make(yield* uuid);
+      yield* client["orchestration.dispatchCommand"]({
+        type: "thread.fork",
+        commandId: yield* command,
+        createdBy: "user",
+        creationSource: "server",
+        sourceThreadId: source,
+        targetThreadId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        title,
+      });
+      return targetThreadId;
+    }),
     projection,
     launch,
     send,

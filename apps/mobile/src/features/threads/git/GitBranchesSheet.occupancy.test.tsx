@@ -8,7 +8,10 @@ const checkout = vi.hoisted(() => ({
   branches: [] as Array<{ name: string; worktreePath: string | null }>,
 }));
 
-vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
+vi.mock("@react-navigation/native", () => ({
+  useFocusEffect: () => {},
+  useNavigation: () => ({}),
+}));
 vi.mock("../../../components/ui/SheetHeader", () => ({ SheetHeader: () => null }));
 vi.mock("../../../components/ui/FitSheet", () => ({
   FitSheet: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -44,9 +47,11 @@ vi.mock("../../../state/use-thread-detail", () => ({
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
     selectedThreadBranches: checkout.branches,
-    selectedThreadBranchesLoading: false,
     gitOperationLabel: null,
   }),
+}));
+vi.mock("../../../state/queries", () => ({
+  usePaginatedBranches: () => ({ data: null, refs: [], isPending: false }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({ canChangeThreadBranch: true }),

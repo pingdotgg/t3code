@@ -1009,16 +1009,16 @@ describe("AcpRegistryAdapterV2", () => {
             })),
             [
               { models: ["hermes", "auto", "default"], current: "default" },
-              { models: ["hermes", "auto", "default"], current: "hermes" },
-              { models: ["hermes", "auto", "default"], current: null },
-              { models: ["hermes", "auto", "default"], current: "auto" },
-              { models: ["hermes", "auto", "default"], current: "default" },
+              { models: [], current: "hermes" },
+              { models: [], current: null },
+              { models: [], current: "auto" },
+              { models: [], current: "default" },
               { models: ["auto"], current: null },
-              { models: ["auto"], current: null },
+              { models: [], current: null },
               { models: ["default"], current: null },
-              { models: ["default"], current: null },
+              { models: [], current: null },
               { models: ["hermes", "auto", "default"], current: "default" },
-              { models: ["hermes", "auto", "default"], current: "hermes" },
+              { models: [], current: "hermes" },
             ],
           );
         }).pipe(Effect.provide(layerTest)),
@@ -1617,6 +1617,27 @@ describe("AcpRegistryAdapterV2", () => {
         new: stdio("Bearer opened-token"),
         load: stdio("Bearer rotated-token"),
       });
+      // Local agy / antigravity commands defer optional tools through tool_call, as the Antigravity provider does.
+      const agyStdio = stdio("Bearer opened-token");
+      const expectedAgyStdio = [
+        {
+          ...agyStdio[0],
+          env: [...agyStdio[0]!.env, { name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred-proxy" }],
+        },
+      ];
+      assert.deepEqual(
+        (yield* sessionMcpServers({ source: "local", commandPath: "agy", commandArgs: ["acp"] }))
+          .new,
+        expectedAgyStdio,
+      );
+      assert.deepEqual(
+        (yield* sessionMcpServers({
+          source: "local",
+          commandPath: "antigravity",
+          commandArgs: ["acp"],
+        })).new,
+        expectedAgyStdio,
+      );
       // Command Code cannot start the stdio bridge on Windows: it spawns MCP commands through
       // cmd.exe, which splits the unquoted T3 executable path at the space.
       const commandCode = {

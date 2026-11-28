@@ -110,7 +110,7 @@ export const OrchestratorMcpTarget = Schema.Struct({
   options: Schema.optional(
     OrchestratorMcpTargetOptions.annotate({
       description:
-        "Options from `orchestrator_capabilities`, such as {effort:'max'}. Given values override inherited. [] or {} clears.",
+        "Ids vary by provider; see `orchestrator_capabilities`. Given values override inherited. [] or {} clears.",
     }),
   ),
   environmentId: Schema.optional(
@@ -668,6 +668,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       /** Omitted when it only restates the id. */
       label: Schema.optional(Schema.String),
       options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
+      /** Set only on the user's favorite models. */
+      favorite: Schema.optional(Schema.Literal(true)),
     }),
   ),
   /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
@@ -965,6 +967,7 @@ export type OrchestratorMcpEnvironmentUnlinkInput =
 export const OrchestratorMcpEnvironmentUnlinkResult = Schema.Struct({
   environmentId: EnvironmentId,
   removed: Schema.Boolean,
+  endedThere: Schema.Boolean,
 });
 export type OrchestratorMcpEnvironmentUnlinkResult =
   typeof OrchestratorMcpEnvironmentUnlinkResult.Type;

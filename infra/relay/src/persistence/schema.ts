@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
@@ -198,5 +199,23 @@ export const relayDpopProofs = pgTable(
     // No index on expires_at: pruning a few minutes of proofs is cheaper as a scan than
     // maintaining a second index on every request's insert.
     primaryKey({ columns: [table.thumbprint, table.jti] }),
+  ],
+);
+
+// Clerk account deletions: pending until a pass succeeds after every relay token issued before
+// the request has expired, then kept as the record of what was deleted and when. Re-run after a
+// backup restore by clearing completed_at.
+export const relayAccountDeletions = pgTable(
+  "relay_account_deletions",
+  {
+    userId: varchar("user_id", { length: 255 }).primaryKey(),
+    requestedAt: varchar("requested_at", { length: 64 }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    completedAt: varchar("completed_at", { length: 64 }),
+  },
+  (table) => [
+    index("idx_relay_account_deletions_pending")
+      .on(table.attempts, table.requestedAt)
+      .where(sql`${table.completedAt} is null`),
   ],
 );

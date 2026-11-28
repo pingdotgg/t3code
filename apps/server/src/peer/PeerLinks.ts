@@ -116,8 +116,10 @@ export class PeerLinks extends Context.Service<
     readonly get: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
-    /** Forgets the link here. The peer still lists the session until it is revoked there. */
-    readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
+    /** Forgets the link here, then asks the peer to end the link's session. */
+    readonly unlink: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<{ readonly removed: boolean; readonly endedThere: boolean }, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
     readonly resolve: (
       environmentId: EnvironmentId,
@@ -665,16 +667,63 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Best effort: a peer that is gone or too old to revoke lets its session expire instead. */
+  const revokeAtPeer = Effect.fn("PeerLinks.revokeAtPeer")(
+    function* (environmentId: EnvironmentId, urlsJson: string, token: string) {
+      const urls = yield* decodeUrls(urlsJson);
+      // A race over no addresses never settles.
+      if (urls.length === 0) return false;
+      yield* Effect.raceAll(
+        urls.map((url) =>
+          // An address can change hands after linking; only the linked peer may see the token.
+          answersAs(url, environmentId).pipe(
+            Effect.flatMap(Effect.fromOption),
+            Effect.andThen(clientFor(url)),
+            Effect.flatMap((client) =>
+              client.mcpOAuth
+                .revoke({ payload: { token: Redacted.make(token) } })
+                .pipe(Effect.timeout(probeTimeout(url))),
+            ),
+          ),
+        ),
+      );
+      return true;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logDebug("The unlinked peer did not revoke the link's session", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+
   const unlink: PeerLinks["Service"]["unlink"] = Effect.fn("PeerLinks.unlink")(
     function* (environmentId) {
-      const deleted = yield* sql<{ secret_name: string }>`
+      const deleted = yield* sql<{ secret_name: string; urls_json: string }>`
         DELETE FROM peer_environment_links WHERE environment_id = ${environmentId}
-        RETURNING secret_name
+        RETURNING secret_name, urls_json
       `.pipe(Effect.catch(failStorage));
+      let endedThere = false;
       for (const row of deleted) {
+        // Unreadable only skips the revocation; the secret is still removed below.
+        const token = yield* secrets
+          .get(row.secret_name)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not read the unlinked peer's token", { cause }).pipe(
+                Effect.as(Option.none()),
+              ),
+            ),
+          );
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
+        if (Option.isSome(token)) {
+          endedThere = yield* revokeAtPeer(
+            environmentId,
+            row.urls_json,
+            new TextDecoder().decode(token.value),
+          );
+        }
       }
-      return deleted.length > 0;
+      return { removed: deleted.length > 0, endedThere };
     },
   );
 

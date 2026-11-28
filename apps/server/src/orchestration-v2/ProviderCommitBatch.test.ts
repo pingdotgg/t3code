@@ -417,7 +417,7 @@ it.effect.each([false, true])(
 );
 
 it.effect.each(["none", "writer", "snapshots"] as const)(
-  "runs another stream's control during a busy commit; splits slow backlogs for a write waiting on %s",
+  "runs another stream's control during a busy commit; splits slow backlogs only for a write waiting on the writer (%s)",
   (waitingOn) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -468,11 +468,61 @@ it.effect.each(["none", "writer", "snapshots"] as const)(
       yield* Fiber.join(write);
       assert.deepEqual(
         yield* Queue.takeAll(recorder.output),
-        waitingOn === "none"
+        // A write still waiting on its own thread's snapshots gains nothing from a shorter batch.
+        waitingOn !== "writer"
           ? [[event(-1)], backlog]
           : [[event(-1)], ...backlog.map((raw) => [raw])],
       );
     }),
+);
+
+it.effect("splits a slow batch once a waiting write's own snapshot has run", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let first = true;
+    const recorder = yield* recordBatches(
+      Effect.gen(function* () {
+        if (!first) return;
+        first = false;
+        yield* Deferred.succeed(started, undefined);
+        yield* Deferred.await(release);
+      }),
+    );
+    const leading = yield* recorder
+      .consume(Stream.make(event(-1)), recorder.process, Effect.succeed(false))
+      .pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Deferred.await(started);
+    const own = snapshot("a", "a", "thread-a");
+    const others = [0, 1, 2, 3].map((index) => snapshot(`b${index}`, "b", "thread-b"));
+    const pulled = yield* Deferred.make<void>();
+    const slow = yield* recorder
+      .consume(
+        Stream.fromArray([own, ...others]).pipe(
+          Stream.tap((raw) =>
+            raw === others.at(-1) ? Deferred.succeed(pulled, undefined) : Effect.void,
+          ),
+        ),
+        (raw) => recorder.process(raw).pipe(Effect.andThen(TestClock.adjust("100 millis"))),
+        Effect.succeed(false),
+      )
+      .pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Deferred.await(pulled);
+    yield* TestClock.adjust(0);
+    const write = yield* recorder
+      .barrier(Queue.offer(recorder.output, [control]), ["thread-a"])
+      .pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(leading);
+    yield* Fiber.join(write);
+    yield* Fiber.join(slow);
+    assert.deepEqual(yield* Queue.takeAll(recorder.output), [
+      [event(-1)],
+      [own],
+      [control],
+      others,
+    ]);
+  }),
 );
 
 const blockFirstCommit = Effect.gen(function* () {

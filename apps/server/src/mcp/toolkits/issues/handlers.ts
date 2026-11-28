@@ -220,6 +220,7 @@ const make = Effect.gen(function* () {
             author: comment.author?.login ?? null,
             body: comment.body,
             createdAt: comment.createdAt,
+            ...(comment.internal === true ? { internal: true } : {}),
           })),
           commentsTruncated: detail.commentsCursor !== null,
           linkedPullRequests: detail.linkedPullRequests.map((pullRequest) => ({
@@ -252,7 +253,7 @@ const make = Effect.gen(function* () {
     comment_on_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        yield* issues.comment({ ...refOf(target), body: input.body });
+        yield* issues.comment({ ...refOf(target), body: input.body, audience: input.audience });
         return identityOf(target);
       }),
     ),
@@ -269,20 +270,20 @@ const make = Effect.gen(function* () {
     link_issue: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(input.threadId);
-        const target = yield* resolveTarget({
+        const target: ResolvedTarget = yield* resolveTarget({
           ...input,
           projectId: input.projectId ?? thread.projectId,
         });
         // Reading the issue proves it exists and names it for the thread's row.
-        const detail = yield* readIssue(target);
-        const url = target.url ?? detail.url;
+        const issue = target.issue ?? (yield* issues.linkMetadata(refOf(target)));
+        const url = target.url ?? issue.url;
         const { alreadyLinked } = yield* threadIssues
           .link({
             threadId: thread.id,
             ref: refOf(target),
             url,
-            displayKey: detail.displayKey,
-            title: detail.title,
+            displayKey: issue.displayKey,
+            title: issue.title,
             source: "agent",
           })
           .pipe(Effect.catchCause(linkFailure));

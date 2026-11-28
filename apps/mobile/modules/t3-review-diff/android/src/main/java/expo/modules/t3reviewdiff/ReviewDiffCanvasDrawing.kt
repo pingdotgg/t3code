@@ -1,6 +1,7 @@
 package expo.modules.t3reviewdiff
 
 import android.content.Context
+import android.content.res.AssetManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -10,6 +11,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
+import com.facebook.react.common.assets.ReactFontManager
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -31,16 +33,23 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     clearShadowLayer()
   }
 
-  private val italicCodeTypeface by lazy {
-    Typeface.create(ReviewDiffTypefaces.regular, Typeface.ITALIC)
-  }
-  private val boldItalicCodeTypeface by lazy {
-    Typeface.create(ReviewDiffTypefaces.bold, Typeface.ITALIC)
-  }
+  private val assets = context.assets
+  private var typefaces = ReviewDiffTypefaces(assets, "monospace", "sans-serif", "sans-serif")
 
   init {
-    textPaint.typeface = ReviewDiffTypefaces.regular
-    uiPaint.typeface = Typeface.DEFAULT_BOLD
+    textPaint.typeface = typefaces.regular
+    uiPaint.typeface = typefaces.uiBold
+  }
+
+  fun applyFonts(style: DiffStyle) {
+    if (typefaces.matches(style)) return
+    typefaces = ReviewDiffTypefaces(
+      assets,
+      style.codeFontFamily,
+      style.uiFontFamily,
+      style.uiBoldFontFamily,
+    )
+    textPaint.typeface = typefaces.regular
   }
 
   fun fileHeaderChevronRect(top: Int, bottom: Int, style: DiffStyle): RectF {
@@ -68,6 +77,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       right,
       centerY + 10f * density,
     )
+  }
+
+  fun fileHeaderCheckboxHitRect(top: Int, bottom: Int, width: Int, style: DiffStyle): RectF {
+    val checkbox = fileHeaderCheckboxRect(top, bottom, width, style)
+    return RectF(checkbox.left - 14f * density, top.toFloat(), width.toFloat(), bottom.toFloat())
   }
 
   fun drawDisclosureChevron(
@@ -157,23 +171,24 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   }
 
   fun configureUiPaint(paint: Paint, color: Int, size: Float, weight: String) {
-    paint.typeface = if (isBoldFontWeight(weight)) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    paint.typeface = if (isBoldFontWeight(weight)) typefaces.uiBold else typefaces.ui
     configureTextPaint(paint, color, size)
   }
 
   fun configureMonospacePaint(color: Int, size: Float, weight: String) {
-    textPaint.typeface = ReviewDiffTypefaces.forWeight(weight)
+    textPaint.typeface = typefaces.forWeight(weight)
     configureTextPaint(textPaint, color, size)
   }
 
   fun configureCodePaint(color: Int, fontStyle: Int, style: DiffStyle) {
     val tokenBold = fontStyle and 2 != 0
     val italic = fontStyle and 1 != 0
+    applyFonts(style)
     textPaint.typeface = when {
-      tokenBold && italic -> boldItalicCodeTypeface
-      tokenBold -> ReviewDiffTypefaces.bold
-      italic -> italicCodeTypeface
-      else -> ReviewDiffTypefaces.forWeight(style.codeFontWeight)
+      tokenBold && italic -> typefaces.boldItalic
+      tokenBold -> typefaces.bold
+      italic -> typefaces.italic
+      else -> typefaces.forWeight(style.codeFontWeight)
     }
     configureTextPaint(textPaint, color, style.codeFontSizePx)
     textPaint.isUnderlineText = fontStyle and 4 != 0
@@ -592,10 +607,27 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 }
 
-private object ReviewDiffTypefaces {
-  val regular: Typeface = Typeface.create("monospace", Typeface.NORMAL)
-  private val medium: Typeface = Typeface.create("monospace-medium", Typeface.NORMAL)
-  val bold: Typeface = Typeface.create("monospace", Typeface.BOLD)
+/** Family names come from React Native; `monospace` and `sans-serif` select the platform fonts. */
+private class ReviewDiffTypefaces(
+  assets: AssetManager,
+  private val codeFamily: String,
+  private val uiFamily: String,
+  private val uiBoldFamily: String
+) {
+  private val fonts = ReactFontManager.getInstance()
+  val regular: Typeface = fonts.getTypeface(codeFamily, Typeface.NORMAL, assets)
+  private val medium: Typeface =
+    if (codeFamily == "monospace") Typeface.create("monospace-medium", Typeface.NORMAL) else regular
+  val bold: Typeface = fonts.getTypeface(codeFamily, Typeface.BOLD, assets)
+  val italic: Typeface = fonts.getTypeface(codeFamily, Typeface.ITALIC, assets)
+  val boldItalic: Typeface = fonts.getTypeface(codeFamily, Typeface.BOLD_ITALIC, assets)
+  val ui: Typeface = fonts.getTypeface(uiFamily, Typeface.NORMAL, assets)
+  val uiBold: Typeface = fonts.getTypeface(uiBoldFamily, Typeface.BOLD, assets)
+
+  fun matches(style: DiffStyle): Boolean =
+    style.codeFontFamily == codeFamily &&
+      style.uiFontFamily == uiFamily &&
+      style.uiBoldFontFamily == uiBoldFamily
 
   fun forWeight(weight: String): Typeface = when (weight.lowercase()) {
     "medium", "semibold", "semi-bold" -> medium

@@ -21,7 +21,11 @@ import {
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
 import { use, useCallback, useRef, useState, type ComponentProps } from "react";
-import { WorkspaceSlotOptionsContext, slotScreenOptions } from "./v5-workspace-context";
+import {
+  NativeWorkspaceTabActivityContext,
+  WorkspaceSlotOptionsContext,
+  slotScreenOptions,
+} from "./v5-workspace-context";
 import { StyleSheet, View } from "react-native";
 import { Stack } from "react-native-screens";
 import { NativeScrollEdgeEffectsContext } from "./NativeScrollViewMarker";
@@ -62,6 +66,9 @@ export function V5CardStackView(
   const { preventedRoutes } = usePreventRemoveContext();
   // Options a screen set inside this workspace tab slot, over its route's.
   const slot = use(WorkspaceSlotOptionsContext);
+  const tabActivity = use(NativeWorkspaceTabActivityContext);
+  const isActiveTabSlot = () =>
+    tabActivity === null || (tabActivity.isActive() && !tabActivity.headerOnly);
   const nativePopSource = useRef<string | null>(null);
   // Back reveals the card beneath; a full-screen presentation covers the card without revealing one.
   const cardRevealed = useRef(false);
@@ -178,7 +185,7 @@ export function V5CardStackView(
               }}
               onWillAppear={() => {
                 cardRevealed.current = true;
-                if (index === 0) props.onRootVisibilityChange?.(true);
+                if (isActiveTabSlot()) props.onRootVisibilityChange?.(index === 0);
                 props.navigation.emit({
                   type: "transitionStart",
                   target: route.key,
@@ -186,6 +193,7 @@ export function V5CardStackView(
                 });
               }}
               onDidAppear={() => {
+                if (index > 0 && isActiveTabSlot()) props.onRootVisibilityChange?.(false);
                 const source = nativePopSource.current;
                 if (source === route.key) {
                   setNativePopSource(null);
@@ -216,10 +224,14 @@ export function V5CardStackView(
                 });
               }}
               onWillDisappear={() => {
-                if (index === 0) props.onRootVisibilityChange?.(false);
+                if (index === 0 && isActiveTabSlot()) props.onRootVisibilityChange?.(false);
                 const state = props.navigation.getState();
                 // Only native Back leaves the disappearing card active; JS navigation already changed history.
-                if (state.index > 0 && state.routes[state.index]?.key === route.key) {
+                if (
+                  isActiveTabSlot() &&
+                  state.index > 0 &&
+                  state.routes[state.index]?.key === route.key
+                ) {
                   cardRevealed.current = false;
                   setNativePopSource(route.key);
                 }

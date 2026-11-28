@@ -108,4 +108,16 @@ describe("unsentManualContinuationSource", () => {
       unsentManualContinuationSource(run("c", "a" as RunId), projection([a, b], [], [])),
     ).toBeUndefined();
   });
+
+  it("treats a turn with promptDropped as unsent", () => {
+    const source = run("src");
+    const a1 = attempt("a1", "src", 1);
+    const dropped = { ...turn("a1"), promptDropped: true as const };
+    expect(
+      unsentManualContinuationSource(
+        run("r2", "src" as RunId),
+        projection([source], [a1], [dropped]),
+      ),
+    ).toBe(source);
+  });
 });

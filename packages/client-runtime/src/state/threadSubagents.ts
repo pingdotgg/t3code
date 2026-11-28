@@ -111,7 +111,13 @@ export function resolveSubagentPillSegment(
     return {
       label: `${turn.liveCount}/${total}`,
       accessibilityLabel: resolve(
-        msg("{live} of {total} agents working", { live: turn.liveCount, total }),
+        msg(
+          "{total, plural, one {{live} of {total} agent working} other {{live} of {total} agents working}}",
+          {
+            live: turn.liveCount,
+            total,
+          },
+        ),
       ),
     };
   }

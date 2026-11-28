@@ -199,6 +199,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly checkHost?: (prepared: PreparedConnection) => Effect.Effect<ConnectionDriver.RouteCheck>;
   readonly preflight?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RoutePreflight>;
   readonly inboundFrames?: Effect.Effect<number>;
+  readonly awaitingReply?: (attempt: number) => Effect.Effect<boolean>;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -261,6 +262,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         inboundFrames: options?.inboundFrames ?? Effect.succeed(0),
+        awaitingReply: options?.awaitingReply?.(attempt) ?? Effect.succeed(false),
         closed: Deferred.await(closed),
       } satisfies RpcSession.RpcSession),
       () =>
@@ -1306,6 +1308,7 @@ describe("EnvironmentSupervisor", () => {
   const makeSilentSocketHarness = (options?: {
     readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
     readonly checkHost?: (check: number) => ConnectionDriver.RouteCheck;
+    readonly awaitingReply?: (attempt: number) => boolean;
   }) =>
     Effect.gen(function* () {
       const hostChecks = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -1313,6 +1316,9 @@ describe("EnvironmentSupervisor", () => {
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
         probe: options?.probe ?? ((attempt) => (attempt === 1 ? Effect.never : Effect.void)),
+        // The first socket is the silent one, so what was sent on it stays unanswered.
+        awaitingReply: (attempt) =>
+          Effect.succeed(options?.awaitingReply?.(attempt) ?? attempt === 1),
         checkHost: (prepared) =>
           Ref.updateAndGet(hostChecks, (checks) => [...checks, prepared.target._tag]).pipe(
             Effect.map((checks) => options?.checkHost?.(checks.length) ?? "answered"),
@@ -1364,6 +1370,45 @@ describe("EnvironmentSupervisor", () => {
       );
       expect(yield* Ref.get(harness.hostChecks)).toEqual(["RelayConnectionTarget"]);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  // A socket stalls in the foreground (no wakeup, retry or network
+  // change) while its host keeps answering fresh requests.
+  it.effect(
+    "replaces a tailnet socket that goes silent while connected, before the ping timeout",
+    () =>
+      Effect.gen(function* () {
+        const tailnetTarget = new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "bearer:tailnet",
+        });
+        const entry: ConnectionCatalogEntry = {
+          target: tailnetTarget,
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: tailnetTarget.connectionId,
+              environmentId: TARGET.environmentId,
+              label: TARGET.label,
+              httpBaseUrl: "http://100.100.1.2:3773/",
+              wsBaseUrl: "ws://100.100.1.2:3773/",
+              network: "tailscale",
+            }),
+          ),
+          enabled: true,
+        };
+        const harness = yield* makeSilentSocketHarness();
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        // Well under PING_TIMEOUT (15 s), which is all that catches it today.
+        yield* TestClock.adjust("10 seconds");
+
+        expect(yield* Ref.get(harness.hostChecks)).toContain("BearerConnectionTarget");
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("replaces a silent remote socket without the wait after a long resume", () =>
@@ -1523,6 +1568,8 @@ describe("EnvironmentSupervisor", () => {
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness({
         probe: (attempt) => (attempt === 1 ? Effect.sleep("4 seconds") : Effect.void),
+        // The probe's late answer is a frame, so nothing stays unanswered.
+        awaitingReply: () => false,
       });
       const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
         initiallyDesired: true,
