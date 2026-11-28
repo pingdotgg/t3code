@@ -229,6 +229,7 @@ export interface RespondToThreadUserInputInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly answers: ProviderUserInputAnswers;
   readonly attachmentsByQuestionId?: import("@t3tools/contracts").UserInputAttachments;
+  readonly notesByQuestionId?: import("@t3tools/contracts").UserInputNotes;
 }
 
 export interface DismissThreadUserInputInput extends ThreadCommandInput {
@@ -1033,6 +1034,9 @@ export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondTo
       ...(input.attachmentsByQuestionId === undefined
         ? {}
         : { attachmentsByQuestionId: input.attachmentsByQuestionId }),
+      ...(input.notesByQuestionId === undefined || Object.keys(input.notesByQuestionId).length === 0
+        ? {}
+        : { notesByQuestionId: input.notesByQuestionId }),
     });
   },
 );

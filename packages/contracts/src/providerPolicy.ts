@@ -100,10 +100,15 @@ export const UserInputAttachments = Schema.Record(
 );
 export type UserInputAttachments = typeof UserInputAttachments.Type;
 
+/** A note the user added to the options they picked, by question id. */
+export const UserInputNotes = Schema.Record(Schema.String, TrimmedNonEmptyString);
+export type UserInputNotes = typeof UserInputNotes.Type;
+
 export const UserInputAttachmentAnswerPayload = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   answers: ProviderUserInputAnswers,
   attachmentsByQuestionId: UserInputAttachments,
+  notesByQuestionId: Schema.optional(UserInputNotes),
 });
 export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;

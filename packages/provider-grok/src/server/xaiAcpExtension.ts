@@ -1,4 +1,8 @@
-import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import type {
+  ProviderUserInputAnswers,
+  UserInputNotes,
+  UserInputQuestion,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1152,6 +1156,7 @@ export function extractXAiAskUserQuestions(
     header: "Question",
     question: question.question,
     multiSelect: question.multiSelect === true,
+    ...(question.options.length > 0 ? { supportsNote: true } : {}),
     options:
       question.options.length > 0
         ? question.options.map((option) => ({
@@ -1208,6 +1213,7 @@ function answerValues(answer: unknown): ReadonlyArray<string> {
 function normalizeAnswerForXAi(
   question: XAiAskUserQuestionRequestParams["questions"][number],
   answer: unknown,
+  note: string | undefined,
 ): NormalizedXAiAnswer | undefined {
   const values = answerValues(answer);
   if (values.length === 0) {
@@ -1222,7 +1228,10 @@ function normalizeAnswerForXAi(
     option: optionByLabel.get(value),
   }));
   const selectedLabels = resolvedValues.flatMap(({ option }) => (option ? [option.label] : []));
-  const notes = resolvedValues.flatMap(({ option, value }) => (option ? [] : [value]));
+  const notes = [
+    ...resolvedValues.flatMap(({ option, value }) => (option ? [] : [value])),
+    ...(note === undefined ? [] : [note]),
+  ];
   const preview =
     question.multiSelect === true
       ? undefined
@@ -1251,13 +1260,27 @@ function findQuestionAnswer(
   return answers[key] ?? answers[question.question];
 }
 
+// Notes are keyed only by the question id T3 gave the question, and read as own keys.
+function findQuestionNote(
+  notesByQuestionId: UserInputNotes,
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+): string | undefined {
+  const key = question.id ?? question.question;
+  return Object.hasOwn(notesByQuestionId, key) ? notesByQuestionId[key] : undefined;
+}
+
 export function makeXAiAskUserQuestionResponse(
   params: XAiAskUserQuestionRequest,
   answers: ProviderUserInputAnswers,
+  notesByQuestionId: UserInputNotes = {},
 ): XAiAskUserQuestionAcceptedResponse {
   const questions = unwrapAskUserQuestionParams(params).questions;
   const normalized = questions.flatMap((question) => {
-    const entry = normalizeAnswerForXAi(question, findQuestionAnswer(answers, question));
+    const entry = normalizeAnswerForXAi(
+      question,
+      findQuestionAnswer(answers, question),
+      findQuestionNote(notesByQuestionId, question),
+    );
     return entry ? [entry] : [];
   });
   const annotations = Object.fromEntries(

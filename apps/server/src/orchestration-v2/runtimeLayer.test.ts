@@ -26,6 +26,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
   ProjectId,
   type PullRequestCheck,
   type PullRequestDetail,
@@ -2351,6 +2352,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     threadId: ThreadId,
     runId: RunId | null,
     responseCapability: OrchestrationV2RuntimeRequest["responseCapability"],
+    questions: ReadonlyArray<OrchestrationV2UserInputQuestion> = [
+      { id: "color", header: "Color", question: "Which color?", options: [] },
+      {
+        id: "sizes",
+        header: "Sizes",
+        question: "Which sizes?",
+        options: [],
+        multiSelect: true,
+      },
+      {
+        id: "note",
+        header: "Note",
+        question: "Anything else?",
+        options: [],
+        required: false,
+      },
+    ],
   ) {
     const eventSink = yield* EventSink.EventSinkV2;
     const now = yield* DateTime.now;
@@ -2425,23 +2443,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             completedAt: null,
             updatedAt: now,
             requestId,
-            questions: [
-              { id: "color", header: "Color", question: "Which color?", options: [] },
-              {
-                id: "sizes",
-                header: "Sizes",
-                question: "Which sizes?",
-                options: [],
-                multiSelect: true,
-              },
-              {
-                id: "note",
-                header: "Note",
-                question: "Anything else?",
-                options: [],
-                required: false,
-              },
-            ],
+            questions: [...questions],
           },
         },
       ],
@@ -2939,6 +2941,78 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const request = failed.runtimeRequests.find((row) => row.id === requestId);
       assert.equal(request?.status, "resolved");
       assert.deepEqual(request?.answers, answers);
+    }),
+  );
+
+  it.effect("sends a note with picked options only where the question takes one", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-question-note");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-question-note-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-question-note-project"),
+        title: "Question note",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const options = [
+        { label: "Blue", description: "Blue" },
+        { label: "Red", description: "Red" },
+      ];
+      const { requestId, itemId } = yield* seedPendingQuestion(
+        threadId,
+        null,
+        { type: "message" },
+        [
+          {
+            id: "color",
+            header: "Color",
+            question: "Which color?",
+            options,
+            supportsNote: true,
+          },
+          { id: "shade", header: "Shade", question: "Which shade?", options },
+        ],
+      );
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("runtime-question-note-invalid"),
+          threadId,
+          requestId,
+          answers: { color: "Blue", shade: "Red" },
+          notesByQuestionId: { shade: "darker" },
+        })
+        .pipe(Effect.result);
+      assert.equal(rejected._tag, "Failure");
+
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("runtime-question-note-answer"),
+        threadId,
+        requestId,
+        answers: { color: "Blue", shade: "Red" },
+        notesByQuestionId: { color: "keep the old one for a release" },
+      });
+      const answered = yield* orchestrator.getThreadProjection(threadId);
+      const item = answered.turnItems.find((entry) => entry.id === itemId);
+      assert.equal(item?.type, "user_input_request");
+      if (item?.type === "user_input_request") {
+        assert.deepEqual(item.questionAnswer?.notesByQuestionId, {
+          color: "keep the old one for a release",
+        });
+      }
+      assert.equal(
+        answered.messages[0]?.text,
+        "Which color?\nBlue\nNote: keep the old one for a release\n\nWhich shade?\nRed",
+      );
     }),
   );
 

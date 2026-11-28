@@ -1,6 +1,7 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useGT } from "gt-react";
+import { MessageSquarePlusIcon } from "lucide-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -10,6 +11,7 @@ import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { isInSideChatPane } from "~/lib/sideChatPane";
@@ -27,6 +29,7 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onFocusComposer?: () => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -40,6 +43,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  onFocusComposer,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -58,6 +62,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      onFocusComposer={onFocusComposer}
     />
   );
 });
@@ -73,6 +78,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  onFocusComposer,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -84,6 +90,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onFocusComposer: (() => void) | undefined;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -96,16 +103,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     optionValue: string;
   } | null>(null);
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
+  // A single choice the user is adding a note to: its picks wait for Enter instead of sending.
+  const [noteQuestionId, setNoteQuestionId] = useState<string | null>(null);
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
-  const customAnswerActive = progress.customAnswer.trim().length > 0;
+  // Typed text replaces the pick, unless the question takes it as a note.
+  const customAnswerActive =
+    activeQuestion?.supportsNote !== true && progress.customAnswer.trim().length > 0;
   // Read before later hooks to preserve the question's compiler cache.
   const draftSelectedOptions = activeQuestion?.options.map(
     (option) =>
       !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
   );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
+  const offersNoteButton =
+    activeQuestion?.supportsNote === true &&
+    activeQuestion.multiSelect !== true &&
+    activeQuestion.allowCustomAnswer !== false;
+  const addingNote = offersNoteButton && noteQuestionId === activeQuestion?.id;
 
   if (
     optimisticSingleSelect &&
@@ -130,24 +146,43 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return clearAutoAdvance;
   }, [activeQuestion?.id, disabled]);
 
+  const cancelAutoAdvance = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  };
+
   const handleOptionSelection = (questionId: string, optionValue: string) => {
     if (disabled || isResponding) return;
-    if (activeQuestion?.multiSelect) {
+    const clearsPick =
+      activeQuestion?.supportsNote === true && progress.selectedOptionValues.includes(optionValue);
+    cancelAutoAdvance();
+    if (activeQuestion?.multiSelect || clearsPick || addingNote) {
       onToggleOption(questionId, optionValue);
       return;
     }
     setOptimisticSingleSelect({ questionId, optionValue });
     onToggleOption(questionId, optionValue);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
     autoAdvanceTimerRef.current = window.setTimeout(() => {
       autoAdvanceTimerRef.current = null;
       advance();
     }, 200);
   };
 
+  // Picks the option without sending, so the user can type a note before Enter.
+  const handleAddNote = (questionId: string, optionValue?: string) => {
+    if (disabled || isResponding) return;
+    cancelAutoAdvance();
+    setNoteQuestionId(questionId);
+    if (optionValue !== undefined && !progress.selectedOptionValues.includes(optionValue)) {
+      onToggleOption(questionId, optionValue);
+    }
+    onFocusComposer?.();
+  };
+
   const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
+  const addNoteFromShortcut = useEffectEvent(handleAddNote);
   const backgroundThread = use(BackgroundThreadContext);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
@@ -165,18 +200,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       ) {
         return;
       }
-      const digit = Number.parseInt(event.key, 10);
+      // Shift changes the key's character, so Shift+digit reads the physical key.
+      const noteDigit = event.shiftKey ? /^Digit([1-9])$/.exec(event.code)?.[1] : undefined;
+      const digit = Number.parseInt(noteDigit ?? event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
+      if (noteDigit !== undefined && !offersNoteButton) return;
       const optionIndex = digit - 1;
       if (optionIndex >= activeQuestion.options.length) return;
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
+      if (noteDigit !== undefined) {
+        addNoteFromShortcut(activeQuestion.id, option.value ?? option.label);
+        return;
+      }
       selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+  }, [activeQuestion, backgroundThread, isCollapsed, offersNoteButton, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -311,6 +353,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         </span>
                       ) : null}
                     </div>
+                    {/* Keeps the label clear of the note button that appears over this slot. */}
+                    {offersNoteButton ? (
+                      <span aria-hidden className="h-5 w-6 shrink-0 pointer-coarse:hidden" />
+                    ) : null}
                     {index < 9 ? (
                       <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
                         <Kbd>{index + 1}</Kbd>
@@ -320,7 +366,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
                 // The preview sits outside the button: it can hold links, and a click on a single-select option advances.
                 return (
-                  <div key={`${activeQuestion.id}:${optionValue}`}>
+                  <div
+                    key={`${activeQuestion.id}:${optionValue}`}
+                    className="group/option relative"
+                  >
                     <button
                       type="button"
                       aria-pressed={isSelected}
@@ -332,6 +381,29 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     >
                       {content}
                     </button>
+                    {offersNoteButton ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-label={gt("Add a note to {option}", { option: option.label })}
+                              disabled={disabled || isResponding}
+                              data-pending-user-input-note
+                              onClick={() => handleAddNote(activeQuestion.id, optionValue)}
+                              className="pointer-events-none absolute end-7 top-1.5 flex h-5 w-6 items-center justify-center rounded-md border border-border bg-background text-foreground/70 opacity-0 outline-none transition-opacity duration-150 group-hover/option:pointer-events-auto group-hover/option:opacity-100 group-focus-within/option:pointer-events-auto group-focus-within/option:opacity-100 hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/40 sm:end-6 pointer-coarse:hidden [@media(hover:none)]:hidden"
+                            />
+                          }
+                        >
+                          <MessageSquarePlusIcon className="size-3.5" />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">
+                          {index < 9
+                            ? gt("Add a note · Shift+{key}", { key: index + 1 })
+                            : gt("Add a note")}
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
                     {option.preview ? (
                       <ChatMarkdown
                         text={option.preview}
@@ -345,6 +417,21 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
               })}
             </div>
+            {/* Touch screens have no hover to reveal the per-option note button. */}
+            {offersNoteButton ? (
+              <button
+                type="button"
+                disabled={disabled || isResponding || addingNote}
+                onClick={() => handleAddNote(activeQuestion.id)}
+                className={cn(
+                  "mt-1 hidden items-center gap-1.5 py-1 text-xs outline-none pointer-coarse:inline-flex [@media(hover:none)]:inline-flex",
+                  addingNote ? "text-primary" : "text-foreground/65",
+                )}
+              >
+                <MessageSquarePlusIcon className="size-3.5" />
+                {addingNote ? gt("Pick an option, then send your note") : gt("Add a note")}
+              </button>
+            ) : null}
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>
       </CollapsiblePanel>

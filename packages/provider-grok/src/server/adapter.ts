@@ -245,11 +245,11 @@ const registerGrokAskUserQuestionExtensions = ({
           },
           requestContext,
         ).pipe(
-          Effect.flatMap(({ acknowledgeNativeResponse, answers }) =>
+          Effect.flatMap(({ acknowledgeNativeResponse, answers, notesByQuestionId }) =>
             Effect.succeed(
               answers === null
                 ? makeXAiAskUserQuestionCancelledResponse()
-                : makeXAiAskUserQuestionResponse(params, answers),
+                : makeXAiAskUserQuestionResponse(params, answers, notesByQuestionId),
             ).pipe(Effect.tap(() => acknowledgeNativeResponse)),
           ),
         );

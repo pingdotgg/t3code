@@ -801,6 +801,7 @@ describe("Grok native questions", () => {
         header: "Question",
         question: questionText,
         multiSelect: true,
+        supportsNote: true,
         options: [
           { label: "Tests", description: "Cover behavior" },
           { label: "Docs", description: "Explain usage" },

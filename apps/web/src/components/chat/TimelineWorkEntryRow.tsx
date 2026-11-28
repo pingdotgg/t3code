@@ -764,6 +764,7 @@ function QuestionAnswerHistory({
   answer: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
 }) {
   const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const gt = useGT();
   const attachments = Object.values(answer.attachmentsByQuestionId).flat();
   const resources = attachments.map((attachment) => ({
     _tag: "attachment" as const,
@@ -788,6 +789,13 @@ function QuestionAnswerHistory({
           {getQuestionAnswerText(answer.answers[questionId]) ? (
             <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">
               {getQuestionAnswerText(answer.answers[questionId])}
+            </p>
+          ) : null}
+          {answer.notesByQuestionId?.[questionId] ? (
+            <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">
+              {gt("Note: {note}", {
+                note: getQuestionAnswerText(answer.notesByQuestionId[questionId]),
+              })}
             </p>
           ) : null}
           <div className="flex flex-wrap gap-2">

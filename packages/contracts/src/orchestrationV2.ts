@@ -83,6 +83,7 @@ import {
   ProviderRequestKind,
   ProviderUserInputAnswers,
   UserInputAttachments,
+  UserInputNotes,
   UserInputAttachmentAnswerPayload,
   RuntimeMode,
 } from "./providerPolicy.ts";
@@ -1587,6 +1588,8 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   ),
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
+  /** The provider can take a note alongside the picked options. */
+  supportsNote: Schema.optional(Schema.Boolean),
   initialAnswer: Schema.optional(Schema.String),
   required: Schema.optional(Schema.Boolean),
 });
@@ -3763,6 +3766,7 @@ export const OrchestrationV2Command = Schema.Union([
     feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+    notesByQuestionId: Schema.optional(UserInputNotes),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),

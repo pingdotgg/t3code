@@ -548,6 +548,9 @@ export const layerExecutor: Layer.Layer<
                 ...(effect.request.answers === undefined
                   ? {}
                   : { answers: effect.request.answers }),
+                ...(effect.request.notesByQuestionId === undefined
+                  ? {}
+                  : { notesByQuestionId: effect.request.notesByQuestionId }),
               })
               .pipe(
                 Effect.tapCause((cause) =>

@@ -11821,6 +11821,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const approvalTurnItem = context.item;
+      const notesByQuestionId =
+        command.notesByQuestionId !== undefined && Object.keys(command.notesByQuestionId).length > 0
+          ? command.notesByQuestionId
+          : undefined;
+      if (notesByQuestionId !== undefined) {
+        const questions =
+          approvalTurnItem?.type === "user_input_request" ? approvalTurnItem.questions : [];
+        // Attachment paths may already follow the picks, so only the answer's presence is checked.
+        const notesFit = Object.keys(notesByQuestionId).every(
+          (questionId) =>
+            questions.some((entry) => entry.id === questionId && entry.supportsNote === true) &&
+            isMessageQuestionAnswer(answers?.[questionId]),
+        );
+        if (!notesFit) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Only an answered question that takes notes can carry one.",
+          });
+        }
+      }
       const resolvedNodeStatus =
         command.decision === "decline" || command.decision === "cancel"
           ? ("cancelled" as const)
@@ -11893,7 +11914,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             continue;
           }
           const text = typeof answer === "string" ? answer : answer.join(", ");
-          replies.push(`${question.question}\n${text.trim()}`);
+          const note = notesByQuestionId?.[question.id];
+          replies.push(
+            `${question.question}\n${text.trim()}${note === undefined ? "" : `\nNote: ${note}`}`,
+          );
         }
         if (replies.length === 0) {
           return yield* new OrchestratorDispatchError({
@@ -12033,6 +12057,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     requestId: command.requestId,
                     answers,
                     attachmentsByQuestionId: command.attachmentsByQuestionId ?? {},
+                    ...(notesByQuestionId === undefined ? {} : { notesByQuestionId }),
                     questionTextById: Object.fromEntries(
                       approvalTurnItem.questions.map((question) => [
                         question.id,
@@ -12125,6 +12150,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.decision === undefined ? {} : { decision: command.decision }),
             ...(command.feedback === undefined ? {} : { feedback: command.feedback }),
             ...(answers === undefined ? {} : { answers }),
+            ...(notesByQuestionId === undefined ? {} : { notesByQuestionId }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

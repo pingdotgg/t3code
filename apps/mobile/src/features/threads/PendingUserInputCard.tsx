@@ -34,6 +34,7 @@ import {
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
+  normalizeSelectedOptionValues,
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import type { PendingUserInput } from "../../lib/threadActivity";
@@ -369,6 +370,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
                   value={draft?.customAnswer ?? ""}
+                  takesNote={
+                    question.supportsNote === true &&
+                    normalizeSelectedOptionValues(question, draft?.selectedOptionValues).length > 0
+                  }
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
                   }

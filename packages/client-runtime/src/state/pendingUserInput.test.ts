@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildPendingUserInputAnswers,
+  buildPendingUserInputNotes,
   isPendingUserInputOptionSelected,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
@@ -283,4 +284,56 @@ it.each([
   );
 
   expect(JSON.stringify(answers)).toBe(`{"__proto__":${json},"name":"Orchestration-first"}`);
+});
+
+describe("question notes", () => {
+  const noteQuestion = { ...singleSelectQuestion, supportsNote: true } as const;
+
+  it("keeps the pick and sends typed text as its note, typed before or after the pick", () => {
+    const after = setPendingUserInputCustomAnswer(
+      noteQuestion,
+      togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js"),
+      "  reuse the CLI  ",
+    );
+    const before = togglePendingUserInputOptionSelection(
+      noteQuestion,
+      setPendingUserInputCustomAnswer(noteQuestion, undefined, "reuse the CLI"),
+      "Node.js",
+    );
+    for (const draft of [after, before]) {
+      expect(buildPendingUserInputAnswers([noteQuestion], { scope: draft })).toEqual({
+        scope: "Node.js",
+      });
+      expect(buildPendingUserInputNotes([noteQuestion], { scope: draft })).toEqual({
+        scope: "reuse the CLI",
+      });
+    }
+  });
+
+  it("sends the text as the answer once a second tap clears the pick", () => {
+    const typed = setPendingUserInputCustomAnswer(
+      noteQuestion,
+      togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js"),
+      "Deno instead",
+    );
+    const cleared = togglePendingUserInputOptionSelection(noteQuestion, typed, "Node.js");
+
+    expect(buildPendingUserInputAnswers([noteQuestion], { scope: cleared })).toEqual({
+      scope: "Deno instead",
+    });
+    expect(buildPendingUserInputNotes([noteQuestion], { scope: cleared })).toEqual({});
+  });
+
+  it("keeps the old behavior for a question that does not take notes", () => {
+    const draft = setPendingUserInputCustomAnswer(
+      singleSelectQuestion,
+      togglePendingUserInputOptionSelection(singleSelectQuestion, undefined, "Node.js"),
+      "reuse the CLI",
+    );
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion], { scope: draft })).toEqual({
+      scope: "reuse the CLI",
+    });
+    expect(buildPendingUserInputNotes([singleSelectQuestion], { scope: draft })).toEqual({});
+  });
 });

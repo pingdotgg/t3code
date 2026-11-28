@@ -79,6 +79,16 @@ describe("parseElicitationForm", () => {
       q0: "Yes",
       q1__other: "Only on Fridays",
     });
+    // The companion takes a note too, sent beside the pick.
+    assert.deepStrictEqual(
+      form.questions.map((question) => question.supportsNote),
+      [true, true],
+    );
+    assert.deepStrictEqual(form.content({ q0: "Yes", q1: "No" }, { q0: "but on a new host" }), {
+      q0: "Yes",
+      q0__other: "but on a new host",
+      q1: "No",
+    });
 
     // A single-underscore `<id>_other` companion folds the same way.
     const singleUnderscore = parseElicitationForm(

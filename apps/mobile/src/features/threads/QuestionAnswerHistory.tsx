@@ -4,6 +4,7 @@ import type {
   UserInputAttachments,
 } from "@t3tools/contracts";
 import { Image } from "expo-image";
+import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { getQuestionAnswerText } from "@t3tools/client-runtime/work-log/user-input";
@@ -44,6 +45,7 @@ export function QuestionAnswerHistory(props: {
   environmentId: EnvironmentId;
   answer: UserInputAttachmentAnswerPayload;
 }) {
+  const gt = useGT();
   return (
     <View className="gap-2">
       {[
@@ -62,6 +64,13 @@ export function QuestionAnswerHistory(props: {
           {getQuestionAnswerText(props.answer.answers[questionId]) ? (
             <Text className="ml-3 text-sm text-foreground-muted">
               {getQuestionAnswerText(props.answer.answers[questionId])}
+            </Text>
+          ) : null}
+          {props.answer.notesByQuestionId?.[questionId] ? (
+            <Text className="ml-3 text-sm text-foreground-muted">
+              {gt("Note: {note}", {
+                note: getQuestionAnswerText(props.answer.notesByQuestionId[questionId]),
+              })}
             </Text>
           ) : null}
           {(props.answer.attachmentsByQuestionId[questionId] ?? []).map((attachment) => (

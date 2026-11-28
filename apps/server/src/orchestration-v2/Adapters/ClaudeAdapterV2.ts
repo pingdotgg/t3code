@@ -135,6 +135,7 @@ import {
   type ProviderRuntimeModeLimitReason,
   type ProviderRequestKind,
   type ProviderUserInputAnswers,
+  type UserInputNotes,
   type ProviderThreadId,
   type RunId,
   type ThreadId,
@@ -5103,12 +5104,17 @@ export function claudeMcpElicitationAcceptance(
   return { action: "accept", content };
 }
 
+interface ClaudeUserInputResponse {
+  readonly answers: ProviderUserInputAnswers;
+  readonly notesByQuestionId?: UserInputNotes;
+}
+
 const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(function* (
-  answers: Deferred.Deferred<ProviderUserInputAnswers>,
+  answers: Deferred.Deferred<ClaudeUserInputResponse>,
   signal: AbortSignal,
 ) {
-  const cancellation = Effect.callback<ProviderUserInputAnswers>((resume) => {
-    const abort = () => resume(Effect.succeed({}));
+  const cancellation = Effect.callback<ClaudeUserInputResponse>((resume) => {
+    const abort = () => resume(Effect.succeed({ answers: {} }));
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
     return Effect.sync(() => signal.removeEventListener("abort", abort));
@@ -5936,11 +5942,12 @@ type PendingClaudeRuntimeRequest =
     }
   | {
       readonly type: "user_input";
-      readonly answers: Deferred.Deferred<ProviderUserInputAnswers, never>;
+      readonly answers: Deferred.Deferred<ClaudeUserInputResponse, never>;
     };
 
 export function claudeUserInputQuestions(
   input: unknown,
+  { takesNotes = true }: { readonly takesNotes?: boolean } = {},
 ): ReadonlyArray<OrchestrationV2UserInputQuestion> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
@@ -5984,6 +5991,7 @@ export function claudeUserInputQuestions(
         question,
         options,
         multiSelect: record.multiSelect === true,
+        ...(takesNotes && options.length > 0 ? { supportsNote: true } : {}),
       },
     ];
   });
@@ -6002,6 +6010,18 @@ export function claudeSdkUserInputAnswers(
           : String(answer ?? ""),
     ]),
   );
+}
+
+/** Claude keys question ids and annotations by question text. */
+export function claudeSdkUserInputAnnotations(
+  notesByQuestionId: UserInputNotes | undefined,
+): Pick<AskUserQuestionInput, "annotations"> {
+  const entries = Object.entries(notesByQuestionId ?? {});
+  return entries.length === 0
+    ? {}
+    : {
+        annotations: Object.fromEntries(entries.map(([question, notes]) => [question, { notes }])),
+      };
 }
 
 function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
@@ -13476,7 +13496,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
-          options?: { readonly startToolCall?: boolean },
+          options?: {
+            readonly startToolCall?: boolean;
+            /** The caller reads only `answers`, so a note would be lost. */
+            readonly takesNotes?: false;
+          },
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
@@ -13529,7 +13553,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (toolName === "AskUserQuestion") {
-            const questions = claudeUserInputQuestions(nativeToolInput);
+            const questions = claudeUserInputQuestions(nativeToolInput, {
+              takesNotes: options?.takesNotes !== false,
+            });
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: nativeRequestId,
@@ -13541,7 +13567,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               requestKind: "user_input",
               questions,
             });
-            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+            const answers = yield* Deferred.make<ClaudeUserInputResponse, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
               updated.set(String(artifacts.request.id), {
@@ -13592,7 +13618,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   behavior: "allow",
                   updatedInput: {
                     questions: toolInput.questions,
-                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
+                    answers: claudeSdkUserInputAnswers(resolvedAnswers.answers),
+                    ...claudeSdkUserInputAnnotations(resolvedAnswers.notesByQuestionId),
                   },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);
@@ -13969,7 +13996,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 },
                 // The dialog is a control request, not a tool call, so no
                 // tool_result would ever settle a tool row started for it.
-                { startToolCall: false },
+                { startToolCall: false, takesNotes: false },
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
@@ -16008,7 +16035,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
               }
               if (pending.type === "user_input") {
-                yield* Deferred.succeed(pending.answers, requestInput.answers ?? {});
+                yield* Deferred.succeed(pending.answers, {
+                  answers: requestInput.answers ?? {},
+                  ...(requestInput.notesByQuestionId === undefined
+                    ? {}
+                    : { notesByQuestionId: requestInput.notesByQuestionId }),
+                });
                 return;
               }
               if (requestInput.decision === undefined) {

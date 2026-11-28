@@ -200,8 +200,8 @@ export const extractAntigravityElicitationForm: NonNullable<
       }
       return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
     }),
-    respond: (answers) => {
-      const content = form.content(answers);
+    respond: (answers, notesByQuestionId) => {
+      const content = form.content(answers, notesByQuestionId);
       return content === undefined ? { action: "cancel" } : { action: "accept", content };
     },
   };

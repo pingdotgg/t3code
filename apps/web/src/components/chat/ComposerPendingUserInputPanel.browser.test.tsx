@@ -1,9 +1,13 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import {
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "@t3tools/client-runtime/state/pending-user-input";
+import { useState, type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { fakeTimers, render } from "../../../test/render";
 import type { PendingUserInput } from "../../session-logic";
 import { Select, SelectTrigger } from "../ui/select";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -153,3 +157,93 @@ it.each<{ focus: string; html: string; nested?: boolean; typed: string; toggles:
     expect("value" in focused ? focused.value : focused.textContent).toBe(typed);
   },
 );
+
+const noteQuestion = {
+  id: "database",
+  header: "Database",
+  question: "Use Postgres?",
+  options: [
+    { label: "Yes", description: "Yes" },
+    { label: "No", description: "No" },
+  ],
+  multiSelect: false,
+  supportsNote: true,
+};
+
+function NoteHarness(props: {
+  readonly initial?: Record<string, PendingUserInputDraftAnswer>;
+  readonly onAdvance: () => void;
+  readonly onFocusComposer?: () => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>(
+    props.initial ?? {},
+  );
+  return (
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[{ ...prompt, questions: [noteQuestion] }]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={answers}
+      questionIndex={0}
+      onToggleOption={(questionId, optionValue) =>
+        setAnswers((current) => ({
+          ...current,
+          [questionId]: togglePendingUserInputOptionSelection(
+            noteQuestion,
+            current[questionId],
+            optionValue,
+          ),
+        }))
+      }
+      onAdvance={props.onAdvance}
+      onDismiss={vi.fn()}
+      {...(props.onFocusComposer ? { onFocusComposer: props.onFocusComposer } : {})}
+    />
+  );
+}
+
+function buttonElement(locator: { element: () => Element }) {
+  const element = locator.element();
+  if (!(element instanceof HTMLButtonElement)) throw new Error("Expected a button");
+  return element;
+}
+
+it("a second tap that clears a single pick on a question that takes notes does not advance", async () => {
+  const onAdvance = vi.fn();
+  await using screen = await render(
+    <NoteHarness initial={{ database: { customAnswer: "on a new host" } }} onAdvance={onAdvance} />,
+  );
+  const option = screen.getByRole("button", { name: /^Yes/ });
+  await expect.element(option).toBeVisible();
+  const button = buttonElement(option);
+  using _timers = fakeTimers();
+  button.click();
+  await expect.element(option).toHaveAttribute("aria-pressed", "true");
+  button.click();
+  await expect.element(option).toHaveAttribute("aria-pressed", "false");
+  vi.advanceTimersByTime(1_000);
+
+  expect(onAdvance).not.toHaveBeenCalled();
+});
+
+it("the note button picks an option without sending and opens the composer", async () => {
+  const onAdvance = vi.fn();
+  const onFocusComposer = vi.fn();
+  await using screen = await render(
+    <NoteHarness onAdvance={onAdvance} onFocusComposer={onFocusComposer} />,
+  );
+  const yes = screen.getByRole("button", { name: /^Yes/ });
+  const no = screen.getByRole("button", { name: /^No/ });
+  await expect.element(yes).toBeVisible();
+  using _timers = fakeTimers();
+  buttonElement(screen.getByRole("button", { name: "Add a note to Yes" })).click();
+  await expect.element(yes).toHaveAttribute("aria-pressed", "true");
+  // While a note is being added, changing the pick waits for Enter too.
+  buttonElement(no).click();
+  await expect.element(no).toHaveAttribute("aria-pressed", "true");
+  vi.advanceTimersByTime(1_000);
+
+  expect(onFocusComposer).toHaveBeenCalledOnce();
+  expect(onAdvance).not.toHaveBeenCalled();
+});

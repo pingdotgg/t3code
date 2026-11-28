@@ -4,6 +4,7 @@ export interface PendingUserInputQuestion {
   readonly options: ReadonlyArray<{ readonly label: string; readonly value?: string | undefined }>;
   readonly multiSelect?: boolean | undefined;
   readonly allowCustomAnswer?: boolean | undefined;
+  readonly supportsNote?: boolean | undefined;
   readonly initialAnswer?: string | undefined;
   readonly required?: boolean | undefined;
 }
@@ -39,6 +40,11 @@ function resolvePendingUserInputOptionValue(
     : null;
 }
 
+// With a picked option the typed text is a note on it; with none it is the answer itself.
+function takesNote(question: PendingUserInputQuestion): boolean {
+  return question.supportsNote === true && question.allowCustomAnswer !== false;
+}
+
 /** The draft's selections that name an offered option, deduplicated, in selection order. */
 export function normalizeSelectedOptionValues(
   question: PendingUserInputQuestion,
@@ -63,6 +69,10 @@ export function resolvePendingUserInputAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
 ): PendingUserInputAnswer | null {
   if (draft?.attachmentsBlocked) return null;
+  if (takesNote(question)) {
+    const selected = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
+    if (selected.length > 0) return question.multiSelect ? selected : (selected[0] ?? null);
+  }
   const customAnswer =
     question.allowCustomAnswer === false
       ? null
@@ -89,6 +99,18 @@ export function resolvePendingUserInputAnswer(
   return selectedOptionValues[0] ?? fallback;
 }
 
+/** The note to send with the picked options, or null when the typed text is the answer. */
+function resolvePendingUserInputNote(
+  question: PendingUserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): string | null {
+  if (!takesNote(question)) return null;
+  if (normalizeSelectedOptionValues(question, draft?.selectedOptionValues).length === 0) {
+    return null;
+  }
+  return normalizeDraftAnswer(draft?.customAnswer);
+}
+
 export function setPendingUserInputCustomAnswer(
   question: PendingUserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
@@ -99,7 +121,7 @@ export function setPendingUserInputCustomAnswer(
   }
 
   const selectedOptionValues =
-    question.initialAnswer !== undefined || customAnswer.trim().length > 0
+    !takesNote(question) && (question.initialAnswer !== undefined || customAnswer.trim().length > 0)
       ? undefined
       : normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   return {
@@ -113,7 +135,11 @@ export function isPendingUserInputOptionSelected(
   draft: PendingUserInputDraftAnswer | undefined,
   optionValue: string,
 ): boolean {
-  if (question.allowCustomAnswer !== false && normalizeDraftAnswer(draft?.customAnswer)) {
+  if (
+    question.allowCustomAnswer !== false &&
+    !takesNote(question) &&
+    normalizeDraftAnswer(draft?.customAnswer)
+  ) {
     return false;
   }
 
@@ -136,6 +162,7 @@ export function togglePendingUserInputOptionSelection(
   if (resolvedOptionValue === null) {
     return draft ?? {};
   }
+  const customAnswer = takesNote(question) ? (draft?.customAnswer ?? "") : "";
 
   if (question.multiSelect) {
     const selectedOptionValues = normalizeSelectedOptionValues(
@@ -147,15 +174,24 @@ export function togglePendingUserInputOptionSelection(
       : [...selectedOptionValues, resolvedOptionValue];
 
     return {
-      customAnswer: "",
+      customAnswer,
       ...(nextSelectedOptionValues.length > 0
         ? { selectedOptionValues: nextSelectedOptionValues }
         : {}),
     };
   }
 
+  // With a note in play, tapping the pick again clears it so the text can be the answer.
+  if (
+    takesNote(question) &&
+    normalizeSelectedOptionValues(question, draft?.selectedOptionValues).includes(
+      resolvedOptionValue,
+    )
+  ) {
+    return { customAnswer };
+  }
   return {
-    customAnswer: "",
+    customAnswer,
     selectedOptionValues: [resolvedOptionValue],
   };
 }
@@ -181,4 +217,17 @@ export function buildPendingUserInputAnswers(
   }
 
   return Object.fromEntries(entries);
+}
+
+/** Notes keyed by question id, for questions answered with picked options and a note. */
+export function buildPendingUserInputNotes(
+  questions: ReadonlyArray<PendingUserInputQuestion>,
+  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
+): Record<string, string> {
+  return Object.fromEntries(
+    questions.flatMap((question) => {
+      const note = resolvePendingUserInputNote(question, draftAnswers[question.id]);
+      return note === null ? [] : [[question.id, note] as const];
+    }),
+  );
 }

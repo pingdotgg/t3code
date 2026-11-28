@@ -594,6 +594,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
             { label: "Safe", description: "Keep the current setup" },
           ],
           multiSelect: true,
+          supportsNote: true,
         },
       ],
     );
@@ -609,6 +610,16 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,
     );
+  });
+
+  it("sends a question's note as Claude's annotation notes, keyed by question text", () => {
+    const annotations: Pick<AskUserQuestionInput, "annotations"> =
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations({
+        "Which approach?": "keep the old endpoint for one release",
+      });
+    assert.deepEqual(annotations, {
+      annotations: { "Which approach?": { notes: "keep the old endpoint for one release" } },
+    });
   });
 
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {

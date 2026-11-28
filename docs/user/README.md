@@ -52,6 +52,7 @@ T3 Code is an open-source control plane for coding agents. It gives the coding a
 - [Subagents and delegation](./subagents.md) — Parallel T3-delegated and provider-native subagents.
 - [Context in portable handoffs](./portable-handoffs.md) — How conversation context transfers across provider switches and forks.
 - [Files in question answers](./question-attachments.md) — Attaching files and images when answering agent questions.
+- [Notes on question answers](./question-notes.md) — Adding a note to the option you pick.
 - [Terminal](./terminal.md) — Integrated host terminals, scrollback limits, custom shells, and fish config.
 
 ### Workspace tools & media

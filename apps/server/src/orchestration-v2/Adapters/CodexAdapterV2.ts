@@ -86,6 +86,7 @@ import type {
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderUserInputAnswers,
+  UserInputNotes,
   ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderApprovalPushHooks,
@@ -794,6 +795,20 @@ function answerValueToStrings(value: unknown): ReadonlyArray<string> {
     return [String(value)];
   }
   return [JSON.stringify(value)];
+}
+
+/** Codex's own TUI sends a note as an extra `user_note: ` entry after the picked options. */
+export function withCodexUserNotes(
+  answers: ProviderUserInputAnswers,
+  notesByQuestionId: UserInputNotes | undefined,
+): ProviderUserInputAnswers {
+  const notes = Object.entries(notesByQuestionId ?? {});
+  if (notes.length === 0) return answers;
+  const merged = new Map(Object.entries(answers));
+  for (const [questionId, note] of notes) {
+    merged.set(questionId, [...answerValueToStrings(merged.get(questionId)), `user_note: ${note}`]);
+  }
+  return Object.fromEntries(merged);
 }
 
 function toCodexUserInputAnswers(
@@ -5229,6 +5244,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
                 description: nonEmptyText(option.description, option.label),
               })) ?? [],
+            ...((question.options?.length ?? 0) > 0 ? { supportsNote: true } : {}),
           }));
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CODEX_PROVIDER,
@@ -9440,7 +9456,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ),
                   });
                 }
-                yield* Deferred.succeed(pending.answers, requestInput.answers);
+                yield* Deferred.succeed(
+                  pending.answers,
+                  withCodexUserNotes(requestInput.answers, requestInput.notesByQuestionId),
+                );
                 return;
               }
               if (requestInput.decision === undefined) {
