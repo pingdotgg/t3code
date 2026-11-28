@@ -13033,9 +13033,7 @@
   "35ba446b79347ddf": "Nouveau Bot",
   "ef9945d356dd1c2b": "Un Bot coordonne d’autres fils pour vous. Indiquez-lui de quoi s’occuper et comment vous souhaitez qu’il travaille.",
   "d4b3fe97dd0501a8": "Instructions",
-  "d25661576338fcf0": "Vous attend",
   "1519a364f1312d30": "Instructions et notes",
-  "97884c869683f97f": "{count, plural, one {{count} vous attend} other {{count} vous attendent}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Arrêté",
   "ff1728d6a7065373": "En cours",
@@ -13047,7 +13045,6 @@
   "e807fee27e5cd426": "Nouvelle note",
   "61a43a89f093e3f0": "Le Bot conserve ses notes ici.",
   "066644fe3ef88185": "Exécutants",
-  "a7a52a611ad8c05a": "Exécutants · {count}",
   "6d6ebf5193fc1046": "Couper les mises à jour des exécutants",
   "51fdc8323e1628d3": "{count, plural, one {Vous attend} other {{count} vous attendent}}",
   "6bc353972ad45f48": "{count, plural, one {{count} exécutant} other {{count} exécutants}}",
@@ -13090,5 +13087,7 @@
   "c710ee112651e1dd": "Résumé",
   "16062ac4bcd9ab9e": "Note",
   "07f432b0f8a65d39": "Afficher l’approbation",
-  "067e9781206ddcba": "Masquer l’approbation"
+  "067e9781206ddcba": "Masquer l’approbation",
+  "c0f76279966bd260": "Exécutants actifs",
+  "948b08d3848c400a": "Exécutants terminés"
 }

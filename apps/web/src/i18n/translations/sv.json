@@ -13040,9 +13040,7 @@
   "35ba446b79347ddf": "Ny Bot",
   "ef9945d356dd1c2b": "En Bot samordnar andra trådar åt dig. Berätta vad den ska ta hand om och hur du vill att den arbetar.",
   "d4b3fe97dd0501a8": "Instruktioner",
-  "d25661576338fcf0": "Behöver dig",
   "1519a364f1312d30": "Instruktioner och anteckningar",
-  "97884c869683f97f": "{count, plural, one {{count} behöver dig} other {{count} behöver dig}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stoppad",
   "ff1728d6a7065373": "Arbetar",
@@ -13054,7 +13052,6 @@
   "e807fee27e5cd426": "Ny anteckning",
   "61a43a89f093e3f0": "Bot sparar sina anteckningar här.",
   "066644fe3ef88185": "Arbetare",
-  "a7a52a611ad8c05a": "Arbetare · {count}",
   "6d6ebf5193fc1046": "Tysta arbetarnas aviseringar",
   "51fdc8323e1628d3": "{count, plural, one {Behöver dig} other {{count} behöver dig}}",
   "6bc353972ad45f48": "{count, plural, one {{count} arbetare} other {{count} arbetare}}",
@@ -13097,5 +13094,7 @@
   "c710ee112651e1dd": "Sammanfattning",
   "16062ac4bcd9ab9e": "Anteckning",
   "07f432b0f8a65d39": "Visa godkännandet",
-  "067e9781206ddcba": "Dölj godkännandet"
+  "067e9781206ddcba": "Dölj godkännandet",
+  "c0f76279966bd260": "Aktiva arbetare",
+  "948b08d3848c400a": "Färdiga arbetare"
 }

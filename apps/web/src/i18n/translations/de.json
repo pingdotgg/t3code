@@ -13033,9 +13033,7 @@
   "35ba446b79347ddf": "Neuer Bot",
   "ef9945d356dd1c2b": "Ein Bot koordiniert andere Threads für dich. Sag ihm, worum er sich kümmern und wie er arbeiten soll.",
   "d4b3fe97dd0501a8": "Anweisungen",
-  "d25661576338fcf0": "Braucht dich",
   "1519a364f1312d30": "Anweisungen & Notizen",
-  "97884c869683f97f": "{count, plural, one {{count} braucht dich} other {{count} brauchen dich}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Angehalten",
   "ff1728d6a7065373": "Arbeitet",
@@ -13047,7 +13045,6 @@
   "e807fee27e5cd426": "Neue Notiz",
   "61a43a89f093e3f0": "Hier bewahrt der Bot seine Notizen auf.",
   "066644fe3ef88185": "Worker",
-  "a7a52a611ad8c05a": "Worker · {count}",
   "6d6ebf5193fc1046": "Worker-Updates stummschalten",
   "51fdc8323e1628d3": "{count, plural, one {Braucht dich} other {{count} brauchen dich}}",
   "6bc353972ad45f48": "{count, plural, one {{count} Worker} other {{count} Worker}}",
@@ -13090,5 +13087,7 @@
   "c710ee112651e1dd": "Zusammenfassung",
   "16062ac4bcd9ab9e": "Notiz",
   "07f432b0f8a65d39": "Freigabe anzeigen",
-  "067e9781206ddcba": "Freigabe ausblenden"
+  "067e9781206ddcba": "Freigabe ausblenden",
+  "c0f76279966bd260": "Aktive Worker",
+  "948b08d3848c400a": "Abgeschlossene Worker"
 }

@@ -13028,9 +13028,7 @@
   "35ba446b79347ddf": "Nuevo Bot",
   "ef9945d356dd1c2b": "Un Bot coordina otros hilos por ti. Dile de qué ocuparse y cómo prefieres que trabaje.",
   "d4b3fe97dd0501a8": "Instrucciones",
-  "d25661576338fcf0": "Te necesita",
   "1519a364f1312d30": "Instrucciones y notas",
-  "97884c869683f97f": "{count, plural, one {{count} te necesita} other {{count} te necesitan}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Detenido",
   "ff1728d6a7065373": "Trabajando",
@@ -13042,7 +13040,6 @@
   "e807fee27e5cd426": "Nueva nota",
   "61a43a89f093e3f0": "El Bot guarda aquí sus notas.",
   "066644fe3ef88185": "Trabajadores",
-  "a7a52a611ad8c05a": "Trabajadores · {count}",
   "6d6ebf5193fc1046": "Silenciar avisos de trabajadores",
   "51fdc8323e1628d3": "{count, plural, one {Te necesita} other {{count} te necesitan}}",
   "6bc353972ad45f48": "{count, plural, one {{count} trabajador} other {{count} trabajadores}}",
@@ -13085,5 +13082,7 @@
   "c710ee112651e1dd": "Resumen",
   "16062ac4bcd9ab9e": "Nota",
   "07f432b0f8a65d39": "Mostrar la aprobación",
-  "067e9781206ddcba": "Ocultar la aprobación"
+  "067e9781206ddcba": "Ocultar la aprobación",
+  "c0f76279966bd260": "Trabajadores activos",
+  "948b08d3848c400a": "Trabajadores terminados"
 }

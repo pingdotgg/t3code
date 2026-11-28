@@ -13033,9 +13033,7 @@
   "35ba446b79347ddf": "Novo Bot",
   "ef9945d356dd1c2b": "Um Bot coordena outras threads por você. Diga do que ele deve cuidar e como você prefere que ele trabalhe.",
   "d4b3fe97dd0501a8": "Instruções",
-  "d25661576338fcf0": "Precisa de você",
   "1519a364f1312d30": "Instruções e notas",
-  "97884c869683f97f": "{count, plural, one {{count} precisa de você} other {{count} precisam de você}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Parado",
   "ff1728d6a7065373": "Trabalhando",
@@ -13047,7 +13045,6 @@
   "e807fee27e5cd426": "Nova nota",
   "61a43a89f093e3f0": "O Bot guarda as notas dele aqui.",
   "066644fe3ef88185": "Trabalhadores",
-  "a7a52a611ad8c05a": "Trabalhadores · {count}",
   "6d6ebf5193fc1046": "Silenciar avisos dos trabalhadores",
   "51fdc8323e1628d3": "{count, plural, one {Precisa de você} other {{count} precisam de você}}",
   "6bc353972ad45f48": "{count, plural, one {{count} trabalhador} other {{count} trabalhadores}}",
@@ -13090,5 +13087,7 @@
   "c710ee112651e1dd": "Resumo",
   "16062ac4bcd9ab9e": "Nota",
   "07f432b0f8a65d39": "Mostrar a aprovação",
-  "067e9781206ddcba": "Ocultar a aprovação"
+  "067e9781206ddcba": "Ocultar a aprovação",
+  "c0f76279966bd260": "Trabalhadores ativos",
+  "948b08d3848c400a": "Trabalhadores concluídos"
 }

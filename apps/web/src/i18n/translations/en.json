@@ -13042,9 +13042,7 @@
   "35ba446b79347ddf": "New Bot",
   "ef9945d356dd1c2b": "A Bot coordinates other threads for you. Tell it what to look after and how you like it to work.",
   "d4b3fe97dd0501a8": "Instructions",
-  "d25661576338fcf0": "Needs you",
   "1519a364f1312d30": "Instructions & notes",
-  "97884c869683f97f": "{count, plural, one {{count} needs you} other {{count} need you}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stopped",
   "ff1728d6a7065373": "Working",
@@ -13056,7 +13054,6 @@
   "e807fee27e5cd426": "New note",
   "61a43a89f093e3f0": "The Bot keeps its notes here.",
   "066644fe3ef88185": "Workers",
-  "a7a52a611ad8c05a": "Workers · {count}",
   "6d6ebf5193fc1046": "Mute worker updates",
   "51fdc8323e1628d3": "{count, plural, one {Needs you} other {{count} need you}}",
   "6bc353972ad45f48": "{count, plural, one {{count} worker} other {{count} workers}}",
@@ -13099,5 +13096,7 @@
   "c710ee112651e1dd": "Summary",
   "16062ac4bcd9ab9e": "Note",
   "07f432b0f8a65d39": "Show the approval",
-  "067e9781206ddcba": "Hide the approval"
+  "067e9781206ddcba": "Hide the approval",
+  "c0f76279966bd260": "Active workers",
+  "948b08d3848c400a": "Finished workers"
 }
