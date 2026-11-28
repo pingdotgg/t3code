@@ -324,6 +324,28 @@ Third}`;
     );
   });
 
+  it.each([
+    ["LibreOffice", ""],
+    // Word adds a drawing that repeats the box for older readers.
+    [
+      "Word",
+      String.raw`{\shprslt{\*\do\dobxcolumn{\dptxbx{\dptxbxtext\pard Trucks leave at noon\par}}}}`,
+    ],
+    ["a plain fallback", String.raw`{\shprslt\pard Trucks leave at noon\par}`],
+  ])("shows the text of a %s rich text box once, without shape properties", (_writer, result) => {
+    const html = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi Before\par{\shp{\*\shpinst\shpleft0{\sp{\sn shapeType}{\sv 202}}{\shptxt\pard Trucks leave at noon\par}}` +
+          result +
+          String.raw`}After\par}`,
+      ),
+    );
+    if (html.type !== "document") throw new Error("Expected document");
+    expect(html.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before<br>Trucks leave at noon<br>After<br></p>",
+    );
+  });
+
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
     const result = openRtf(
       bytes(String.raw`{\rtf1\b First\page Second\b0{\*\unknown \page hidden}\page Third\page}`),
