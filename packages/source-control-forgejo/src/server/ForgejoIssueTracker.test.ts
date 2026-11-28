@@ -1,12 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoIssueTracker from "./ForgejoIssueTracker.ts";
 
 const encode = (value: unknown) => JSON.stringify(value);
+const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
 const ISSUE = {
   number: 42,
@@ -136,19 +138,25 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
 }
 
 function tracker(
-  onApi: (input: ForgejoCli.ForgejoApiInput) => {
-    readonly stdout: string;
-    readonly stderr?: string;
-  },
+  onApi: (input: ForgejoCli.ForgejoApiInput) =>
+    | {
+        readonly stdout: string;
+        readonly stderr?: string;
+      }
+    | ForgejoCli.ForgejoCliError,
 ) {
   return ForgejoIssueTracker.make.pipe(
     Effect.provide(
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
-          const { stdout, stderr } = onApi(input);
-          return Effect.succeed(
-            TestSourceControlHost.processOutput(stdout, { stderr: stderr ?? "" }),
-          );
+          const result = onApi(input);
+          return isForgejoCliError(result)
+            ? Effect.fail(result)
+            : Effect.succeed(
+                TestSourceControlHost.processOutput(result.stdout, {
+                  stderr: result.stderr ?? "",
+                }),
+              );
         },
       }),
     ),
@@ -274,13 +282,14 @@ describe("ForgejoIssueTracker", () => {
       calls.length = 0;
       yield* api.update!({ ...target, labels: ["bug", "urgent"] });
       expect(calls.at(-1)).toEqual(["PUT", "repos/acme/web/issues/42/labels", { labels: [3, 9] }]);
-      // A name the repository lacks refuses the save before anything is written.
+      expect(calls.some(([, path]) => path.startsWith("orgs/"))).toBe(false);
+      // A name neither the repository nor its org owns refuses the save before anything is written.
       calls.length = 0;
       const error = yield* Effect.flip(
         api.update!({ ...target, title: "Renamed", labels: ["bug", "missing"] }),
       );
       expect(error.reason).toBe("failed");
-      expect(calls.map(([method]) => method)).toEqual(["GET", "GET"]);
+      expect(calls.map(([method]) => method)).toEqual(["GET", "GET", "GET"]);
     }),
   );
 
@@ -361,6 +370,234 @@ describe("ForgejoIssueTracker", () => {
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
       // No `Link` header at all means the server may still have more; a full page carries on.
       expect(page.nextCursor).toBe("3");
+    }),
+  );
+
+  it.effect(
+    "includes organization labels in candidates, keeps repo precedence, and marks org truncation",
+    () =>
+      Effect.gen(function* () {
+        let orgNext = true;
+        const api = yield* tracker((input) => {
+          const [route] = input.path.split("?");
+          if (route === "repos/acme/web/labels") {
+            return {
+              stdout: encode([{ id: 3, name: "bug", color: "d73a4a", description: "Repo bug" }]),
+              stderr: "link: \n",
+            };
+          }
+          if (route === "orgs/acme/labels") {
+            return {
+              stdout: encode([
+                { id: 99, name: "bug", color: "000000", description: "Org bug" },
+                { id: 101, name: "security", color: "ff0000", description: "Org security" },
+              ]),
+              stderr: orgNext
+                ? 'link: <https://forgejo.test:3000/api/v1/orgs/acme/labels?page=2>; rel="next"\n'
+                : "link: \n",
+            };
+          }
+          if (route === "repos/acme/web/assignees") {
+            return { stdout: encode([{ login: "theo" }]), stderr: "link: \n" };
+          }
+          return { stdout: "[]", stderr: "link: \n" };
+        });
+        const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
+        const truncated = yield* api.listCandidates!(target);
+        expect(truncated.labels).toEqual([
+          { name: "bug", color: "d73a4a", description: "Repo bug" },
+          { name: "security", color: "ff0000", description: "Org security" },
+        ]);
+        expect(truncated.truncated).toBe(true);
+
+        orgNext = false;
+        const complete = yield* api.listCandidates!(target);
+        expect(complete.truncated).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "resolves organization labels across pages for create and update, with repo precedence",
+    () =>
+      Effect.gen(function* () {
+        const writes: Array<readonly [string, string, unknown]> = [];
+        const orgPaths: string[] = [];
+        const api = yield* tracker((input) => {
+          const [route] = input.path.split("?");
+          if (route === "repos/acme/web/labels") {
+            return { stdout: encode([{ id: 3, name: "shared" }]), stderr: "link: \n" };
+          }
+          if (route === "orgs/acme/labels") {
+            orgPaths.push(input.path);
+            return input.path.endsWith("page=1")
+              ? {
+                  stdout: encode([
+                    { id: 99, name: "shared" },
+                    { id: 101, name: "org-a" },
+                  ]),
+                  stderr:
+                    'link: <https://forgejo.test:3000/api/v1/orgs/acme/labels?page=2>; rel="next"\n',
+                }
+              : { stdout: encode([{ id: 102, name: "org-b" }]), stderr: "link: \n" };
+          }
+          writes.push([input.method ?? "GET", input.path, input.body]);
+          return { stdout: encode(ISSUE) };
+        });
+        const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
+        yield* api.create!({
+          ...target,
+          title: "Org label issue",
+          body: "Body",
+          labels: ["shared", "org-b"],
+          assignees: [],
+        });
+        orgPaths.length = 0;
+        yield* api.update!({ ...target, key: "42", labels: ["shared", "org-a"] });
+        // `org-a` was resolved on page 1, so no page 2 org request is made despite `rel="next"`.
+        expect(orgPaths).toEqual(["orgs/acme/labels?limit=50&page=1"]);
+        expect(writes).toEqual([
+          [
+            "POST",
+            "repos/acme/web/issues",
+            { title: "Org label issue", body: "Body", labels: [3, 102], assignees: [] },
+          ],
+          ["PUT", "repos/acme/web/issues/42/labels", { labels: [3, 101] }],
+        ]);
+      }),
+  );
+
+  it.effect("resolves organization labels when the scope includes a server mount path", () =>
+    Effect.gen(function* () {
+      const orgPaths: string[] = [];
+      const writes: Array<readonly [string, string, unknown]> = [];
+      const api = yield* tracker((input) => {
+        const [route] = input.path.split("?");
+        if (route === "repos/forgejo/acme/web/labels") {
+          return { stdout: encode([{ id: 3, name: "bug", color: "d73a4a" }]), stderr: "link: \n" };
+        }
+        if (route?.startsWith("orgs/")) {
+          orgPaths.push(input.path);
+          if (route === "orgs/acme/labels") {
+            return { stdout: encode([{ id: 101, name: "org-only", color: "00aa00" }]) };
+          }
+          return new ForgejoCli.ForgejoCliError({
+            command: "fj",
+            cwd: "/w",
+            detail: "404 Not Found",
+            reason: "not-found",
+            httpStatus: 404,
+          });
+        }
+        if (route === "repos/forgejo/acme/web/assignees") {
+          return { stdout: "[]", stderr: "link: \n" };
+        }
+        writes.push([input.method ?? "GET", input.path, input.body]);
+        return { stdout: "{}" };
+      });
+      const target = { cwd: "/w", host: "forgejo.test:3000", scope: "forgejo/acme/web" };
+      const candidates = yield* api.listCandidates!(target);
+      expect(candidates.labels).toEqual([
+        { name: "bug", color: "d73a4a", description: null },
+        { name: "org-only", color: "00aa00", description: null },
+      ]);
+      orgPaths.length = 0;
+      yield* api.update!({ ...target, key: "42", labels: ["bug", "org-only"] });
+      expect(orgPaths).toEqual(["orgs/acme/labels?limit=50&page=1"]);
+      expect(writes).toEqual([
+        ["PUT", "repos/forgejo/acme/web/issues/42/labels", { labels: [3, 101] }],
+      ]);
+    }),
+  );
+
+  it.effect("falls back to repo labels when the owner's org labels return 404 or 403", () =>
+    Effect.gen(function* () {
+      for (const failure of [
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/w",
+          detail: "404 Not Found",
+          reason: "not-found",
+          httpStatus: 404,
+        }),
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/w",
+          detail: "403 Forbidden",
+          reason: "forbidden",
+          httpStatus: 403,
+        }),
+      ]) {
+        let orgCalls = 0;
+        const writes: Array<readonly [string, string, unknown]> = [];
+        const api = yield* tracker((input) => {
+          const [route] = input.path.split("?");
+          if (route === "orgs/alice/labels") {
+            orgCalls += 1;
+            return failure;
+          }
+          if (route === "repos/alice/web/labels") {
+            return {
+              stdout: encode([{ id: 3, name: "bug", color: "d73a4a" }]),
+              stderr: "link: \n",
+            };
+          }
+          if (route === "repos/alice/web/assignees") {
+            return { stdout: "[]", stderr: "link: \n" };
+          }
+          writes.push([input.method ?? "GET", input.path, input.body]);
+          return { stdout: "{}" };
+        });
+        const target = { cwd: "/w", host: "forgejo.test:3000", scope: "alice/web" };
+        const candidates = yield* api.listCandidates!(target);
+        expect(candidates.labels).toEqual([{ name: "bug", color: "d73a4a", description: null }]);
+        expect(candidates.truncated).toBe(false);
+
+        yield* api.update!({ ...target, key: "42", labels: ["bug"] });
+        expect(writes).toEqual([["PUT", "repos/alice/web/issues/42/labels", { labels: [3] }]]);
+        expect(orgCalls).toBe(1);
+
+        const missingError = yield* Effect.flip(
+          api.update!({ ...target, key: "42", labels: ["bug", "missing"] }),
+        );
+        expect(missingError).toMatchObject({
+          reason: "failed",
+          detail: "Forgejo found no label by one of the names given.",
+        });
+        expect(orgCalls).toBe(2);
+      }
+    }),
+  );
+
+  it.effect("propagates non-404/403 organization label errors", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker((input) => {
+        const [route] = input.path.split("?");
+        if (route === "orgs/acme/labels") {
+          return new ForgejoCli.ForgejoCliError({
+            command: "fj",
+            cwd: "/w",
+            detail: "500 Internal Server Error",
+            httpStatus: 500,
+          });
+        }
+        if (route === "repos/acme/web/labels") {
+          return { stdout: encode([{ id: 3, name: "bug" }]), stderr: "link: \n" };
+        }
+        return { stdout: "[]", stderr: "link: \n" };
+      });
+      const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
+      const candidatesError = yield* Effect.flip(api.listCandidates!(target));
+      expect(candidatesError).toMatchObject({
+        reason: "failed",
+        detail: "500 Internal Server Error",
+      });
+      const updateError = yield* Effect.flip(
+        api.update!({ ...target, key: "42", labels: ["bug", "org-only"] }),
+      );
+      expect(updateError).toMatchObject({
+        reason: "failed",
+        detail: "500 Internal Server Error",
+      });
     }),
   );
 });
