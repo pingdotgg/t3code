@@ -39,14 +39,17 @@ function normalizePullRequestCommentAnchor(anchor: string): string {
 }
 
 // GitHub pull request tabs and their GitLab merge request equivalents. Forgejo and Gitea spell the
-// path `/pulls/`.
+// path `/pulls/`; Bitbucket spells it `/pull-requests/` and its code tab `diff`.
 function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
-  const tab = /\/(?:pulls?|-\/merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(pathname);
+  const tab = /\/(?:pulls?|pull-requests|-\/merge_requests)\/\d+\/([a-z]+)(?:\/(.*))?$/i.exec(
+    pathname,
+  );
   const rest = tab?.[2] ?? "";
   switch (tab?.[1]?.toLowerCase()) {
     case "files":
     case "changes":
     case "diffs":
+    case "diff":
       return { kind: "code" };
     case "commits":
       if (rest === "") return { kind: "commits" };
@@ -57,6 +60,13 @@ function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
     default:
       return null;
   }
+}
+
+// Azure DevOps names a pull request's tab in the `_a` query, not the path. Its provider states
+// no commit list, so `_a=commits` has nothing to open.
+function azureDevOpsQueryTab({ pathname, searchParams }: URL): PullRequestAnchor | null {
+  if (!/\/pullrequest\/\d+\/?$/i.test(pathname)) return null;
+  return searchParams.get("_a")?.toLowerCase() === "files" ? { kind: "code" } : null;
 }
 
 const isLine = (line: number) => Number.isSafeInteger(line) && line >= 1;
@@ -115,7 +125,7 @@ export function parsePullRequestAnchor(url: string | null | undefined): PullRequ
   } catch {
     return null;
   }
-  const fallback = pullRequestPathTab(parsed.pathname);
+  const fallback = pullRequestPathTab(parsed.pathname) ?? azureDevOpsQueryTab(parsed);
   const anchor = pullRequestUrlHash(url);
   const gitLab = gitLabDiffAnchor(
     anchor,
