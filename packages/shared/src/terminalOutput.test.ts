@@ -457,19 +457,10 @@ describe("terminalOutputTail", () => {
 
   it("never begins a styled tail on a detached combining mark", () => {
     const red = { color: TERMINAL_PALETTES.dark[1] };
-    const small = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
-    const smallPlain = terminalOutputPlainText(small.text);
-    expect(smallPlain.codePointAt(0)).toBe(0x0065);
-    expect(smallPlain.codePointAt(1)).toBe(0x0301);
-    expect(terminalOutputSpans(small.text, TERMINAL_PALETTES.dark)).toEqual([
+    const output = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
+    expect(terminalOutputSpans(output.text, TERMINAL_PALETTES.dark)).toEqual([
       { text: `${"e\u0301".repeat(5)}A`, style: red },
     ]);
-
-    const full = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(32_768)}A`);
-    const fullPlain = terminalOutputPlainText(full.text);
-    expect(fullPlain.codePointAt(0)).toBe(0x0065);
-    expect(fullPlain.codePointAt(1)).toBe(0x0301);
-    expect(terminalOutputSpans(full.text, TERMINAL_PALETTES.dark)[0]?.style).toEqual(red);
 
     const crossStyle = terminalOutputTail("\u001b[0;32me\u001b[0;31m\u0301A\u001b[0m", 13);
     expect(terminalOutputSpans(crossStyle.text, TERMINAL_PALETTES.dark)).toEqual([

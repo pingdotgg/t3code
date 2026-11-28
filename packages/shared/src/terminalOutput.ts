@@ -688,7 +688,8 @@ export function terminalOutputTail(
   if (newline !== -1 && newline - start < maxChars / 4) {
     return { text: text.slice(newline + 1), truncated: true };
   }
-  // Cutting inside a line: never split an escape, and keep the colour in force.
+  // Cutting inside a line: never split an escape, keep the colour in force, and skip
+  // zero-width marks and lone low surrogates left without their base character.
   const style = styleAt(text, start);
   let prefix = style.prefix;
   start = style.start;
