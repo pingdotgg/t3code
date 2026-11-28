@@ -89,3 +89,18 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   applyThemeCss(undefined);
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
 });
+
+it("keeps @position-try rules, whose descriptors are not indexable", () => {
+  using _css = { [Symbol.dispose]: () => applyThemeCss(undefined) };
+
+  expect(() =>
+    applyThemeCss(`
+      @position-try --tip-top { position-area: top span-right; justify-self: start; }
+      :root { color: rgb(1, 2, 3); }
+    `),
+  ).not.toThrow();
+  const themeCssText = document.adoptedStyleSheets
+    .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+    .join("\n");
+  expect(themeCssText).toContain("@position-try --tip-top");
+});

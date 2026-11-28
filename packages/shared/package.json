@@ -163,6 +163,10 @@
       "types": "./src/terminalOutput.ts",
       "import": "./src/terminalOutput.ts"
     },
+    "./notebookOutput": {
+      "types": "./src/notebookOutput.ts",
+      "import": "./src/notebookOutput.ts"
+    },
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
@@ -714,6 +718,8 @@
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",
+    "remark-cjk-friendly": "catalog:",
+    "remark-cjk-friendly-gfm-strikethrough": "catalog:",
     "remark-gfm": "catalog:",
     "remark-math": "6.0.0",
     "remark-parse": "catalog:",

@@ -743,12 +743,23 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
       "See the issue first",
     );
+    expect(workflowOneLine("See [the issue](https://example.com/file(test)). Fixed.")).toBe(
+      "See the issue.",
+    );
+    expect(
+      workflowOneLine(
+        'Check [docs](<https://example.com/a(b)>) and [fn](https://example.com/foo(bar(1)) "title"). Next.',
+      ),
+    ).toBe("Check docs and fn.");
     expect(workflowOneLine("_italic_ __bold__ *italic* **bold** (_nested_) **yes**_now_.")).toBe(
       "italic bold italic bold (nested) yesnow.",
     );
     expect(workflowOneLine("Fixed **`foo_bar`** and _see `x`_ now.")).toBe(
       "Fixed foo_bar and see x now.",
     );
+    expect(workflowOneLine("#4512 is merged.\nTests pass.")).toBe("#4512 is merged.");
+    expect(workflowOneLine("> ## Summary\n\nAll good.")).toBe("All good.");
+    expect(workflowOneLine("####### Seven hashes.\nok.")).toBe("####### Seven hashes.");
   });
 
   it("keeps underscores inside identifiers, paths and code", () => {

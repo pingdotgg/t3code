@@ -270,12 +270,23 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         yield* writeTextFile(
           quotedValueCwd,
           "index.html",
-          `<link rel="icon" title="preview href=app.css here" href="brand.svg">`,
+          `<link rel="icon" title='preview href=app.css < primary' media="(width > 600px)" href="brand.svg">`,
         );
         yield* writeTextFile(quotedValueCwd, "app.css", "body {}");
         yield* writeTextFile(quotedValueCwd, "brand.svg", "<svg>brand</svg>");
         expect(yield* resolver.resolvePath(quotedValueCwd)).toBe(
           (yield* Path.Path).join(quotedValueCwd, "brand.svg"),
+        );
+
+        const unquotedQuoteCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          unquotedQuoteCwd,
+          "index.html",
+          `<link rel=stylesheet title=O'Reilly><link rel="icon" href="brand.svg"><!-- it's -->`,
+        );
+        yield* writeTextFile(unquotedQuoteCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(unquotedQuoteCwd)).toBe(
+          (yield* Path.Path).join(unquotedQuoteCwd, "brand.svg"),
         );
 
         const encodedCwd = yield* makeTempDir;
@@ -285,12 +296,84 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           (yield* Path.Path).join(encodedCwd, "public", "team mark.svg"),
         );
 
+        for (const [href, filename, rel = "icon"] of [
+          ["/brand/logo.svg&#35;mark", "logo.svg"],
+          ["/brand/design&amp;dev.svg&#x3f;v=2", "design&dev.svg"],
+          ["/brand/logo%23mark.svg&quest;v=2", "logo#mark.svg"],
+          ["/brand/&#128;.svg", "\u20ac.svg"],
+          ["/brand/design&amp-dev.svg", "design&-dev.svg"],
+          ["/brand/a&copy=b.svg", "a&copy=b.svg"],
+          ["/brand/&ampdev.svg", "&ampdev.svg"],
+          ["/brand/&apos.svg", "&apos.svg"],
+          ["/brand/primary.svg", "primary.svg", "ic&#111;n"],
+          ["/brand/secondary.svg", "secondary.svg", "shortcut&Tab;icon"],
+        ] as const) {
+          const entityCwd = yield* makeTempDir;
+          yield* writeTextFile(entityCwd, "index.html", `<link rel="${rel}" href="${href}">`);
+          yield* writeTextFile(entityCwd, `public/brand/${filename}`, "<svg>brand</svg>");
+          expect(yield* resolver.resolvePath(entityCwd), href).toBe(
+            (yield* Path.Path).join(entityCwd, "public", "brand", filename),
+          );
+        }
+
+        const jsxCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          jsxCwd,
+          "app/root.tsx",
+          '<link rel="shortcut&Tab;icon" href="/brand/other.svg" /><link rel="icon" href="/brand/a&amp-b.svg" />',
+        );
+        yield* writeTextFile(jsxCwd, "public/brand/other.svg", "<svg>other</svg>");
+        yield* writeTextFile(jsxCwd, "public/brand/a&amp-b.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(jsxCwd)).toBe(
+          (yield* Path.Path).join(jsxCwd, "public", "brand", "a&amp-b.svg"),
+        );
+
         const malformedCwd = yield* makeTempDir;
         yield* writeTextFile(malformedCwd, "index.html", '<link rel="icon" href="/100%.svg">');
         yield* writeTextFile(malformedCwd, "public/100%.svg", "<svg>100</svg>");
         expect(yield* resolver.resolvePath(malformedCwd)).toBe(
           (yield* Path.Path).join(malformedCwd, "public", "100%.svg"),
         );
+      }),
+    );
+
+    it.effect("resolves relative hrefs in src/index.html against src after public and root", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/index.html",
+          '<link rel="icon" href="/brand/root.svg"><link rel="icon" type="image/png" href="assets/brand/icon.png">',
+        );
+        yield* writeTextFile(cwd, "src/brand/root.svg", "<svg>src</svg>");
+        yield* writeTextFile(cwd, "src/assets/brand/icon.png", "png");
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "src", "assets", "brand", "icon.png"),
+        );
+        yield* writeTextFile(cwd, "public/assets/brand/icon.png", "public");
+        yield* resolver.invalidate(cwd);
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "public", "assets", "brand", "icon.png"),
+        );
+      }),
+    );
+
+    it.effect("skips icon links inside HTML comments", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        // A template's icon link commented out in favour of the project's own.
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          '<!-- <link rel="icon" type="image/svg+xml" href="/vite.svg" /> -->\n<link rel="icon" type="image/png" href="/brand.png" />',
+        );
+        yield* writeTextFile(cwd, "public/vite.svg", "<svg>vite</svg>");
+        yield* writeTextFile(cwd, "public/brand.png", "png");
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "public", "brand.png"));
       }),
     );
 
@@ -332,6 +415,23 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+      }),
+    );
+
+    it.effect("keeps apostrophes inside double-quoted route metadata hrefs", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/routes/__root.tsx",
+          `const links = [{ rel: "icon", href: "/brand/chef's-hat.svg#mark" }];`,
+        );
+        yield* writeTextFile(cwd, "public/brand/chef's-hat.svg", "<svg>brand</svg>");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          (yield* Path.Path).join(cwd, "public", "brand", "chef's-hat.svg"),
+        );
       }),
     );
 
@@ -385,6 +485,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           "index.html",
           '<link rel="icon" href="../../outside.svg"><link rel="icon" href="/%2e%2e%2f%2e%2e%2foutside.svg">',
         );
+        yield* writeTextFile(cwd, "src/index.html", '<link rel="icon" href="../../outside.svg">');
 
         const resolved = yield* resolver.resolvePath(cwd);
 

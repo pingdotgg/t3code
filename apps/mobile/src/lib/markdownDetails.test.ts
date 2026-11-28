@@ -47,6 +47,22 @@ describe("splitMarkdownDetails", () => {
     ]);
   });
 
+  it("splits a fold after a leading byte-order mark at its source offsets", () => {
+    const markdown =
+      "\uFEFFShort answer.\n\n<details>\n<summary>Long details</summary>\n\nA long paragraph.\n\n</details>\n\nAfter.";
+    expect(splitMarkdownDetails(markdown)).toEqual([
+      { kind: "markdown", markdown: "\uFEFFShort answer.\n\n", sourceOffset: 0 },
+      {
+        kind: "details",
+        summary: "Long details",
+        body: "\n\nA long paragraph.\n\n",
+        open: false,
+        sourceOffset: 16,
+      },
+      { kind: "markdown", markdown: "\n\nAfter.", sourceOffset: 88 },
+    ]);
+  });
+
   it("keeps nested folds in the body and honours the open attribute", () => {
     const markdown =
       "<details open>\n<summary>Outer &amp; <code>more</code></summary>\n\n<details>\n<summary>Inner</summary>\n\nx\n\n</details>\n\n</details>";

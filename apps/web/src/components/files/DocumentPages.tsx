@@ -48,12 +48,25 @@ export function sanitizeDocumentHtml(source: string): string {
       "dt",
       "dd",
       "img",
+      "ruby",
+      "rt",
+      "rp",
     ],
-    ALLOWED_ATTR: ["src", "alt", "colspan", "rowspan", "data-odf-whitespace"],
+    ADD_ATTR: (attribute, tag) => attribute === "type" && tag === "ol",
+    ALLOWED_ATTR: [
+      "src",
+      "alt",
+      "colspan",
+      "rowspan",
+      "start",
+      "value",
+      "data-odf-whitespace",
+      "data-rtf-whitespace",
+    ],
   });
   for (const image of fragment.querySelectorAll("img")) {
     if (
-      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/]*={0,2}$/i.test(
+      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/\t\n\f\r ]*(?:=[\t\n\f\r ]*){0,2}$/i.test(
         image.getAttribute("src") ?? "",
       )
     )
@@ -94,7 +107,7 @@ export default function DocumentPages(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Disconnect the iframe body's resize observer when the document unmounts.
   useEffect(() => () => stopObserving.current?.(), []);
   const html = sanitizeDocumentHtml(props.html);
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:${15 * zoom}px/1.65 system-ui,sans-serif}body{box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(100% - 40px)"};max-width:${860 * zoom}px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>:root{color-scheme:${resolvedTheme}}html{background:${colors[0]};color:${colors[1]};font:${15 * zoom}px/1.65 system-ui,sans-serif}body{box-sizing:border-box;margin:${props.output ? "0" : "20px auto"};padding:${props.output ? "16px" : "32px"};width:${props.output ? "100%" : "calc(100% - 40px)"};max-width:${860 * zoom}px;min-height:${props.output ? "0" : "calc(100vh - 40px)"};display:flow-root;background:${colors[2]};overflow-wrap:anywhere}h1,h2,h3{line-height:1.25}img{max-width:100%;height:auto}table{border-collapse:collapse;min-width:100%;max-width:100%}td,th{border:1px solid ${colors[3]};padding:6px 12px;text-align:left}th{background:${colors[0]}}tr:nth-child(even){background:${colors[0]}}pre,span[data-odf-whitespace],p[data-rtf-whitespace]{white-space:pre-wrap}*{scrollbar-width:thin}${props.output ? "" : "@media(max-width:420px){body{padding:20px;width:calc(100% - 24px);margin:12px auto}}"}</style></head><body>${html}</body></html>`;
   return (
     <>
       {!props.output ? (
