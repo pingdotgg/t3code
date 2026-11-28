@@ -797,6 +797,7 @@ describe("scoreMessageMatch", () => {
     expect(text.slice(fts?.offset)).toMatch(/^FTS and/);
     expect(scoreMessageMatch("saved two drafts", "fts")).toBeNull();
     expect(scoreMessageMatch("मुझे किताब चाहिए", "ताब")).toBeNull();
+    expect(scoreMessageMatch("⚠️Fix login", "fix")).toEqual({ quality: 1, offset: 2 });
     expect(scoreMessageMatch("We trust the build", "rust")).toEqual({ quality: 0.3, offset: 4 });
     expect(scoreMessageMatch("Rust and trust", "rust")).toEqual({ quality: 1, offset: 0 });
     expect(scoreMessageMatch("Use the sidebar", '"sidebar"')).toEqual({ quality: 1, offset: 8 });

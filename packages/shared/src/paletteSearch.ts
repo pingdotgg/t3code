@@ -6,7 +6,8 @@ import { WORKTREE_BRANCH_PREFIX } from "./git.ts";
 
 const ALPHANUMERIC = /[\p{L}\p{N}]/u;
 // A vowel sign or accent continues the letter before it, so the next letter starts no word.
-const WORD_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
+// Variation selectors and enclosing marks follow emoji ("⚠️", "1️⃣"), not letters.
+const WORD_CHARACTER = /(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{L}\p{N}\p{Mn}\p{Mc}]/u;
 const LOWERCASE = /\p{Ll}/u;
 const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
