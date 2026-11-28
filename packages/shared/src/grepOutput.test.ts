@@ -132,4 +132,14 @@ describe("parseGrepOutput", () => {
     expect(results?.[0]).toEqual({ fileName: "a.ts", line: 1, preview: "x" });
     expect(results?.[1]?.preview?.length).toBe(500);
   });
+
+  it.each([
+    [498, `(${"x".repeat(498)}`],
+    [497, `(${"x".repeat(497)}🚀`],
+  ])("keeps whole characters when truncating a note with %i padding units", (padding, preview) => {
+    expect(parseGrepOutput(`a.ts:1:hit\n(${"x".repeat(padding)}🚀)`, ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: "hit" },
+      { fileName: ".", preview },
+    ]);
+  });
 });

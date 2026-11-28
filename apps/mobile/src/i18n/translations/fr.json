@@ -909,6 +909,7 @@
   "9f70c78508f05cc5": "Ce soir",
   "1b9d249ecc4cc532": "Demain",
   "f3e58d0c7a119551": "La semaine prochaine",
+  "fd551a92f829316d": "Indéfiniment",
   "26dd8a65fa8bd045": "maintenant",
   "7ac52df3f6b0a072": "{minutes} min",
   "8ebe1f516687cb93": "{hours} h",
@@ -5722,5 +5723,12 @@
   "f6cf1627f4acc5ef": "Visibilité du commentaire",
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
-  "15e5597f8f93ce12": "{start} à {end}"
+  "15e5597f8f93ce12": "{start} à {end}",
+  "872bf68b2e05f055": "{count, plural, one {{count} fichier consulté masqué} other {{count} fichiers consultés masqués}}",
+  "f538b8016f5ca2f3": "Masquer les fichiers consultés",
+  "be348514e8486295": "Aucun fichier non consulté chargé pour l’instant",
+  "6b7765835778dc77": "Tous les fichiers sont masqués",
+  "bd2cfcb7be24cd38": "Les fichiers consultés sont masqués dans cette revue.",
+  "6ae1484aa5bd2bc8": "Afficher les fichiers consultés",
+  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}"
 }
