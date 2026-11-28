@@ -287,15 +287,13 @@ async function odfHtml(
 }
 // A drawing can contain paragraphs of its own, even when anchored inside cell text.
 function withoutOdsDrawings(node: XmlNode): XmlNode {
-  let children: XmlNode[] | undefined;
-  for (const [index, child] of node.children.entries()) {
-    const content = child.name.startsWith("draw:") ? undefined : withoutOdsDrawings(child);
-    if (content !== child) children ??= node.children.slice(0, index);
-    if (content) children?.push(content);
-  }
-  return children ? { ...node, children } : node;
+  return {
+    ...node,
+    children: node.children
+      .filter((child) => !child.name.startsWith("draw:"))
+      .map(withoutOdsDrawings),
+  };
 }
-
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
