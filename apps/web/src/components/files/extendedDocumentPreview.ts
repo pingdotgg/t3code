@@ -447,7 +447,10 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     String(
       record(metadata.language_info).name ||
         kernelspec.language ||
-        (String(kernelspec.name).toLowerCase() === "python3" && "python") ||
+        // Kernel names are strings. Coercing a malformed JSON object can throw.
+        (typeof kernelspec.name === "string" &&
+          kernelspec.name.toLowerCase() === "python3" &&
+          "python") ||
         "",
     )
       .replaceAll(/[^a-z\d+#-]/gi, "")
