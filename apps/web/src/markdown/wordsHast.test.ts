@@ -480,6 +480,14 @@ describe("wordsHast", () => {
   });
 
   it.each([
+    'Before :codex-followup{prompt="Look at [foo]"} after',
+    'Before :codex-followup[<!-- x -->]{prompt="go"} after',
+    'Before :codex-followup[:codex-file-citation{path="aaaaaaaaaaaaaaaaaaaaaaaa.ts"}]{prompt="go"} after',
+  ])("copies a follow-up without a visible label as written: %s", (markdown) => {
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(markdown);
+  });
+
+  it.each([
     [
       ':codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} end',
       "try inner then end",

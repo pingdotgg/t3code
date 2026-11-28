@@ -1318,14 +1318,16 @@ export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] 
       const name = child.properties.dataDirective;
       if (typeof name === "string" && child.position) {
         const { start, end } = child.position;
+        const hasLabel = textOf(child).trim().length > 0;
         found.push({
           name,
           attributes: directiveAttributes(child),
           start: start.offset!,
           end: end.offset!,
-          label: directiveLabel(markdown.slice(start.offset, end.offset)),
+          label: hasLabel ? directiveLabel(markdown.slice(start.offset, end.offset)) : "",
           inLink,
         });
+        if (name === "codex-followup" && !hasLabel) continue;
       }
       visit(child, inLink || child.tagName === "a");
     }
