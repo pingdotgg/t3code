@@ -5733,5 +5733,6 @@
   "6b7765835778dc77": "Todos los archivos están ocultos",
   "bd2cfcb7be24cd38": "Los archivos vistos están ocultos en esta revisión.",
   "6ae1484aa5bd2bc8": "Mostrar archivos vistos",
-  "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}"
+  "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}",
+  "2461bdd8e58e0a72": "No se puede cambiar el nombre de los entornos de T3 Connect aquí."
 }

@@ -168,11 +168,10 @@ export function parseGitRemoteRepository(
     try {
       // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
-      const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
-        .split("/")
-        .filter((segment) => segment.length > 0);
+      const path = dropSuffix(canonicalRepositoryPath(url.pathname.replace(/\/+$/, "")));
+      const repositorySegments = path.split("/").filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
-        return { host: url.hostname, path: canonicalRepositoryPath(repositorySegments.join("/")) };
+        return { host: url.hostname, path: repositorySegments.join("/") };
       }
     } catch {
       return null;
@@ -182,7 +181,7 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[a-zA-Z0-9._-]+@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
         normalized,
       );
   const scpHost = scpStyleHostAndPath?.[1];
@@ -209,9 +208,11 @@ export function normalizeGitRemoteUrl(value: string): string {
   // The key is shown to clients and persisted, so a URL it cannot parse keeps only what names the
   // repository: no password, query or fragment, and a user only over SSH, where it is a login name.
   const remote = lowerCaseRemote(value);
-  const url = /^([a-z][a-z0-9+.-]*):\/\/(?:([^/?#:@]*)(?::[^/?#]*)?@)?([^?#]*)/.exec(remote);
+  const url = /^([a-z][a-z0-9+.-]*):\/\/(?:([^/?#]*)@)?([^?#]*)/.exec(remote);
   if (url === null) return remote;
-  const [, scheme = "", user = "", rest = ""] = url;
+  const [, scheme = "", userinfo = "", rest = ""] = url;
+  const colonIndex = userinfo.indexOf(":");
+  const user = colonIndex === -1 ? userinfo : userinfo.slice(0, colonIndex);
   return lowerCaseRemote(`${scheme}://${scheme === "ssh" && user ? `${user}@` : ""}${rest}`);
 }
 

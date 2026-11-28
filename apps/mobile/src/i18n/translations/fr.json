@@ -5733,5 +5733,6 @@
   "6b7765835778dc77": "Tous les fichiers sont masqués",
   "bd2cfcb7be24cd38": "Les fichiers consultés sont masqués dans cette revue.",
   "6ae1484aa5bd2bc8": "Afficher les fichiers consultés",
-  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}"
+  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}",
+  "2461bdd8e58e0a72": "Les environnements T3 Connect ne peuvent pas être renommés ici."
 }
