@@ -16,6 +16,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../lib/changeRequestTerm";
 import { videoMimeType } from "@t3tools/shared/video";
+import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -26,7 +27,7 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
-import { FilePreviewModal } from "./ui/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "./ui/FilePreviewModal";
 import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
 import { AppText as Text } from "./ui/AppText";
@@ -65,6 +66,16 @@ function ContextField(props: {
       )}
     </View>
   );
+}
+
+// FilePreviewSession reads a new source for the same file after its viewer closed as a re-tap and
+// presents it again, so a source rebuilt on each render must stay the one the preview opened with.
+function OpenedFilePreview(props: {
+  readonly source: FilePreviewSource;
+  readonly onRequestClose: () => void;
+}) {
+  const [source] = useState(props.source);
+  return <FilePreviewModal source={source} onRequestClose={props.onRequestClose} />;
 }
 
 function ContextSource(props: { source: ElementContextSource | null }) {
@@ -163,7 +174,7 @@ export function ComposerContextSheet(props: {
           : remoteSource;
       if (source) {
         return (
-          <FilePreviewModal
+          <OpenedFilePreview
             source={{
               kind: record.kind === "image" || previewKind === "image" ? "image" : "pdf",
               name: record.name,
