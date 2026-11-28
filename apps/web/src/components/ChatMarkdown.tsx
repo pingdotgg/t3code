@@ -122,6 +122,7 @@ import {
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { recordVisitForThread } from "../browserHistoryStore";
 import { contextMenuSourceOf, openContextMenuFromKeyboard } from "../contextMenuSource";
 import {
@@ -255,6 +256,7 @@ interface ChatMarkdownProps {
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
+  readOnlyTaskList?: boolean | undefined;
   isStreaming?: boolean;
   /** Identifies a streaming reply across remounts, so text already shown does not fade in again. */
   streamingId?: string | undefined;
@@ -591,6 +593,7 @@ function useChatMarkdownState(
     pullRequestPanelRef,
     environmentId: explicitEnvironmentId,
     onTaskListChange,
+    readOnlyTaskList = false,
     isStreaming = false,
     previewMarkdownFences = false,
     skills = EMPTY_MARKDOWN_SKILLS,
@@ -1137,6 +1140,7 @@ function useChatMarkdownState(
     linkTargetPreference,
     markdownFileLinkMetaByHref,
     onTaskListChange,
+    readOnlyTaskList,
     onUseArtifactTemplate,
     onRunShellCommand,
     openChangeRequestLink,
@@ -1172,6 +1176,41 @@ const ChatMarkdownRendererContext = React.createContext<
 
 // Isolate streamed source text from the renderer context; only offset-based renderers need it.
 const ChatMarkdownTextContext = React.createContext("");
+
+function ReadOnlyTaskCheckbox({ checked }: { checked: boolean }) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger
+        render={<span className="inline-flex" data-read-only-task />}
+        closeOnClick={false}
+        role="checkbox"
+        aria-checked={checked}
+        aria-readonly="true"
+        tabIndex={0}
+        aria-label={gt("Read only task")}
+        onClick={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          setOpen(true);
+        }}
+      >
+        <input
+          type="checkbox"
+          className="pointer-events-none"
+          checked={checked}
+          disabled
+          readOnly
+        />
+      </TooltipTrigger>
+      <TooltipPopup>
+        <T>Read only</T>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 // A quote card is a block. These say nothing else shares its paragraph or list item on that side.
 const LIST_MARKER = String.raw`(?:[-*+]|\d+[.)])[ \t]+`;
@@ -1271,8 +1310,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   input: function MarkdownInput({ node: _node, type, checked, disabled: _disabled, ...props }) {
     const gt = useGT();
-    const { onTaskListChange } = use(ChatMarkdownRendererContext);
+    const { onTaskListChange, readOnlyTaskList } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
+    if (type === "checkbox" && !onTaskListChange && readOnlyTaskList) {
+      return <ReadOnlyTaskCheckbox checked={checked === true} />;
+    }
     if (type !== "checkbox" || !onTaskListChange) {
       return (
         <input
@@ -2096,6 +2138,7 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
     imageBaseDir,
     inlineCodeFileLinkMetaByText,
     onTaskListChange,
+    readOnlyTaskList,
     skills,
   } = state;
   const options: MarkdownIslandOptions = {
@@ -2114,7 +2157,10 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
         case "div":
           return artifactTemplateFromHastProperties(node.properties) !== null;
         case "input":
-          return node.properties.type === "checkbox" && onTaskListChange !== undefined;
+          return (
+            node.properties.type === "checkbox" &&
+            (readOnlyTaskList || onTaskListChange !== undefined)
+          );
         case "code": {
           if (node.properties.dataInlineCode == null) return false;
           const codeText = hastPlainTextDeep(node);

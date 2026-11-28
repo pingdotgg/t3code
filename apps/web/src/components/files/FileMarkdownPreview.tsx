@@ -36,6 +36,7 @@ export function FileMarkdownPreview(props: {
       className={props.className ?? "mx-auto max-w-4xl px-6 py-5"}
       {...(props.extensions ? { extensions: props.extensions } : {})}
       onTaskListChange={props.onTaskListChange}
+      readOnlyTaskList={props.onTaskListChange === undefined}
     />
   );
 }

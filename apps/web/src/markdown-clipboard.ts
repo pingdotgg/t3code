@@ -2,12 +2,14 @@ import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownLinks";
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
+const READ_ONLY_TASK_ATTRIBUTE = "data-read-only-task";
 const SANITIZED_HTML_SELECTOR = [
   "button",
   "input",
   "script",
   "style",
   "svg",
+  `[${READ_ONLY_TASK_ATTRIBUTE}]`,
   '[aria-hidden="true"]',
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
@@ -24,6 +26,7 @@ export interface MarkdownClipboardPayload {
 function isSkippedElement(element: Element): boolean {
   if (SKIPPED_TAGS.has(element.tagName) || element.localName === "svg") return true;
   if (element.getAttribute("aria-hidden") === "true") return true;
+  if (element.hasAttribute(READ_ONLY_TASK_ATTRIBUTE)) return true;
   return SKIPPED_CLASS_NAMES.some((className) => element.classList.contains(className));
 }
 
@@ -147,13 +150,22 @@ function serializeTable(table: Element): string {
   return `${BLOCK_GUARD}${lines.join(`\n${BLOCK_GUARD}`)}\n\n`;
 }
 
+function listItemCheckbox(item: Element): HTMLInputElement | null {
+  return (
+    item.querySelector<HTMLInputElement>(LIST_ITEM_CHECKBOX) ??
+    item.querySelector<HTMLInputElement>(
+      `:scope > [${READ_ONLY_TASK_ATTRIBUTE}] > input[type="checkbox"], :scope > p > [${READ_ONLY_TASK_ATTRIBUTE}] > input[type="checkbox"]`,
+    )
+  );
+}
+
 function serializeListItem(
   item: Element,
   ordered: boolean,
   index: number,
   inTableCell: boolean,
 ): string {
-  const checkbox = item.querySelector<HTMLInputElement>(LIST_ITEM_CHECKBOX);
+  const checkbox = listItemCheckbox(item);
   const task = checkbox ? `[${checkbox.checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
@@ -1042,8 +1054,8 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     clone = clone?.firstChild ?? null;
     if (!(clone instanceof Element) || !(source instanceof Element)) continue;
     if (source.tagName === "LI" && clone.tagName === "LI") {
-      const checkbox = source.querySelector(LIST_ITEM_CHECKBOX);
-      if (checkbox && !clone.querySelector(LIST_ITEM_CHECKBOX)) {
+      const checkbox = listItemCheckbox(source);
+      if (checkbox && !listItemCheckbox(clone)) {
         // Keep the first-child chain intact for nested items.
         clone.append(checkbox.cloneNode(false));
       }
