@@ -308,7 +308,7 @@ function extractReviewCommentBody(rawBody: string): {
 }
 
 /** A stored "12 to 18" range label in the UI language, as the web chip shows it. */
-function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
+export function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
   const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
   return range === null
     ? rangeLabel
