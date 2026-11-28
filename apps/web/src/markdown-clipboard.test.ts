@@ -890,6 +890,30 @@ describe("copying a table as CSV", () => {
     expect(html).toBe(`<meta charset="utf-8"><pre>${aligned}</pre>`);
   });
 
+  it.each([
+    ["𠮷", "𠮷  1"],
+    ["𛀀", "𛀀  1"],
+    ["𗀀", "𗀀  1"],
+    ["A\u302a", "A\u302a   1"],
+    ["A\u3099", "A\u3099   1"],
+    ["A\u{16fe4}", "A\u{16fe4}   1"],
+    ["A\u{16ff0}", "A\u{16ff0}  1"],
+    ["A\u{16ff1}", "A\u{16ff1}  1"],
+  ])("keeps chat table columns aligned after %s", (character, expected) => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("ID")),
+          new FakeElement("TH").append(new FakeText("Value")),
+        ),
+      ),
+      new FakeElement("TBODY").append(row(td(new FakeText(character)), td(new FakeText("1")))),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text.split("\n")[3]).toBe(expected);
+  });
+
   it("bounds rowspans by their row group and keeps empty rows while placing spans", () => {
     const cell = (tag: string, text: string, attributes: Record<string, string> = {}) =>
       new FakeElement(tag, [], attributes).append(new FakeText(text));
