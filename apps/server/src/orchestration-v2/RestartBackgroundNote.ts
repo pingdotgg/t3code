@@ -1,5 +1,6 @@
 import {
   isDeliveredProviderTurn,
+  isOrchestrationV2WorkActive,
   type NodeId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2PendingBackgroundTask,
@@ -131,6 +132,33 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
     id: task.taskId,
     ...(task.awaited === true ? { awaited: true as const } : {}),
   };
+}
+
+type RosterItem = Pick<
+  OrchestrationV2TurnItem,
+  "type" | "providerThreadId" | "nativeItemRef" | "status"
+>;
+
+/** A listed subagent whose own item already ended was waiting only for its report's wake, not cut off. */
+export function rosterTaskEnded(
+  task: OrchestrationV2PendingBackgroundTask,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+  projection: {
+    readonly turnItems: ReadonlyArray<RosterItem>;
+    readonly settledRosterSubagents?: ReadonlyArray<RosterItem> | undefined;
+  },
+): boolean {
+  if (task.kind !== "subagent" || task.parentTaskId !== undefined) return false;
+  const ownItem = (item: RosterItem) =>
+    item.type === "subagent" &&
+    item.providerThreadId === providerThreadId &&
+    item.nativeItemRef?.nativeId === task.taskId;
+  return (
+    (projection.settledRosterSubagents ?? []).some(
+      (item) => ownItem(item) && !isOrchestrationV2WorkActive(item.status),
+    ) &&
+    !projection.turnItems.some((item) => ownItem(item) && isOrchestrationV2WorkActive(item.status))
+  );
 }
 
 const MAX_NOTE_ENTRIES = 10;
