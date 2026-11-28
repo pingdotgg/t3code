@@ -443,8 +443,8 @@ function bootstrapMarkup(markup: string): string {
 }
 
 const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
-// Browsers keep `<` in unquoted values, so a raw-text opener must not end early and expose its body.
-const RAW_TEXT_TAG_END = String.raw`(?:[^"'>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
+// Browsers keep `<` and quotes inside unquoted attribute values on raw-text openers.
+const RAW_TEXT_TAG_END = String.raw`(?:[\s/]+|[^\s/>=]+|=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*))*(?:>|$)`;
 const HTML_NON_MARKUP = new RegExp(
   String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${RAW_TEXT_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${RAW_TEXT_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|(<[a-z!/]${HTML_TAG_END})`,
   "gi",

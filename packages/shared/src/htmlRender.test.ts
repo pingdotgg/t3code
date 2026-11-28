@@ -49,7 +49,7 @@ describe("injectHtmlRenderBootstrap", () => {
 
   it("wraps fragments without a head and keeps existing meta tags", () => {
     const fragment =
-      '<meta charset="utf-8"><meta data-if="a<b" name="viewport" content="width=device-width"><p>hi</p>';
+      '<meta charset="utf-8"><script data-x=1<2\'3></script><meta data-if="a<b" name="viewport" content="width=device-width"><p>hi</p>';
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
     expect(injected.match(/charset/g)).toHaveLength(1);
@@ -57,7 +57,7 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
   });
 
-  it.each(["textarea", "iframe", "plaintext", "script data-x=1<2"])(
+  it.each(["textarea", "iframe", "plaintext", "script data-x=1<2", "script data-x=1<2'3"])(
     "keeps the bootstrap outside %s content",
     (tag) => {
       const fragment = `<${tag}><head><meta name="viewport"></head></${tag.split(" ")[0]}>`;
