@@ -5726,5 +5726,13 @@
   "f6cf1627f4acc5ef": "Sichtbarkeit des Kommentars",
   "eb1fd384ad5919dd": "Interne Notiz",
   "b45f0b467e9406d0": "Dem Kunden antworten",
-  "15e5597f8f93ce12": "{start} bis {end}"
+  "15e5597f8f93ce12": "{start} bis {end}",
+  "4aa91c06e3cc23d3": "Berechtigungen",
+  "b0fe16124082337a": "Berechtigungen wählen",
+  "8a3707795c8cbd54": "Modus",
+  "3345dbc93147b56c": "Plan erstellt einen Vorschlag, bevor gehandelt wird.",
+  "ac5d2d6d0215d5fc": "Plan ist für diesen Anbieter nicht verfügbar.",
+  "cb66aa6471c80179": "Umsetzen",
+  "a15816b54dc2fd14": "Plan",
+  "cbcf2f92931a93fd": "Läufe verwenden den Arbeitsbereich, die Berechtigungen und den Modus des Ziel-Threads."
 }

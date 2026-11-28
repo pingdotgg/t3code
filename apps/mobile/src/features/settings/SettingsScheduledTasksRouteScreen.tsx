@@ -455,9 +455,10 @@ function TaskRuntimeRow({
   readonly draft: Draft;
   readonly provider: { readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> } | null;
   readonly managedPolicy: ManagedPolicySummary | undefined;
-  readonly setDraft: (draft: Draft) => void;
+  readonly setDraft: (update: (current: Draft) => Draft) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const providerChoices = runtimeModeChoicesForSupportedModes(provider?.supportedRuntimeModes);
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const choices = withManagedRuntimeModeLimits(providerChoices, [managedPolicy], m);
@@ -477,7 +478,7 @@ function TaskRuntimeRow({
       onSelect={(id) => {
         const choice = choices.find((candidate) => candidate.mode === id);
         if (choice && choice.disabledReason === undefined)
-          setDraft({ ...draft, runtimeMode: choice.mode });
+          setDraft((current) => ({ ...current, runtimeMode: choice.mode }));
       }}
     />
   );
@@ -503,7 +504,7 @@ function TaskInteractionRow({
   readonly draft: Draft;
   readonly planModeAvailable: boolean;
   readonly disabled: boolean;
-  readonly setDraft: (draft: Draft) => void;
+  readonly setDraft: (update: (current: Draft) => Draft) => void;
 }) {
   const gt = useGT();
   return (
@@ -526,7 +527,8 @@ function TaskInteractionRow({
         ]}
         selected={planModeAvailable ? draft.interactionMode : "default"}
         onSelect={(mode: ProviderInteractionMode) => {
-          if (!disabled && planModeAvailable) setDraft({ ...draft, interactionMode: mode });
+          if (!disabled && planModeAvailable)
+            setDraft((current) => ({ ...current, interactionMode: mode }));
         }}
       />
     </View>
@@ -1009,8 +1011,7 @@ function TaskForm({
             runtimeModeChoicesForSupportedModes(providerForDraft?.supportedRuntimeModes),
             config?.managedPolicy,
           ),
-      interactionMode:
-        boundToThread || planModeAvailable ? draft.interactionMode : "default",
+      interactionMode: boundToThread || planModeAvailable ? draft.interactionMode : "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
     submissionPending.current = true;

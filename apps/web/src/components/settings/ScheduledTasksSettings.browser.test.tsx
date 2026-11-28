@@ -11,6 +11,7 @@ import {
   type UnifiedSettings,
   ScheduledTaskId,
   ThreadId,
+  type ManagedPolicySummary,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { getTranslationsSnapshot, GTProvider } from "gt-react";
@@ -70,6 +71,7 @@ const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
   settings: null as unknown as UnifiedSettings,
   upsert: vi.fn(),
+  managedPolicy: undefined as ManagedPolicySummary | undefined,
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
@@ -95,6 +97,7 @@ function setup() {
   state.providers = Atom.make<ReadonlyArray<ServerProvider>>([]);
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
+  state.managedPolicy = undefined;
   permissions.clear();
   taskLists.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -118,7 +121,10 @@ function environment() {
     entry: { target: { _tag: "PrimaryConnectionTarget" } },
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: { platform: "linux", capabilities: { oneTimeSchedules: true } },
+          managedPolicy: state.managedPolicy,
+        }
       : null,
   };
 }
@@ -424,6 +430,32 @@ describe("ScheduledTasksSettings", () => {
     state.connected = true;
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
     await expect.element(name).toHaveValue("Review stale issues");
+  });
+
+  it("saves an unbound task within the managed ceiling and in the chosen mode", async () => {
+    setupEffortTask();
+    state.managedPolicy = {
+      organization: "Acme",
+      lockedSettings: [],
+      limits: { maxRuntimeMode: "auto-accept-edits" },
+    };
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    const permissions = page.getByRole("combobox", { name: "Permissions" });
+    await expect.element(permissions).toHaveTextContent("Auto-accept edits");
+    await permissions.click();
+    await expect.element(page.getByRole("option", { name: /^Full access/ })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await page.getByRole("button", { name: "Save task" }).click();
+    await vi.waitFor(() =>
+      expect(state.upsert).toHaveBeenLastCalledWith(expect.anything(), {
+        environmentId,
+        input: expect.objectContaining({
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "plan",
+        }),
+      }),
+    );
   });
 
   it("offers no model choice for a task bound to a thread, whose runs use the thread's model", async () => {

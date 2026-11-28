@@ -13048,5 +13048,12 @@
   "5807c08e225c6b3d": "Télécharger",
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
   "eb1fd384ad5919dd": "Note interne",
-  "b45f0b467e9406d0": "Répondre au client"
+  "b45f0b467e9406d0": "Répondre au client",
+  "cbcf2f92931a93fd": "Les exécutions utilisent l'espace de travail, les autorisations et le mode du fil de destination.",
+  "8a3707795c8cbd54": "Mode",
+  "ffb03f7e9c3d11ad": "Mode d'interaction",
+  "cb66aa6471c80179": "Construire",
+  "a15816b54dc2fd14": "Plan",
+  "3345dbc93147b56c": "Plan rédige une proposition avant d'agir.",
+  "ac5d2d6d0215d5fc": "Plan n'est pas disponible pour ce fournisseur."
 }

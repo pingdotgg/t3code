@@ -1628,7 +1628,11 @@ function ScheduledTaskEditorForm({
   );
   const managedPolicy = environment?.serverConfig?.managedPolicy;
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
-  const runtimeModeOptions = resolveRuntimeModeOptions(compatibleRuntimeModes, managedPolicy, m);
+  const runtimeModeOptions = resolveRuntimeModeOptions(
+    compatibleRuntimeModes,
+    managedPolicy,
+    messages,
+  );
   const runtimeMode =
     clampManagedRuntimeMode(managedPolicy, providerRuntimeMode, compatibleRuntimeModes) ??
     providerRuntimeMode;
@@ -2046,7 +2050,7 @@ function ScheduledTaskEditorForm({
                   }}
                 >
                   <SelectTrigger size="sm" id="scheduled-task-runtime-mode">
-                    <SelectValue>{m(runtimeModeConfig[runtimeMode].label)}</SelectValue>
+                    <SelectValue>{messages(runtimeModeConfig[runtimeMode].label)}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup>
                     {runtimeModeOptions.map((option) => (
@@ -2065,7 +2069,7 @@ function ScheduledTaskEditorForm({
                   </SelectPopup>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {m(runtimeModeConfig[runtimeMode].description)}
+                  {messages(runtimeModeConfig[runtimeMode].description)}
                 </p>
               </Field>
 

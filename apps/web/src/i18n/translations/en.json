@@ -13056,5 +13056,12 @@
   "5807c08e225c6b3d": "Download",
   "0d50b5bfe7151ece": "Could not download file",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "cbcf2f92931a93fd": "Runs use the destination thread's workspace, permissions, and mode.",
+  "8a3707795c8cbd54": "Mode",
+  "ffb03f7e9c3d11ad": "Interaction mode",
+  "cb66aa6471c80179": "Build",
+  "a15816b54dc2fd14": "Plan",
+  "3345dbc93147b56c": "Plan drafts a proposal before acting.",
+  "ac5d2d6d0215d5fc": "Plan is unavailable for this provider."
 }
