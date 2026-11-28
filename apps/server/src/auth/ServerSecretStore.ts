@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -192,11 +193,48 @@ export const make = Effect.gen(function* () {
     Option.isNone(secret) || secret.value.byteLength > 0;
   const cache = new Map<string, Option.Option<Uint8Array>>();
   const generations = new Map<string, number>();
+  const activeMutations = new Map<string, number>();
   const bumpGeneration = (name: string): number => {
     const next = (generations.get(name) ?? 0) + 1;
     generations.set(name, next);
     return next;
   };
+  const canPublishRead = (name: string, startGen: number): boolean =>
+    (activeMutations.get(name) ?? 0) === 0 && (generations.get(name) ?? 0) === startGen;
+  const runMutation = <E>(
+    name: string,
+    effect: Effect.Effect<void, E>,
+    cachedValueOnSuccess: Option.Option<Uint8Array>,
+  ): Effect.Effect<void, E> =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.sync(() => {
+        const writeGen = bumpGeneration(name);
+        activeMutations.set(name, (activeMutations.get(name) ?? 0) + 1);
+        return writeGen;
+      }).pipe(
+        Effect.flatMap((writeGen) =>
+          restore(effect).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                const remaining = (activeMutations.get(name) ?? 1) - 1;
+                if (remaining <= 0) {
+                  activeMutations.delete(name);
+                } else {
+                  activeMutations.set(name, remaining);
+                }
+                const unchangedDuringMutation = (generations.get(name) ?? 0) === writeGen;
+                bumpGeneration(name);
+                if (Exit.isSuccess(exit) && unchangedDuringMutation) {
+                  cache.set(name, cachedValueOnSuccess);
+                } else {
+                  cache.delete(name);
+                }
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
   const copyOptionBytes = (secret: Option.Option<Uint8Array>): Option.Option<Uint8Array> =>
     Option.map(secret, (bytes) => Uint8Array.from(bytes));
 
@@ -209,7 +247,7 @@ export const make = Effect.gen(function* () {
       return fileSystem.readFile(secretPath).pipe(
         Effect.map((bytes) => {
           const copy = Uint8Array.from(bytes);
-          if ((generations.get(name) ?? 0) === startGen) {
+          if (canPublishRead(name, startGen)) {
             cache.set(name, Option.some(copy));
           }
           return Option.some(Uint8Array.from(copy));
@@ -223,7 +261,7 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          if ((generations.get(name) ?? 0) === startGen) {
+          if (canPublishRead(name, startGen)) {
             cache.set(name, Option.none());
           }
           return Effect.succeedNone;
@@ -253,18 +291,7 @@ export const make = Effect.gen(function* () {
     resolveSecretPath(name).pipe(
       Effect.flatMap((secretPath) => {
         const copy = Uint8Array.from(value);
-        const writeGen = bumpGeneration(name);
-        return setAt(name, secretPath, copy).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              if ((generations.get(name) ?? 0) === writeGen) {
-                cache.set(name, Option.some(copy));
-              } else {
-                cache.delete(name);
-              }
-            }),
-          ),
-        );
+        return runMutation(name, setAt(name, secretPath, copy), Option.some(copy));
       }),
       Effect.withSpan("ServerSecretStore.set"),
     );
@@ -309,26 +336,7 @@ export const make = Effect.gen(function* () {
     resolveSecretPath(name).pipe(
       Effect.flatMap((secretPath) => {
         const copy = Uint8Array.from(value);
-        const writeGen = bumpGeneration(name);
-        return createAt(name, secretPath, copy).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              if ((generations.get(name) ?? 0) === writeGen) {
-                cache.set(name, Option.some(copy));
-              } else {
-                cache.delete(name);
-              }
-            }),
-          ),
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              if (isSecretAlreadyExistsError(error)) {
-                bumpGeneration(name);
-                cache.delete(name);
-              }
-            }),
-          ),
-        );
+        return runMutation(name, createAt(name, secretPath, copy), Option.some(copy));
       }),
     );
 
@@ -426,30 +434,24 @@ export const make = Effect.gen(function* () {
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
     resolveSecretPath(name).pipe(
-      Effect.flatMap((secretPath) => {
-        const writeGen = bumpGeneration(name);
-        return fileSystem.remove(secretPath).pipe(
-          Effect.catch((cause) =>
-            cause.reason._tag === "NotFound"
-              ? Effect.void
-              : Effect.fail(
-                  new SecretStoreRemoveError({
-                    resource: `secret ${name}`,
-                    cause,
-                  }),
-                ),
+      Effect.flatMap((secretPath) =>
+        runMutation(
+          name,
+          fileSystem.remove(secretPath).pipe(
+            Effect.catch((cause) =>
+              cause.reason._tag === "NotFound"
+                ? Effect.void
+                : Effect.fail(
+                    new SecretStoreRemoveError({
+                      resource: `secret ${name}`,
+                      cause,
+                    }),
+                  ),
+            ),
           ),
-          Effect.tap(() =>
-            Effect.sync(() => {
-              if ((generations.get(name) ?? 0) === writeGen) {
-                cache.set(name, Option.none());
-              } else {
-                cache.delete(name);
-              }
-            }),
-          ),
-        );
-      }),
+          Option.none(),
+        ),
+      ),
       Effect.withSpan("ServerSecretStore.remove"),
     );
 

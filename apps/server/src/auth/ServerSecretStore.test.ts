@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -325,6 +326,104 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
         assert.isTrue(Option.isNone(yield* secretStore.get("cached-secret")));
         assert.equal(secretReads, 1);
       }).pipe(Effect.provide(layerCountingStore));
+    }),
+  );
+
+  it.effect("does not let an overlapping cache-miss read overwrite a newer set", () =>
+    Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const encode = (value: string) => new TextEncoder().encode(value);
+      let firstReadPaused = false;
+      const layerPausedReadFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...fileSystem,
+            readFile: (path) => {
+              if (!firstReadPaused && /[\\/]race-secret\.bin$/.test(String(path))) {
+                firstReadPaused = true;
+                return Effect.gen(function* () {
+                  const bytes = yield* fileSystem.readFile(path);
+                  yield* Deferred.succeed(readStarted, void 0);
+                  yield* Deferred.await(releaseRead);
+                  return bytes;
+                });
+              }
+              return fileSystem.readFile(path);
+            },
+          } satisfies FileSystem.FileSystem;
+        }),
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+      const layerRaceStore = ServerSecretStore.layer.pipe(
+        Layer.provide(layerServerConfig()),
+        Layer.provideMerge(layerPausedReadFileSystem),
+      );
+
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const secretPath = `${secretStore.directory}/race-secret.bin`;
+        yield* fileSystem.writeFile(secretPath, encode("stale"));
+
+        const pausedGet = yield* secretStore.get("race-secret").pipe(Effect.forkChild);
+        yield* Deferred.await(readStarted);
+        yield* secretStore.set("race-secret", encode("fresh"));
+        yield* Deferred.succeed(releaseRead, void 0);
+
+        const initialRead = Option.getOrThrow(yield* Fiber.join(pausedGet));
+        assert.equal(new TextDecoder().decode(initialRead), "stale");
+
+        const latest = Option.getOrThrow(yield* secretStore.get("race-secret"));
+        assert.equal(new TextDecoder().decode(latest), "fresh");
+      }).pipe(Effect.provide(layerRaceStore));
+    }),
+  );
+
+  it.effect("invalidates the cache when set fails after renaming the secret file", () =>
+    Effect.gen(function* () {
+      const encode = (value: string) => new TextEncoder().encode(value);
+      const layerPostRenameChmodFailureFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...fileSystem,
+            chmod: (path, mode) =>
+              /[\\/]chmod-fail-secret\.bin$/.test(String(path))
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "chmod",
+                      pathOrDescriptor: String(path),
+                      description: "chmod failed after rename.",
+                    }),
+                  )
+                : fileSystem.chmod(path, mode),
+          } satisfies FileSystem.FileSystem;
+        }),
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+      const layerChmodFailureStore = ServerSecretStore.layer.pipe(
+        Layer.provide(layerServerConfig()),
+        Layer.provideMerge(layerPostRenameChmodFailureFileSystem),
+      );
+
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+        yield* secretStore.create("chmod-fail-secret", encode("previous"));
+
+        const error = yield* Effect.flip(
+          secretStore.set("chmod-fail-secret", encode("persisted-before-chmod-error")),
+        );
+        assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
+
+        const readAfterFailure = Option.getOrThrow(yield* secretStore.get("chmod-fail-secret"));
+        assert.equal(new TextDecoder().decode(readAfterFailure), "persisted-before-chmod-error");
+      }).pipe(Effect.provide(layerChmodFailureStore));
     }),
   );
 });
