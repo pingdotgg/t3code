@@ -33,6 +33,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
@@ -353,20 +354,37 @@ function locateRegexMatches(
   return ranges;
 }
 
-// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+// `git grep -z` records: NUL-terminated metadata fields (filenames may contain LF), then LF-terminated text.
 function parseGitGrepRecords(
   stdout: string,
   fieldCount: number,
   truncated: boolean,
 ): Array<Array<string>> {
-  const lines = stdout.split("\n");
-  if (truncated || lines.at(-1) === "") lines.pop();
   const records: Array<Array<string>> = [];
-  for (const line of lines) {
-    const fields = line.split("\0");
-    if (fields.length < fieldCount) continue;
-    // Only the last field (the line or match text) can contain NUL bytes.
-    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  let offset = 0;
+  while (offset < stdout.length) {
+    const fields: Array<string> = [];
+    let complete = true;
+    for (let index = 0; index < fieldCount - 1; index += 1) {
+      const delimiter = stdout.indexOf("\0", offset);
+      if (delimiter === -1) {
+        complete = false;
+        break;
+      }
+      fields.push(stdout.slice(offset, delimiter));
+      offset = delimiter + 1;
+    }
+    if (!complete) break;
+    const lineEnd = stdout.indexOf("\n", offset);
+    if (lineEnd === -1) {
+      if (truncated) break;
+      fields.push(stdout.slice(offset));
+      records.push(fields);
+      break;
+    }
+    fields.push(stdout.slice(offset, lineEnd));
+    records.push(fields);
+    offset = lineEnd + 1;
   }
   return records;
 }
@@ -878,7 +896,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         break;
       }
       const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-      const lineContent = line.slice(0, CONTENT_LINE_MAX_LENGTH);
+      const lineContent = line.slice(
+        0,
+        splitsSurrogatePair(line, CONTENT_LINE_MAX_LENGTH)
+          ? CONTENT_LINE_MAX_LENGTH - 1
+          : CONTENT_LINE_MAX_LENGTH,
+      );
       const ranges = (
         literal
           ? Array.from((input.wholeWord ? line : lineContent).matchAll(literal), (match) => ({

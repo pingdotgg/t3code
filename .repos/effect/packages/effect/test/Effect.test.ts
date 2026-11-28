@@ -5187,6 +5187,10 @@ describe("Effect", () => {
       readonly reason: RateLimitError | QuotaExceededError
     }> {}
 
+    class OtherError extends Data.TaggedError("OtherError")<{
+      readonly message: string
+    }> {}
+
     it.effect("catches with object handlers", () =>
       Effect.gen(function*() {
         const result = yield* Effect.fail(
@@ -5254,6 +5258,24 @@ describe("Effect", () => {
           result,
           Exit.failCause(Cause.combine(Cause.die(error), Cause.die("finalizer failure")))
         )
+      }))
+
+    it.effect("empty handlers with a failing orElse behave like unwrapReason", () =>
+      Effect.gen(function*() {
+        const reason = new RateLimitError({ retryAfter: 60 })
+        const program = Effect.fail(new AiError({ reason })) as Effect.Effect<never, AiError | OtherError>
+        const exit = yield* program.pipe(
+          Effect.catchReasons("AiError", {}, (reason) => reason),
+          Effect.exit
+        )
+        assertExitFailure(exit, Cause.fail(reason))
+        assert.deepStrictEqual(exit, yield* Effect.exit(Effect.unwrapReason(program, "AiError")))
+        const other = new OtherError({ message: "test" })
+        const otherExit = yield* (Effect.fail(other) as Effect.Effect<never, AiError | OtherError>).pipe(
+          Effect.catchReasons("AiError", {}, (reason) => reason),
+          Effect.exit
+        )
+        assertExitFailure(otherExit, Cause.fail(other))
       }))
   })
 
