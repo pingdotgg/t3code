@@ -56,6 +56,7 @@ interface ActiveStroke {
 const SVG_NS = "http://www.w3.org/2000/svg";
 // The browser panel's Draw tool paints 4 CSS pixels wide in its theme's primary color.
 const STROKE_SCREEN_WIDTH = 4;
+const ERASER_SCREEN_WIDTH = 16;
 const PRIMARY_COLOR = "var(--primary)";
 const STROKE_COLORS = [PRIMARY_COLOR, "#ef4444", "#f59e0b", "#22c55e", "#ffffff", "#000000"];
 
@@ -305,6 +306,21 @@ export function ImageAnnotationOverlay({
         onPointerUp={finishStroke}
         onPointerCancel={finishStroke}
       >
+        {tool === "erase" && (
+          <g aria-hidden="true">
+            {strokes.map((stroke) => (
+              <path
+                key={stroke.id}
+                data-stroke-id={stroke.id}
+                d={stroke.path}
+                stroke="transparent"
+                strokeWidth={ERASER_SCREEN_WIDTH}
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="stroke"
+              />
+            ))}
+          </g>
+        )}
         {strokes.map((stroke) => (
           <path
             key={stroke.id}
