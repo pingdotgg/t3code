@@ -4,8 +4,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
+import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import { definition } from "../shared/definition.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsIssueTracker from "./AzureDevOpsIssueTracker.ts";
 
@@ -202,7 +204,7 @@ describe("AzureDevOpsIssueTracker", () => {
       ]);
       expect(issue.linkedPullRequests).toEqual([
         {
-          repository: "Web App/web",
+          repository: "acme/Web App/_git/web",
           number: 50,
           title: "fix(web): keep composer focus",
           url: "https://dev.azure.com/acme/Web%20App/_git/web/pullrequest/50",
@@ -397,7 +399,6 @@ describe("AzureDevOpsIssueTracker", () => {
           return encode({
             ...WORK_ITEM,
             url: "https://acme.visualstudio.com/p-guid/_apis/wit/workItems/7",
-            relations: [],
           });
         }
         if (args[args.indexOf("--resource") + 1] !== "updates") return answer(args);
@@ -424,6 +425,14 @@ describe("AzureDevOpsIssueTracker", () => {
       expect(issue.url).toBe("https://acme.visualstudio.com/Web%20App/_workitems/edit/7");
       expect(issue.events).toHaveLength(101);
       expect(issue.events.at(-1)?.detail).toBe("title 102");
+      // Clients open a linked pull request on the work item's host, keyed like a checkout's remote.
+      const [link] = issue.linkedPullRequests;
+      expect(link?.repository).toBe("Web App/_git/web");
+      expect(
+        definition.canonicalRepositoryKey?.(
+          `acme.visualstudio.com/${canonicalRepositoryPath(link?.repository ?? "")}`,
+        ),
+      ).toBe("dev.azure.com/acme/web%20app/_git/web");
     }),
   );
 
