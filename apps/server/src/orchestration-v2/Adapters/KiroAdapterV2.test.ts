@@ -480,6 +480,53 @@ const terminalStatus = (events: ReadonlyArray<ProviderAdapterV2Event>) => {
 };
 
 describe("KiroAdapterV2", () => {
+  it.effect("publishes Kiro context usage as a percentage-only snapshot", () =>
+    runKiroScript({
+      scenario: "context-usage",
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, modelOption("auto"), autopilotOption("on")],
+        }),
+        turnPrompt,
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: {
+            kiro: {
+              kind: "context_usage",
+              contextUsage: { usagePercentage: 9.38 },
+              usagePercentage: 9.38,
+            },
+          },
+        }),
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          const collected = yield* collectTurn(events);
+          const usage = collected.findLast(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage !== null,
+          );
+          assert.equal(
+            usage?.type === "provider_thread.updated"
+              ? usage.providerThread.contextUsage?.usedTokens
+              : null,
+            undefined,
+          );
+          assert.equal(
+            usage?.type === "provider_thread.updated"
+              ? usage.providerThread.contextUsage?.usedPercentage
+              : null,
+            9.38,
+          );
+        }),
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("opens a session and refuses compaction on a deployment with no Kiro extensions", () =>
     runKiroScript({
       scenario: "no-extensions",

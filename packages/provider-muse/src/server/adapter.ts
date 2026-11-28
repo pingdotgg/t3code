@@ -1609,7 +1609,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const contextUsage = thread?.contextUsage;
             turn.providerTurn = {
               ...turn.providerTurn,
-              ...(contextUsage
+              ...(contextUsage?.usedTokens !== undefined
                 ? {
                     tokenUsage: {
                       ...turn.providerTurn.tokenUsage,

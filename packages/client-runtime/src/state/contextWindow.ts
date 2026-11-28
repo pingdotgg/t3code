@@ -35,7 +35,11 @@ type NullableContextWindowUsage = {
     : ThreadTokenUsageSnapshot[Key];
 };
 
-export type ContextWindowSnapshot = NullableContextWindowUsage & {
+export type ContextWindowSnapshot = Omit<
+  NullableContextWindowUsage,
+  "usedTokens" | "usedPercentage"
+> & {
+  readonly usedTokens: number | null;
   readonly remainingTokens: number | null;
   readonly usedPercentage: number | null;
   readonly remainingPercentage: number | null;
@@ -195,14 +199,20 @@ export function deriveLatestContextWindowSnapshot(
     providerUsageUpdatedAt !== undefined
   ) {
     const maxTokens = asFiniteNumber(providerUsage.maxTokens);
-    const usedTokens = providerUsage.usedTokens;
+    const usedTokens = asFiniteNumber(providerUsage.usedTokens);
+    const reportedPercentage = asFiniteNumber(providerUsage.usedPercentage);
     const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+      maxTokens !== null && maxTokens > 0 && usedTokens !== null
+        ? Math.min(100, (usedTokens / maxTokens) * 100)
+        : reportedPercentage;
     return {
       usedTokens,
       totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),
       maxTokens,
-      remainingTokens: maxTokens === null ? null : Math.max(0, Math.round(maxTokens - usedTokens)),
+      remainingTokens:
+        maxTokens === null || usedTokens === null
+          ? null
+          : Math.max(0, Math.round(maxTokens - usedTokens)),
       usedPercentage,
       remainingPercentage: usedPercentage === null ? null : Math.max(0, 100 - usedPercentage),
       inputTokens: asFiniteNumber(providerUsage.inputTokens),

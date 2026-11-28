@@ -1180,6 +1180,19 @@ describe("AcpRuntimeModel", () => {
         cost: { amount: 0.42, currency: "USD" },
       },
     });
+    const invalidPercentage = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 2_500,
+        size: 10_000,
+        _meta: { t3: { usedPercentage: 101 } },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(invalidPercentage.events[0]).toMatchObject({
+      _tag: "UsageUpdated",
+      usage: { usedTokens: 2_500, maxTokens: 10_000 },
+    });
     expect(metadata.events[0]).toMatchObject({
       _tag: "SessionInfoUpdated",
       metadata: {
