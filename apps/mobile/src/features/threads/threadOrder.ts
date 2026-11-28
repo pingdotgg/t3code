@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
   planPinnedReorder,
@@ -72,9 +73,13 @@ function rowId(row: OrderRow): string {
   return `${row.environmentId}:${row.id}`;
 }
 
+function storedKey(row: OrderRow, section: PendingThreadOrder["section"]) {
+  return (section === "pinned" ? row.pinOrderKey : row.activeOrderKey) ?? null;
+}
+
 function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   return {
-    key: (section === "pinned" ? row.pinOrderKey : row.activeOrderKey) ?? null,
+    key: section === "pinned" ? storedKey(row, section) : activeThreadSortKey(row),
     anchor: section === "pinned" ? (row.pinnedAt ?? "") : (row.unsettledAt ?? row.createdAt),
   };
 }
@@ -86,12 +91,13 @@ export function createThreadMovePlanner(input: {
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
 }) {
   const orderedIds = input.ordered.map(rowId);
-  const keysById = new Map(
-    (input.allThreads ?? input.ordered).map((row) => [
-      rowId(row),
-      rowOrder(row, input.section).key,
-    ]),
-  );
+  // Hidden rows keep their stored key: only stored keys can collide with a write.
+  const keysById = new Map([
+    ...(input.allThreads ?? input.ordered).map(
+      (row) => [rowId(row), storedKey(row, input.section)] as const,
+    ),
+    ...input.ordered.map((row) => [rowId(row), rowOrder(row, input.section).key] as const),
+  ]);
   const writableIds = new Set(
     (input.allThreads ?? input.ordered)
       .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
@@ -141,9 +147,10 @@ export function computeThreadMoveAvailability(input: {
   const writableIds = new Set<string>();
   for (const row of input.allThreads ?? input.ordered) {
     const id = rowId(row);
-    keysById.set(id, rowOrder(row, input.section).key);
+    keysById.set(id, storedKey(row, input.section));
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
+  for (const row of rows) keysById.set(rowId(row), rowOrder(row, input.section).key);
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);

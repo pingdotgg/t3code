@@ -16,7 +16,8 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
+import { useAppActive } from "../../lib/appState";
 import {
   effectiveSnoozed,
   threadWokeAt,
@@ -77,7 +78,7 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -148,11 +149,9 @@ import {
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { environmentCatalog } from "../../connection/catalog";
-import { deviceEnvironment } from "../../state/device";
-import { useEnvironmentQuery } from "../../state/query";
-import { threadDevicePreviews } from "../devices/threadDevicePreviews";
+import { useThreadDevicePreviewCount } from "../../state/device";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
-import { useThreadServerBrowserTabs } from "../../state/preview";
+import { useThreadServerBrowserTabCount } from "../../state/preview";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
@@ -173,6 +172,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
+import { useEnvironmentScopeDenied } from "../../state/session";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
 import type {
@@ -194,7 +194,11 @@ import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
 } from "./floating-working-control";
-import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import {
+  connectionFloatingStatus,
+  type FloatingStatusAction,
+  type FloatingWorkingStatus,
+} from "./floating-working-status";
 import type { ThreadStatusLineModel } from "./thread-context-divider";
 import {
   derivePendingUserInputMaxHeight,
@@ -223,7 +227,6 @@ import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 
 export interface ThreadDetailScreenProps {
-  readonly header?: React.ReactNode;
   readonly draftMode?: {
     /** viewportHeight excludes the composer so draft chrome can resize it without feedback. */
     readonly content: (
@@ -312,6 +315,8 @@ export interface ThreadDetailScreenProps {
     ) => Promise<boolean | "responded">,
     onWillEnqueue?: () => void,
   ) => Promise<MessageId | null>;
+  /** Queues a standalone text command, such as `/goal clear`, without touching the draft. */
+  readonly onSendCommand: (text: string) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
   readonly onRespondToApproval: ApprovalResponder;
@@ -332,6 +337,15 @@ export interface ThreadDetailScreenProps {
 
 // iOS questions overlay the controls; Android questions stack with child approvals.
 const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
+
+// A child, so focus and app state changes do not re-render the thread body.
+// The native stack keeps covered screens mounted, so gate on focus too.
+function ThreadStreamHaptics(props: { readonly threadRef: ScopedThreadRef | null }) {
+  const screenIsFocused = useIsFocused();
+  const appIsActive = useAppActive();
+  useAtomMount(threadStreamHaptics(screenIsFocused && appIsActive ? props.threadRef : null));
+  return null;
+}
 
 /**
  * Hands the feed the screen width measured for a native column; elsewhere keeps the inherited one.
@@ -429,10 +443,10 @@ function ThreadDetailBody(
   const openInspector = useOpenThreadInspector();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
-  const deviceState = useEnvironmentQuery(
-    deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
+  const devicePreviewCount = useThreadDevicePreviewCount(
+    props.environmentId,
+    props.selectedThread.id,
   );
-  const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
   const openDevicePreview = () => {
     Keyboard.dismiss();
     if (
@@ -447,11 +461,12 @@ function ThreadDetailBody(
       threadId: props.selectedThread.id,
     });
   };
-  const browserTabs = useThreadServerBrowserTabs({
+  const serverBrowserEnabled =
+    !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true;
+  const browserTabCount = useThreadServerBrowserTabCount({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
-    enabled:
-      !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true,
+    enabled: serverBrowserEnabled,
   });
   const openBrowserPreview = (tabId?: string) => {
     Keyboard.dismiss();
@@ -556,6 +571,10 @@ function ThreadDetailBody(
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  const canTriageThread = !useEnvironmentScopeDenied(
+    props.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(
@@ -599,7 +618,7 @@ function ThreadDetailBody(
       Dialog.alert(
         gt("Turn stopped; the agent process kept running"),
         gt(
-          "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop those to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
+          "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop that thread to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
           { count: others },
         ),
       );
@@ -655,7 +674,9 @@ function ThreadDetailBody(
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    const permitted =
+      action === "wake" || action === "unsettle" ? canTriageThread : props.canOperateThread;
+    if (statusPending || !permitted) return;
     const request: BackgroundWorkStopRequest = {
       threadKey: selectedThreadKey,
       taskIds:
@@ -716,6 +737,21 @@ function ThreadDetailBody(
         errorDisplayMessage(error, m) ?? gt("Try again."),
       );
     }
+  };
+  const [goalCommandPending, setGoalCommandPending] = useState(false);
+  const runGoalCommand = async (command: string) => {
+    if (goalCommandPending || !props.canOperateThread) return;
+    setGoalCommandPending(true);
+    // No `finally`: React Compiler cannot lower it.
+    try {
+      await props.onSendCommand(command);
+    } catch (error) {
+      Dialog.alert(
+        gt("Could not update goal"),
+        error instanceof Error ? error.message : gt("Try again."),
+      );
+    }
+    setGoalCommandPending(false);
   };
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
@@ -785,7 +821,9 @@ function ThreadDetailBody(
               : gt("Dismissing...")
           : actionLabel,
         accessibilityLabel: actionLabel,
-        disabled: !props.canOperateThread || statusPending,
+        disabled:
+          !(lifecycleSnoozed || settled ? canTriageThread : props.canOperateThread) ||
+          statusPending,
         onPress: () =>
           void runStatusAction(lifecycleSnoozed ? "wake" : settled ? "unsettle" : "dismiss"),
       },
@@ -862,10 +900,35 @@ function ThreadDetailBody(
     }
     if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
       const goal = presentProviderGoal(props.selectedThread.goal, false, messages);
+      const goalDriver = props.serverConfig?.providers.find(
+        (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+      )?.driver;
+      const goalAction = (
+        label: string,
+        accessibilityLabel: string,
+        command: string,
+      ): FloatingStatusAction => ({
+        label,
+        accessibilityLabel,
+        disabled: !props.canOperateThread || goalCommandPending,
+        onPress: () => void runGoalCommand(command),
+      });
+      // The server rejects Antigravity goal controls and Claude resume. Resume would stop
+      // unrelated work, so it waits for the thread to go idle.
+      const goalActions =
+        goalDriver === "antigravity"
+          ? []
+          : [
+              ...(goal.canResume && goalDriver !== "claudeAgent" && !props.activeThreadBusy
+                ? [goalAction(gt("Resume"), gt("Resume goal"), "/goal resume")]
+                : []),
+              goalAction(gt("Clear"), gt("Clear goal"), "/goal clear"),
+            ];
       return {
         kind: "goal",
         label: goal.title,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
+        actions: goalActions,
       };
     }
     if (extensionStatus !== null && contentPresentationKind === "ready") {
@@ -878,8 +941,8 @@ function ThreadDetailBody(
     showWorkingControl ||
     queuedCount > 0 ||
     agentsSegment !== null ||
-    devicePreviews.length > 0 ||
-    browserTabs.tabs.length > 0;
+    devicePreviewCount > 0 ||
+    browserTabCount > 0;
   const selectedThreadFeed = props.selectedThreadFeed;
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
@@ -973,6 +1036,7 @@ function ThreadDetailBody(
           props.serverConfig?.providers ?? [],
           props.serverConfig?.usageLimitSources ?? [],
           usageLimitsPanel.now,
+          props.selectedThread.modelSelection.model,
         )
       : null;
   const showUsageLimits = (report: UsageLimitsReport | null) =>
@@ -1114,6 +1178,9 @@ function ThreadDetailBody(
     return userInputMotion === "fresh" ? 1 : withTiming(1, USER_INPUT_TOGGLE_TIMING);
   }, [userInputMotion]);
   const userInputCardCoverage = useSharedValue(0);
+  // The control already sits above every panel row, so it lifts only by how far the iOS card rises past the top of the panels.
+  const userInputPanelsTop = useSharedValue(0);
+  const userInputCardTop = useSharedValue(0);
   const composerPopoverHeight = useSharedValue(0);
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const reduceMotion = useReducedMotion();
@@ -1149,7 +1216,11 @@ function ThreadDetailBody(
   const floatingControlLift = useDerivedValue(
     () =>
       Math.max(
-        userInputCoverageApplies ? userInputCardProgress.value * userInputCardCoverage.value : 0,
+        userInputCoverageApplies
+          ? userInputCardProgress.value * userInputCardCoverage.value -
+              userInputPanelsTop.value -
+              userInputCardTop.value
+          : 0,
         composerPopoverLift.value,
       ),
     [userInputCoverageApplies],
@@ -1227,7 +1298,6 @@ function ThreadDetailBody(
       ? null
       : { width: Math.max(0, columnWidth - controlInsets.left - controlInsets.right) };
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useAtomMount(threadStreamHaptics(props.selectedThreadDetailRef));
   const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
@@ -1445,6 +1515,7 @@ function ThreadDetailBody(
 
   return (
     <View className="flex-1" onLayout={handleScreenLayout}>
+      <ThreadStreamHaptics threadRef={props.selectedThreadDetailRef} />
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
         props.draftMode.content(
@@ -1549,8 +1620,7 @@ function ThreadDetailBody(
           key={selectedThreadKey}
           environmentId={props.environmentId}
           threadId={props.selectedThread.id}
-          tabs={browserTabs.tabs}
-          loaded={browserTabs.loaded}
+          enabled={serverBrowserEnabled}
           top={navigationHeaderHeight + 8}
           onOpen={openBrowserPreview}
         />
@@ -1571,9 +1641,6 @@ function ThreadDetailBody(
           }
           offset={{ closed: 0, opened: composerKeyboardOffset }}
         >
-          {questionInFlow ? (
-            <Animated.View pointerEvents="none" style={questionStatusSpace} />
-          ) : null}
           <ComposerPopoverHost
             hidden={composerSlotHidden}
             popoverHeight={composerPopoverHeight}
@@ -1593,6 +1660,7 @@ function ThreadDetailBody(
                           position: "absolute",
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         columnComposerWidthStyle,
                       ]
@@ -1602,11 +1670,17 @@ function ThreadDetailBody(
                           bottom: controlInsets.bottom,
                           left: controlInsets.left,
                           right: controlInsets.right,
+                          paddingTop: FLOATING_WORKING_CONTROL_COVERAGE,
                         },
                         composerWidthStyle,
                       ]
               }
             >
+              {/* Android clips accessibility bounds to the parent, so the floating control's
+                space stays inside this host, or TalkBack cannot reach the pill. */}
+              {questionInFlow ? (
+                <Animated.View pointerEvents="none" style={questionStatusSpace} />
+              ) : null}
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
@@ -1622,13 +1696,13 @@ function ThreadDetailBody(
                     }
                     lift={floatingControlLift}
                     devicePreview={
-                      devicePreviews.length > 0
-                        ? { count: devicePreviews.length, onPress: openDevicePreview }
+                      devicePreviewCount > 0
+                        ? { count: devicePreviewCount, onPress: openDevicePreview }
                         : null
                     }
                     browserPreview={
-                      browserTabs.tabs.length > 0
-                        ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                      browserTabCount > 0
+                        ? { count: browserTabCount, onPress: () => openBrowserPreview() }
                         : null
                     }
                     showScrollToEnd={showScrollToEndButton}
@@ -1763,6 +1837,11 @@ function ThreadDetailBody(
                             ? { paddingBottom: composerBottomInset }
                             : undefined
                         }
+                        onLayout={
+                          Platform.OS === "ios"
+                            ? (event) => userInputPanelsTop.set(event.nativeEvent.layout.y)
+                            : undefined
+                        }
                         entering={FadeInDown.duration(220)}
                         exiting={FadeOut.duration(140)}
                       >
@@ -1794,6 +1873,11 @@ function ThreadDetailBody(
                             onStopThread={props.onStopThread}
                             cardProgress={userInputCardProgress}
                             cardCoverage={userInputCardCoverage}
+                            onLayout={
+                              Platform.OS === "ios"
+                                ? (event) => userInputCardTop.set(event.nativeEvent.layout.y)
+                                : undefined
+                            }
                             onInputFocusChange={handleOwnedInputFocusChange}
                             drafts={props.activePendingUserInputDrafts}
                             answers={props.activePendingUserInputAnswers}

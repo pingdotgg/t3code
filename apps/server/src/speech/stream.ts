@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -15,6 +16,10 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SpeechService from "./SpeechService.ts";
+
+// A recording client streams audio continuously; behind a proxy a vanished
+// client never closes the server side, so silence is the only sign it is gone.
+const SPEECH_SOCKET_IDLE_TIMEOUT = "15 seconds";
 
 const decodeCommand = Schema.decodeUnknownEffect(Schema.fromJsonString(SpeechStreamCommand));
 
@@ -68,18 +73,38 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
     );
   };
   const reader = yield* socket.reader;
-  yield* Effect.gen(function* () {
+  // Silence only counts while every received frame has been answered.
+  let unanswered = 0;
+  const activity = yield* Queue.sliding<void>(1);
+  const idle = Effect.gen(function* () {
+    while (true) {
+      const heard = yield* Queue.take(activity).pipe(
+        Effect.timeoutOption(SPEECH_SOCKET_IDLE_TIMEOUT),
+      );
+      if (Option.isNone(heard) && unanswered === 0) return;
+    }
+  });
+  const read = Effect.gen(function* () {
     const pending = yield* Queue.bounded<string | Uint8Array>(2);
-    yield* Effect.forever(Queue.take(pending).pipe(Effect.flatMap(receive))).pipe(
-      Effect.forkScoped,
-    );
+    yield* Effect.forever(
+      Queue.take(pending).pipe(
+        Effect.flatMap(receive),
+        Effect.andThen(() => {
+          unanswered--;
+          return Queue.offer(activity, undefined);
+        }),
+      ),
+    ).pipe(Effect.forkScoped);
     while (true) {
       const frames = yield* reader.pull;
+      unanswered += frames.length;
+      yield* Queue.offer(activity, undefined);
       yield* Effect.forEach(frames, (frame) => Queue.offer(pending, frame), {
         discard: true,
       });
     }
-  }).pipe(
+  });
+  yield* Effect.raceFirst(read, idle).pipe(
     Effect.timeoutOrElse({
       duration: "10 minutes",
       // The socket read loop is already interrupted here; its writer can no longer send.

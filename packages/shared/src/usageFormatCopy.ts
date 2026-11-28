@@ -16,7 +16,7 @@ export function usageSourceMessages(
   return usageSourceMessagesWith(sources, (count) =>
     resolve(
       msg(
-        "{count, plural, one {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.}}",
+        "{count, plural, one {{count} malformed or inconsistent usage record was skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage records were skipped; usage may be incomplete.}}",
         { count },
       ),
     ),

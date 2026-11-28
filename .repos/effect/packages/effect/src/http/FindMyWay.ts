@@ -33,15 +33,121 @@ import * as internal from "./FindMyWay/internal/router.ts"
 /**
  * Configuration for router path matching.
  *
+ * **Details**
+ *
+ * Each field is independent. Omitted fields use the default listed on the
+ * field. The defaults normalize request paths before matching; use
+ * {@link strictConfig} to turn normalization off and match static route text
+ * literally.
+ *
+ * **Gotchas**
+ *
+ * Normalization options change which request paths reach a route. If a
+ * reverse proxy or gateway makes access decisions from the raw path, the
+ * router may resolve a request that the proxy saw as a different path. The
+ * router sees the path delivered by the platform adapter: Web `Request`
+ * adapters have already resolved dot segments, while Node passes the request
+ * target through unchanged.
+ *
  * @stability unstable
  * @category models
  * @since 4.0.0
  */
 export interface RouterConfig {
+  /**
+   * Treats `/a/` and `/a` as the same path.
+   *
+   * @default true
+   */
   readonly ignoreTrailingSlash: boolean
+  /**
+   * Collapses repeated `/` characters in the path.
+   *
+   * @default true
+   */
   readonly ignoreDuplicateSlashes: boolean
+  /**
+   * Compares route text with letter case preserved. Parameter values keep
+   * their case either way.
+   *
+   * @default false
+   */
   readonly caseSensitive: boolean
+  /**
+   * Maximum length of a decoded path parameter. Longer values do not match.
+   *
+   * @default 100
+   */
   readonly maxParamLength: number
+  /**
+   * Ends the path at the first `;`, as well as at `?` and `#`, and parses the
+   * rest as the query string. When `false`, `;` is an ordinary path
+   * character.
+   *
+   * @default true
+   * @since 4.0.0
+   */
+  readonly useSemicolonDelimiter?: boolean | undefined
+  /**
+   * Percent-decodes the whole request path before matching. When `false`,
+   * a route segment without parameters only matches the same characters in
+   * the request path, so `/%73ecret` does not match `/secret`.
+   *
+   * **Details**
+   *
+   * With `false`, route text is stored as written: register `/caf%C3%A9` to
+   * match a request for `/caf%C3%A9`. In each segment, the text before the
+   * first parameter or wildcard is compared with the request path as
+   * received. From a parameter to the end of its segment, or from a wildcard
+   * to the end of the path, the request text is decoded once and then
+   * matched, so `/files/pre-:name.png` matches `/files/pre-a%2Epng` but not
+   * `/files/%70re-a.png`. A malformed escape in that decoded part does not
+   * match.
+   *
+   * @default true
+   * @since 4.0.0
+   */
+  readonly decodeStaticPath?: boolean | undefined
+}
+
+/**
+ * Router configuration that turns off path normalization and matches static
+ * route text literally.
+ *
+ * **When to use**
+ *
+ * Use when a reverse proxy or gateway authorizes requests by path prefix and
+ * the router must not resolve a different spelling of that path to a route.
+ *
+ * **Details**
+ *
+ * It sets `caseSensitive: true`, `ignoreTrailingSlash: false`,
+ * `ignoreDuplicateSlashes: false`, `useSemicolonDelimiter: false`, and
+ * `decodeStaticPath: false`. A route then matches only when each of its
+ * segments without parameters, and the text before the first parameter in
+ * each other segment, appears character for character in the request path.
+ * Spread it to override individual fields.
+ *
+ * **Gotchas**
+ *
+ * Parameter values are still percent-decoded, so a path rule that overlaps a
+ * parameter segment, such as `/files/secret` against `/files/:name`, can
+ * still be reached as `/files/%73ecret`. Encoded separators such as `%2F` in
+ * parameter values are decoded too, and text after a parameter in the same
+ * segment is matched after decoding, so `/files/:name.png` also matches
+ * `/files/a%2Epng`.
+ *
+ * @see {@link RouterConfig}
+ * @stability unstable
+ * @category constants
+ * @since 4.0.0
+ */
+export const strictConfig: Partial<RouterConfig> = {
+  caseSensitive: true,
+  ignoreTrailingSlash: false,
+  ignoreDuplicateSlashes: false,
+  useSemicolonDelimiter: false,
+  decodeStaticPath: false
 }
 
 /**

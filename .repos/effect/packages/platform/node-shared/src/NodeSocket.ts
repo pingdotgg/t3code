@@ -157,11 +157,21 @@ export const fromDuplex = <RO>(
      */
     readonly chunkSize?: number | undefined
     readonly tlsServer?: boolean | undefined
+    /** Set to true for a single connection that cannot be reacquired. Defaults to false. */
+    readonly disableReconnects?: boolean | undefined
   }
 ): Effect.Effect<Socket.Socket, never, Exclude<RO, Scope.Scope>> =>
   Effect.withFiber<Socket.Socket, never, Exclude<RO, Scope.Scope>>((fiber) => {
     let currentSocket: Duplex | undefined
+    let terminalError: Socket.SocketError | undefined
     const latch = Latch.makeUnsafe(false)
+    const disableReconnects = options?.disableReconnects === true
+    const terminate = disableReconnects
+      ? (error: Socket.SocketError) => {
+        terminalError ??= error
+        latch.openUnsafe()
+      }
+      : () => latch.closeUnsafe()
     const openServices = fiber.context as Context.Context<RO>
     const isServer = options?.tlsServer === true
     const requestedChunkSize = options?.chunkSize ?? 4096
@@ -171,7 +181,7 @@ export const fromDuplex = <RO>(
       : 4096
     const secureEvent = isServer ? "secure" : "secureConnect"
 
-    const reader: Socket.Socket["reader"] = Effect.gen(function*() {
+    const connect: Socket.Socket["reader"] = Effect.gen(function*() {
       const scope = yield* Effect.scope
       let conn = yield* Scope.provide(open, scope).pipe(
         options?.openTimeout !== undefined ?
@@ -289,12 +299,13 @@ export const fromDuplex = <RO>(
             })
           )
           detachReadListeners(conn)
-          latch.closeUnsafe()
           currentSocket = undefined
           upgradeAvailable = false
+          terminate(error!)
         })
       )
 
+      if (terminalError !== undefined) return yield* Effect.fail(terminalError)
       currentSocket = conn
       latch.openUnsafe()
 
@@ -335,6 +346,7 @@ export const fromDuplex = <RO>(
             )
           }
           return Effect.callback<void, Socket.SocketError>((resume) => {
+            if (terminalError !== undefined) return resume(Effect.fail(terminalError))
             const raw = conn
             detachReadListeners(raw)
 
@@ -421,6 +433,13 @@ export const fromDuplex = <RO>(
     }).pipe(
       Effect.updateContext((input: Context.Context<Scope.Scope>) => Context.merge(openServices, input))
     ) as Socket.Socket["reader"]
+    const reader: Socket.Socket["reader"] = disableReconnects
+      ? Effect.suspend(() =>
+        terminalError !== undefined
+          ? Effect.fail(terminalError)
+          : Effect.tapError(connect, (error) => Effect.sync(() => terminate(error)))
+      )
+      : connect
 
     const awaitDrain = (conn: Duplex) =>
       Effect.callback<void, Socket.SocketError>((resume) => {
@@ -459,6 +478,7 @@ export const fromDuplex = <RO>(
       chunk: Uint8Array | string | Socket.CloseEvent
     ): Effect.Effect<void, Socket.SocketError> =>
       Effect.suspend(() => {
+        if (terminalError !== undefined) return Effect.fail(terminalError)
         const conn = currentSocket
         if (conn === undefined) return latch.whenOpen(write(chunk))
         if (Socket.isCloseEvent(chunk)) {
@@ -480,6 +500,7 @@ export const fromDuplex = <RO>(
       chunks: Arr.NonEmptyReadonlyArray<Uint8Array | string>
     ): Effect.Effect<void, Socket.SocketError> =>
       Effect.suspend(() => {
+        if (terminalError !== undefined) return Effect.fail(terminalError)
         const conn = currentSocket
         if (conn === undefined) return latch.whenOpen(writeAll(chunks))
         let needsDrain = false

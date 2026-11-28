@@ -4,8 +4,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -13,6 +13,7 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
+  isSkillReloadCommand,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProvidersForCwd,
@@ -82,6 +83,15 @@ describe("getProviderSkillsForSlashMenu", () => {
     ];
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+  });
+});
+
+describe("isSkillReloadCommand", () => {
+  it("matches only a bare reload command", () => {
+    expect(isSkillReloadCommand(" /reload-skills\n")).toBe(true);
+    expect(isSkillReloadCommand("/Reload-Plugins")).toBe(true);
+    expect(isSkillReloadCommand("/reload-skills then use it")).toBe(false);
+    expect(isSkillReloadCommand("reload-skills")).toBe(false);
   });
 });
 
@@ -185,17 +195,16 @@ describe("provider workspace snapshot refresh atom", () => {
     let droppedReplies = options?.droppedReplies ?? 0;
     const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
     const responses: Response[] = [...(initialResponses ?? [])];
-    const run = vi.fn(async () => {
-      const providers = await (responses.shift() ?? (() => null))();
-      if (providers === null) {
-        return AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
-          Cause.fail("offline"),
-        );
-      }
-      if (droppedReplies > 0) droppedReplies -= 1;
-      else registry.set(providersAtom, providers);
-      return AsyncResult.success({ providers });
-    });
+    const run = vi.fn(() =>
+      Effect.promise(async () => (responses.shift() ?? (() => null))()).pipe(
+        Effect.flatMap((providers) => {
+          if (providers === null) return Effect.fail("offline");
+          if (droppedReplies > 0) droppedReplies -= 1;
+          else registry.set(providersAtom, providers);
+          return Effect.succeed({ providers });
+        }),
+      ),
+    );
     const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
       providers: () => providersAtom,
       refreshProviders: { label: "refresh", run },

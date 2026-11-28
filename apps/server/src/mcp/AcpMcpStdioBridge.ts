@@ -9,12 +9,27 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
+import {
+  MCP_TOOL_EXPOSURE_HEADER,
+  type McpToolExposureMode,
+  parseMcpToolExposureMode,
+} from "@t3tools/provider-core/server/mcpSession";
+
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
+
+const JsonRpcError = Schema.Struct({ code: Schema.Number, message: Schema.String });
 
 export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
   "AcpMcpBridgeError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    /** The JSON-RPC error the server answered with, when it answered. */
+    rpcError: Schema.optional(JsonRpcError),
+  },
 ) {}
+
+const decodeRpcError = Schema.decodeUnknownOption(JsonRpcError);
 
 const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
 
@@ -40,6 +55,7 @@ const MCP_PROTOCOL_VERSION = "2025-06-18";
 export interface AcpMcpStdioBridgeOptions {
   readonly endpoint: string;
   readonly authorization: string;
+  readonly toolExposure?: McpToolExposureMode | undefined;
   readonly input: NodeJS.ReadableStream;
   readonly output: { write(chunk: string): unknown };
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
@@ -139,8 +155,10 @@ export const mcpToolSession = (
     const responses = yield* send({ jsonrpc: "2.0", id, method, params });
     const envelope = asEnvelope(responses.find((entry) => asEnvelope(entry)?.id === id));
     if (envelope === null || envelope.error !== undefined) {
+      const rpcError = Option.getOrUndefined(decodeRpcError(envelope?.error));
       return yield* new AcpMcpBridgeError({
         message: `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+        ...(rpcError === undefined ? {} : { rpcError }),
       });
     }
     return envelope;
@@ -236,6 +254,9 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 "content-type": "application/json",
                 accept: "application/json, text/event-stream",
                 authorization: options.authorization,
+                ...(options.toolExposure === undefined
+                  ? {}
+                  : { [MCP_TOOL_EXPOSURE_HEADER]: options.toolExposure }),
                 ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },
@@ -342,6 +363,14 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
   });
 }
 
+async function readStdin(): Promise<string> {
+  const chunks: Array<Buffer> = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** Avoid heavy imports on the ACP first-message path. */
 export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
@@ -355,22 +384,28 @@ export async function runAcpMcpCliFastPath(
     return;
   }
   if (command === "acp-mcp-bridge") {
+    const toolExposure = parseMcpToolExposureMode(process.env.T3_ACP_MCP_TOOL_EXPOSURE);
     await Effect.runPromise(
       runAcpMcpStdioBridge({
         endpoint,
         authorization,
+        ...(toolExposure === undefined ? {} : { toolExposure }),
         input: process.stdin,
         output: process.stdout,
       }),
     );
     return;
   }
-  const [tool, argumentsJson] = args;
-  if (tool === undefined || argumentsJson === undefined) {
-    process.stderr.write("acp-mcp-call requires <tool> and <arguments-json>.\n");
+  const [tool, argumentsArg] = args;
+  if (tool === undefined || argumentsArg === undefined) {
+    process.stderr.write(
+      "acp-mcp-call requires <tool> and <arguments-json>, or - to read it from stdin.\n",
+    );
     process.exitCode = 2;
     return;
   }
+  // Windows PowerShell 5.1 strips the quotes from JSON passed as an argument; stdin keeps them.
+  const argumentsJson = argumentsArg === "-" ? await readStdin() : argumentsArg;
   let parsed: unknown;
   try {
     parsed = JSON.parse(argumentsJson);

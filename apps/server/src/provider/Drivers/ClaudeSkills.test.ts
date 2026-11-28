@@ -85,6 +85,65 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("loads only the skills a non-strict marketplace entry declares", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const marketplace = path.join(tempDir, "marketplace");
+      const marketplaceJson = JSON.stringify({
+        name: "shared-root",
+        plugins: [
+          { name: "collection-a", source: "./", strict: false, skills: ["./skills/skill-one"] },
+          { name: "collection-b", source: "./", strict: false, skills: ["./skills/skill-two"] },
+        ],
+      });
+      // `claude plugin install` copies the whole repository into each plugin's cache folder.
+      const installs = ["collection-a", "collection-b"].map((name) =>
+        path.join(configDir, "plugins", "cache", "shared-root", name, "abc123"),
+      );
+      for (const root of [marketplace, ...installs]) {
+        yield* writeSkill(path.join(root, "skills"), "skill-one", "# One");
+        yield* writeSkill(path.join(root, "skills"), "skill-two", "# Two");
+        yield* fs.makeDirectory(path.join(root, ".claude-plugin"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, ".claude-plugin", "marketplace.json"),
+          marketplaceJson,
+        );
+      }
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "known_marketplaces.json"),
+        JSON.stringify({
+          "shared-root": {
+            source: { source: "directory", path: marketplace },
+            installLocation: marketplace,
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          version: 2,
+          plugins: {
+            "collection-a@shared-root": [{ scope: "user", installPath: installs[0] }],
+            "collection-b@shared-root": [{ scope: "user", installPath: installs[1] }],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"collection-a@shared-root":true,"collection-b@shared-root":true}}',
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["collection-a:skill-one", "collection-b:skill-two"],
+      );
+    }),
+  );
+
   it.effect("merges plugin enablement and selects installs in native registry order", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -673,6 +732,54 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           CLAUDE_CODE_PLUGIN_DIRS: inherited,
         })).map((skill) => skill.name),
         ["inherited:stale"],
+      );
+    }),
+  );
+
+  it.effect("discovers inline plugins from --plugin-dir launch args", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(workspace, "config");
+      const named = path.join(workspace, "named");
+      yield* fs.makeDirectory(path.join(named, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(named, ".claude-plugin", "plugin.json"),
+        '{"name":"acme"}',
+      );
+      yield* writeSkill(path.join(named, "skills"), "qa", "---\ndescription: QA a ticket\n---\n");
+      yield* writeSkill(path.join(workspace, "local", "skills"), "lint", "# Lint");
+      const bundle = path.join(workspace, "bundle");
+      yield* fs.makeDirectory(path.join(bundle, "tools", ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(bundle, "tools", ".claude-plugin", "plugin.json"),
+        '{"name":"tools"}',
+      );
+      yield* writeSkill(path.join(bundle, "tools", "skills"), "fmt", "# Fmt");
+      yield* writeSkill(path.join(workspace, "muted", "skills"), "hidden", "# Hidden");
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({ enabledPlugins: { "muted@inline": false } }),
+      );
+
+      const launchArgs = `--plugin-dir ${named} --plugin-dir=local --model sonnet --plugin-dir ${bundle} --plugin-dir muted`;
+      const skills = yield* discoverClaudeSkills({ homePath: configDir, launchArgs }, workspace);
+      assert.deepEqual(
+        skills.map(({ name, scope, description }) => ({ name, scope, description })),
+        [
+          { name: "acme:qa", scope: "user", description: "QA a ticket" },
+          { name: "local:lint", scope: "user", description: undefined },
+          { name: "tools:fmt", scope: "user", description: undefined },
+        ],
+      );
+      // Without a cwd, a relative --plugin-dir has nothing to resolve against.
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir, launchArgs })).map(
+          (skill) => skill.name,
+        ),
+        ["acme:qa", "tools:fmt"],
       );
     }),
   );

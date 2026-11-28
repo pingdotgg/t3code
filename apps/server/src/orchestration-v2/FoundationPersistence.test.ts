@@ -40,6 +40,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -64,6 +65,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -101,7 +103,10 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
-const layerProjectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(layerDatabase));
+const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
+  Layer.provide(NodeCrypto.layerDigest),
+  Layer.provideMerge(layerDatabase),
+);
 const layerStoresProvided = Layer.mergeAll(
   layerDatabase,
   layerEventStoreProvided,
@@ -491,7 +496,13 @@ it.effect("commits other threads' writes ahead of a thread's queued provider sna
       .pipe(Effect.forkScoped({ startImmediately: true }));
     yield* Queue.offer(input, snapshot);
     yield* Deferred.await(started);
-    yield* Queue.offerAll(input, [snapshot, snapshot]);
+    yield* Queue.offerAll(
+      input,
+      [2, 3].map((n) => ({
+        ...snapshot,
+        node: { ...busyNode.payload, id: NodeId.make(`node:busy:${n}`) },
+      })),
+    );
     yield* Deferred.await(pulled);
     yield* TestClock.adjust(0);
     const writeTo = (event: OrchestrationV2DomainEvent, id: string) =>
@@ -4310,6 +4321,7 @@ it.effect.each(["direct", "provider-batch", "cancel-provider-batch"] as const)(
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
@@ -4492,7 +4504,10 @@ it.effect("routes projection node lookups to the reader connection", () =>
     const path = yield* Path.Path;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: "projection-reader-" });
     const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
-    const projectionLayer = ProjectionStore.layer.pipe(Layer.provideMerge(database));
+    const projectionLayer = ProjectionStore.layer.pipe(
+      Layer.provide(NodeCrypto.layerDigest),
+      Layer.provideMerge(database),
+    );
     yield* Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -4543,7 +4558,10 @@ it.effect("loads a shell snapshot while the writer connection is occupied", () =
     const path = yield* Path.Path;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: "shell-reader-" });
     const database = SqlitePersistence.layerFromPath(path.join(directory, "statev2.sqlite"));
-    const projectionLayer = ProjectionStore.layer.pipe(Layer.provideMerge(database));
+    const projectionLayer = ProjectionStore.layer.pipe(
+      Layer.provide(NodeCrypto.layerDigest),
+      Layer.provideMerge(database),
+    );
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -4608,6 +4626,7 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );

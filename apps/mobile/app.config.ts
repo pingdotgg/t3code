@@ -130,6 +130,11 @@ const dmSansFonts = {
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
 
+const mesloFonts = {
+  regular: "./assets/fonts/MesloLGS-NF-Regular.ttf",
+  bold: "./assets/fonts/MesloLGS-NF-Bold.ttf",
+} as const;
+
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
   {
@@ -183,6 +188,8 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         android: {
           minWidth: 250,
           minHeight: 180,
+          minResizeWidth: 180,
+          minResizeHeight: 130,
           targetCellWidth: 4,
           targetCellHeight: 3,
           resizeMode: "both",
@@ -237,7 +244,7 @@ const config: ExpoConfig = {
   slug: "t3-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",
+  version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.4.0",
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
     policy: runtimeVersionPolicy,
@@ -332,7 +339,13 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            mesloFonts.regular,
+            mesloFonts.bold,
+          ],
         },
         android: {
           fonts: [
@@ -346,7 +359,20 @@ const config: ExpoConfig = {
             },
             {
               fontFamily: "DMSans-Bold",
-              fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
+              // Android picks fallback glyphs (such as Vietnamese) at the requested weight, so bold text
+              // asks for 700; the 400 entry lets a relative bold step (Typeface.BOLD) land on 700 too.
+              fontDefinitions: [
+                { path: dmSansFonts.bold, weight: 400 },
+                { path: dmSansFonts.bold, weight: 700 },
+              ],
+            },
+            {
+              // One family for both weights, as on iOS, so fontWeight picks the bold file.
+              fontFamily: "MesloLGS-NF-Regular",
+              fontDefinitions: [
+                { path: mesloFonts.regular, weight: 400 },
+                { path: mesloFonts.bold, weight: 700 },
+              ],
             },
           ],
         },
@@ -466,9 +492,6 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
-    secretsFeatureEnabled: ["1", "true"].includes(
-      process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
-    ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,

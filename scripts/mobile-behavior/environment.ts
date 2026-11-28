@@ -120,14 +120,34 @@ function writeScratch(baseDir: string) {
   return { workspace, control };
 }
 
+/** Extras a caller layers on the scratch workspace, such as mobile:metrics' fake GitHub. */
+export interface EnvironmentOptions {
+  /** Runs on the committed scratch repository before the server starts. */
+  readonly prepareWorkspace?: (
+    workspace: string,
+  ) => Effect.Effect<void, { readonly message: string }>;
+  readonly serverEnv?: Readonly<Record<string, string>>;
+}
+
 /** Starts the server in the caller's scope; the scope's end stops it. */
-export const startEnvironment = Effect.fn("environment.start")(function* (input: {
-  readonly baseDir: string;
-  /** Origin the device uses to reach this machine, without a port. */
-  readonly deviceHost: string;
-}) {
+export const startEnvironment = Effect.fn("environment.start")(function* (
+  input: {
+    readonly baseDir: string;
+    /** Origin the device uses to reach this machine, without a port. */
+    readonly deviceHost: string;
+  } & EnvironmentOptions,
+) {
   NodeFS.rmSync(input.baseDir, { recursive: true, force: true });
   const { workspace, control } = writeScratch(input.baseDir);
+  if (input.prepareWorkspace)
+    yield* input
+      .prepareWorkspace(workspace)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentError({ message: `Preparing the workspace failed: ${cause.message}` }),
+        ),
+      );
   const home = NodePath.join(input.baseDir, "home");
   NodeFS.mkdirSync(home, { recursive: true });
   const port = yield* freePort();
@@ -151,7 +171,11 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
           workspace,
         ],
         // A scratch HOME keeps the user's own skills and config out of the app under test.
-        { cwd: REPO_ROOT, stdio: ["ignore", log, log], env: { ...process.env, HOME: home } },
+        {
+          cwd: REPO_ROOT,
+          stdio: ["ignore", log, log],
+          env: { ...process.env, ...input.serverEnv, HOME: home },
+        },
       ),
     ),
     (child) => Effect.sync(() => child.kill("SIGTERM")),
@@ -385,6 +409,25 @@ export const startEnvironment = Effect.fn("environment.start")(function* (input:
         ),
         Effect.asVoid,
       ),
+    /** A side chat forked from `source`'s latest settled point, as the app's own command does. */
+    forkSideChat: Effect.fn("environment.forkSideChat")(function* (
+      source: ThreadId,
+      title: string,
+    ) {
+      const targetThreadId = ThreadId.make(yield* uuid);
+      yield* client["orchestration.dispatchCommand"]({
+        type: "thread.fork",
+        commandId: yield* command,
+        createdBy: "user",
+        creationSource: "server",
+        sourceThreadId: source,
+        targetThreadId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        title,
+      });
+      return targetThreadId;
+    }),
     projection,
     launch,
     send,

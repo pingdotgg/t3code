@@ -6,7 +6,6 @@ import type {
   IssueTrackerSummary,
   ProjectId,
 } from "@t3tools/contracts";
-import type { EnvironmentProject } from "./state/models.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -143,46 +142,35 @@ describe("issueFilterScopes", () => {
       [environmentId, hold(answer({ trackers: [tracker({})], entries: [], scopes: [scope] }))],
     ]);
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
-    const otherProjectId = "web" as ProjectId;
-    const projects = [api, otherProjectId].map((id) => ({
-      id,
-      environmentId,
-      repositoryIdentity: {
-        provider: "github",
-        canonicalKey: `github.com/acme/${id}`,
-        owner: "acme",
-        name: id,
-      },
-    })) as unknown as ReadonlyArray<EnvironmentProject>;
-    const withRepositories = new Map([
-      [
-        environmentId,
-        hold(
-          answer({
-            trackers: [
-              tracker({}),
-              tracker({ tracker: "github" as IssueTrackerKind, host: "github.com" }),
-            ],
-            scopes: [scope, { ...scope, projectId: otherProjectId, scope: "WEB" }],
-          }),
-        ),
-      ],
-    ]);
-    expect(
-      issueFilterScopes(withRepositories, projects, { environmentId, projectId: api }),
-    ).toEqual([
-      {
-        environmentId,
-        input: { projectId: api, tracker: "github", host: "github.com", scope: "acme/api" },
-      },
-      { environmentId, input: scope },
-    ]);
-    expect(
-      issueFilterScopes(withRepositories, projects, {
-        environmentId: "other" as EnvironmentId,
-        projectId: api,
+  });
+
+  it("offers the same team key of two Linear accounts as two scopes", () => {
+    const first = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const second = hold(
+      answer({
+        trackers: [tracker({})],
+        scopes: [first, { ...first, projectId: "home" as ProjectId }],
       }),
-    ).toEqual([]);
+    );
+    const other = hold(
+      answer({ trackers: [tracker({})], scopes: [{ ...first, projectId: "o" as ProjectId }] }),
+    );
+    // Older servers name no scopes; their rows stand in, once per team on that server.
+    const older = hold(
+      answer({ trackers: [tracker({})], entries: [linearRow, { ...linearRow, key: "ENG-2" }] }),
+    );
+    const count = (...pages: ReadonlyArray<ReturnType<typeof hold>>) =>
+      issueFilterScopes(
+        new Map(pages.map((page, index) => [`env-${index}` as EnvironmentId, page])),
+        [],
+      ).length;
+    expect([count(second), count(second, other), count(other, second)]).toEqual([2, 3, 3]);
+    expect([count(older), count(older, second), count(second, older)]).toEqual([1, 3, 3]);
   });
 
   it("skips a tracker that cannot be read", () => {

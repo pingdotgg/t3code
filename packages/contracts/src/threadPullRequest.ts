@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  GitRefName,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -37,8 +38,8 @@ export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Typ
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
+  baseBranch: GitRefName,
   isDraft: Schema.Boolean,
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
@@ -57,7 +58,7 @@ export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
 export const ThreadPullRequestStackLayer = Schema.Struct({
   number: PositiveInt,
-  headBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
   state: PullRequestState,
 });
 export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
@@ -68,7 +69,7 @@ export const ThreadPullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(ThreadPullRequestStackLayer),
 });
 export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;
@@ -88,7 +89,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  /**
+   * Marks one wake owed once every check has finished: the checks still pending when the required
+   * ones passed early, or the failed ones while a failure keeps the required ones from passing.
+   */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */
   awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),

@@ -25,6 +25,7 @@ import {
   decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
+  withMentionReference,
   decodeLabelEventsJson,
   decodeLinkedMergeRequestsJson,
   decodeProjectLabelsJson,
@@ -402,7 +403,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           },
         },
         decode: decodeAwardEmojiJson,
-      });
+      }).pipe(
+        // GitLab before 16.1 has no `Note.awardEmoji`; comments then load without reactions.
+        Effect.catchIf(
+          (error) => error.reason === "failed",
+          () => Effect.succeed(null),
+        ),
+      );
 
     const linked = (input: {
       readonly cwd: string;
@@ -567,12 +574,15 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
-                  reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
+                  reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
                 })),
-                commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
-                events: [...systemEvents, ...labelEvents].sort((left, right) =>
-                  left.createdAt.localeCompare(right.createdAt),
-                ),
+                commentsCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
+                events: [
+                  ...systemEvents.map((event) =>
+                    withMentionReference(event, issue.url, input.scope),
+                  ),
+                  ...labelEvents,
+                ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
                 // A merge request that closes the issue outranks its sighting as a mere mention.
                 linkedPullRequests: [
                   ...closing,

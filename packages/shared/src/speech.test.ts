@@ -7,7 +7,17 @@ import {
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
   resolveSpeechVocabulary,
+  speechModelDownloadPercent,
 } from "./speech.ts";
+
+describe("speechModelDownloadPercent", () => {
+  it.each([
+    { downloaded: 995, percent: 99 },
+    { downloaded: 1_000, percent: 99 },
+  ])("reads $downloaded of 1000 bytes as $percent", ({ downloaded, percent }) => {
+    expect(speechModelDownloadPercent(downloaded, 1_000)).toBe(percent);
+  });
+});
 
 describe("speech PCM request framing", () => {
   it("round-trips options and unaligned PCM without changing audio bytes", () => {
@@ -53,7 +63,7 @@ describe("speech PCM request framing", () => {
 });
 
 describe("resolveSpeechVocabulary", () => {
-  it("prefers project spellings, keeps hints under the cap, and drops duplicates", () => {
+  it("prefers project spellings and keeps hints out of the dictionary", () => {
     const personal = Array.from({ length: 100 }, (_, index) => ({
       term: `word${index}`,
       aliases: index === 0 ? ["Effect"] : [],
@@ -61,16 +71,15 @@ describe("resolveSpeechVocabulary", () => {
     const resolved = resolveSpeechVocabulary({
       personal,
       project: [{ term: "effect", aliases: ["a fact"] }],
-      hints: ["  T3   Code ", "word1", "", "x".repeat(51)],
+      hints: ["  T3   Code ", "word1", "", "x".repeat(51), "t3 code"],
     });
-    expect(resolved).toHaveLength(100);
-    expect(resolved.slice(0, 3)).toEqual([
-      { term: "T3 Code", aliases: [] },
+    expect(resolved.speechHints).toEqual(["T3 Code"]);
+    expect(resolved.speechCustomWords).toHaveLength(100);
+    expect(resolved.speechCustomWords.slice(0, 2)).toEqual([
       { term: "effect", aliases: ["a fact"] },
       { term: "word0", aliases: [] },
     ]);
-    expect(resolved.filter(({ term }) => term === "word1")).toHaveLength(1);
-    expect(resolved.at(-1)?.term).toBe("word97");
+    expect(resolved.speechCustomWords.at(-1)?.term).toBe("word98");
   });
 });
 

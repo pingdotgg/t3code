@@ -247,6 +247,8 @@ import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 import { questionAttachmentDraftKey } from "./question-attachments";
+import { startQuestionImagePreparation } from "./question-attachment-preparation";
+import { abortComposerDraftOperations } from "./composerDraftOperations";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };
 
@@ -560,6 +562,38 @@ describe("mobile task permissions", () => {
     );
   });
 
+  it("queues a goal command with the thread's settings and leaves the draft alone", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft.modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    Object.assign(state.draft, { runtimeMode: "approval-required" });
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(await composer.onSendCommand("/goal clear")).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        threadId: "thread",
+        text: "/goal clear",
+        restoreToDraft: false,
+        attachments: [],
+        modelSelection: state.thread.modelSelection,
+        runtimeMode: state.thread.runtimeMode,
+      }),
+    );
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("Keep my draft");
+  });
+
+  it("rechecks the operate grant before queueing a command", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    state.grantedEnvironments.delete("secondary");
+    expect(await composer.onSendCommand("/goal clear")).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+  });
+
   it("rechecks the target environment before an approval response", async () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
@@ -612,6 +646,19 @@ it.each(["cancelled", "expired"] as const)(
   (status) => {
     const environmentId = EnvironmentId.make("secondary");
     const threadId = ThreadId.make("thread");
+    const unanswered = RuntimeRequestId.make("input");
+    const answered = RuntimeRequestId.make("input-other");
+    const questionKey = questionAttachmentDraftKey(environmentId, threadId, unanswered, "language");
+    const preparing = startQuestionImagePreparation(questionKey);
+    const preparingAnswered = startQuestionImagePreparation(
+      questionAttachmentDraftKey(environmentId, threadId, answered, "language"),
+    );
+    using _preparations = {
+      [Symbol.dispose]: () => {
+        preparing.finish();
+        preparingAnswered.finish();
+      },
+    };
     const notes = {
       id: "notes",
       type: "file",
@@ -620,7 +667,7 @@ it.each(["cancelled", "expired"] as const)(
       sizeBytes: 5,
     } as unknown as DraftComposerImageAttachment;
     state.questionDrafts = {
-      [questionAttachmentDraftKey(environmentId, threadId, "input", "language")]: {
+      [questionKey]: {
         text: "",
         attachments: [notes],
       },
@@ -628,12 +675,19 @@ it.each(["cancelled", "expired"] as const)(
     makeThreadRequestsResolvedAnnouncer(
       environmentId,
       threadId,
-    )([{ id: RuntimeRequestId.make("input"), status }]);
+    )([
+      { id: unanswered, status },
+      { id: answered, status: "resolved" },
+    ]);
     expect(state.appendAttachments).toHaveBeenCalledWith(
       "secondary:thread",
       [notes],
       expect.objectContaining({ appendReference: true }),
     );
+    expect(preparing.destination()).toBe("secondary:thread");
+    expect(preparingAnswered.destination()).toBeNull();
+    abortComposerDraftOperations("secondary:thread");
+    expect(preparing.destination()).toBeNull();
   },
 );
 

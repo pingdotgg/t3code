@@ -1,0 +1,46 @@
+{
+  "case": "A message from a webhook: author.id is the webhook id, webhook_id set, no member",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord gateway v10 dispatches to the Janitor application (1564742987727118426), logged by a local dfx-free websocket client with the GUILDS, GUILD_MESSAGES, GUILD_MESSAGE_REACTIONS, DIRECT_MESSAGES, DIRECT_MESSAGE_REACTIONS and MESSAGE_CONTENT intents",
+    "where": "guild 840178841540362250 (Tim's test guild); #effect-chat-scratch 1570607253965246584, #effect-chat-forum 1570607255684915302 and #test 1570605581192929301",
+    "author": "webhook effect-chat-fixtures (1570607260156297307)",
+    "recordedAt": "2026-11-13T01:16Z, during EFF-3695",
+    "body": "Each d verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed"
+  },
+  "dispatches": [
+    {
+      "receivedAt": "2026-11-13T01:16:14.492Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "webhook_id": "1570607260156297307",
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:14.460000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "id": "1570608196186411139",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: a webhook message",
+        "components": [],
+        "channel_type": 0,
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "effect-chat-fixtures",
+          "id": "1570607260156297307",
+          "global_name": null,
+          "discriminator": "0000",
+          "bot": true,
+          "avatar": null
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426",
+        "guild_id": "840178841540362250"
+      }
+    }
+  ]
+}

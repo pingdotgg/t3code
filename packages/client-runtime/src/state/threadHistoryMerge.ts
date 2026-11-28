@@ -102,6 +102,9 @@ export function mergeOlderHistoryIntoProjection(
   const currentByKey = new Map(
     projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
   );
+  const rolledBackRuns = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
   const pageKeys = new Set<string>();
   const page: OrchestrationV2ProjectedTurnItem[] = [];
@@ -140,6 +143,8 @@ export function mergeOlderHistoryIntoProjection(
           continue;
         row = { ...row, item: currentItem };
       }
+      // A rollback can arrive before a history page for rows outside the loaded window.
+      if (row.item.runId !== null && rolledBackRuns.has(row.item.runId)) continue;
     }
     pageKeys.add(key);
     page.push(row);

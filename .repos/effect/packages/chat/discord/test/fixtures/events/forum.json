@@ -1,0 +1,119 @@
+{
+  "case": "A forum post: its starter, whose id is the thread's, and a later reply; channel_type 11",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord gateway v10 dispatches to the Janitor application (1564742987727118426), logged by a local dfx-free websocket client with the GUILDS, GUILD_MESSAGES, GUILD_MESSAGE_REACTIONS, DIRECT_MESSAGES, DIRECT_MESSAGE_REACTIONS and MESSAGE_CONTENT intents",
+    "where": "guild 840178841540362250 (Tim's test guild); #effect-chat-scratch 1570607253965246584, #effect-chat-forum 1570607255684915302 and #test 1570605581192929301",
+    "author": "the Janitor bot, through REST",
+    "recordedAt": "2026-11-13T01:17Z, during EFF-3695",
+    "body": "Each d verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed"
+  },
+  "dispatches": [
+    {
+      "receivedAt": "2026-11-13T01:17:14.964Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:17:14.921000+00:00",
+        "position": 0,
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "member": {
+          "roles": [
+            "1570605977017778196"
+          ],
+          "premium_since": null,
+          "pending": false,
+          "nick": null,
+          "mute": false,
+          "joined_at": "2026-11-13T01:07:25.410129+00:00",
+          "flags": 0,
+          "deaf": false,
+          "communication_disabled_until": null,
+          "banner": null,
+          "avatar": null
+        },
+        "id": "1570608449778098218",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: the starter of a forum post",
+        "components": [],
+        "channel_type": 11,
+        "channel_id": "1570608449778098218",
+        "author": {
+          "username": "Janitor",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "1564742987727118426",
+          "global_name": null,
+          "display_name_styles": null,
+          "discriminator": "5426",
+          "collectibles": null,
+          "clan": null,
+          "bot": true,
+          "avatar_decoration_data": null,
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+        },
+        "attachments": [],
+        "guild_id": "840178841540362250"
+      }
+    },
+    {
+      "receivedAt": "2026-11-13T01:17:16.322Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:17:16.290000+00:00",
+        "position": 0,
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "member": {
+          "roles": [
+            "1570605977017778196"
+          ],
+          "premium_since": null,
+          "pending": false,
+          "nick": null,
+          "mute": false,
+          "joined_at": "2026-11-13T01:07:25.410129+00:00",
+          "flags": 0,
+          "deaf": false,
+          "communication_disabled_until": null,
+          "banner": null,
+          "avatar": null
+        },
+        "id": "1570608455520227379",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: a later reply in a forum post",
+        "components": [],
+        "channel_type": 11,
+        "channel_id": "1570608449778098218",
+        "author": {
+          "username": "Janitor",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "1564742987727118426",
+          "global_name": null,
+          "display_name_styles": null,
+          "discriminator": "5426",
+          "collectibles": null,
+          "clan": null,
+          "bot": true,
+          "avatar_decoration_data": null,
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+        },
+        "attachments": [],
+        "guild_id": "840178841540362250"
+      }
+    }
+  ]
+}

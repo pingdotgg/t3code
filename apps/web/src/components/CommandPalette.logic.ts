@@ -12,6 +12,7 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
+import type { DraftId } from "../composerDraftStore";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -80,7 +81,12 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "new-thread-in" | "change-theme" }
+  | {
+      readonly kind: "add-project";
+      /** The draft a project is being picked for; one with user content moves to it. */
+      readonly draftId?: DraftId;
+    }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -92,7 +98,7 @@ export interface CommandPaletteUiState {
   readonly mode: SearchOverlayMode;
   /** What the current palette session opened to; read once when the palette view mounts. */
   readonly openIntent: CommandPaletteOpenIntent | null;
-  /** Bumped by every intent so an open palette starts over from the new one. */
+  /** Advances when the palette opens or a new intent replaces the current session. */
   readonly session: number;
   readonly parentSearch?: CommandPaletteReturnContext;
   readonly restoredSearch?: CommandPaletteReturnContext;
@@ -106,7 +112,7 @@ export type CommandPaletteUiAction =
       readonly query: string;
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
-  | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "OpenAddProject"; readonly draftId?: DraftId }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
   | {
@@ -130,18 +136,23 @@ export function reduceCommandPaletteUiState(
   switch (action._tag) {
     case "SetOpen":
       return action.open
-        ? { open: true, mode: "command", openIntent: state.openIntent, session }
+        ? {
+            open: true,
+            mode: "command",
+            openIntent: state.openIntent,
+            session: state.open && state.mode === "command" ? session : session + 1,
+          }
         : { open: false, mode: state.mode, openIntent: null, session };
     case "ToggleMode":
       return state.open && state.mode === action.mode
         ? { open: false, mode: state.mode, openIntent: null, session }
-        : { open: true, mode: action.mode, openIntent: null, session };
+        : { open: true, mode: action.mode, openIntent: null, session: session + 1 };
     case "OpenChildSearch":
       return {
         open: true,
         mode: action.mode,
         openIntent: null,
-        session,
+        session: state.open ? session : session + 1,
         parentSearch: action.context,
       };
     case "BackToCommand":
@@ -161,7 +172,10 @@ export function reduceCommandPaletteUiState(
         ...(action.linkedThreads ? { linkedThreads: action.linkedThreads } : {}),
       });
     case "OpenAddProject":
-      return openWithIntent({ kind: "add-project" });
+      return openWithIntent({
+        kind: "add-project",
+        ...(action.draftId ? { draftId: action.draftId } : {}),
+      });
     case "OpenNewThreadIn":
       return openWithIntent({ kind: "new-thread-in" });
     case "OpenChangeTheme":
