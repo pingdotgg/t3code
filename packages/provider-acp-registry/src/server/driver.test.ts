@@ -501,6 +501,99 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
   });
 
+  it("preserves group headings as subProviders and model.subProvider across probe and live configuration", () => {
+    const groupedConfig = normalizeAcpRegistryLiveConfiguration([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "nodecode-free/nodecode-cyber-v1",
+        options: [
+          {
+            groupId: "nodecode",
+            name: "nodecode",
+            options: [
+              { value: "nodecode/nodecode-cyber-v1", name: "Cyber v1" },
+              { value: "nodecode/nodecode-decide-v1", name: "nodecode-decide-v1" },
+            ],
+          },
+          {
+            groupId: "nodecode-free",
+            name: "nodecode-free",
+            options: [{ value: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1" }],
+          },
+        ],
+      },
+    ]);
+
+    expect(groupedConfig.models.map((m) => ({ id: m.id, name: m.name, group: m.group }))).toEqual([
+      { id: "nodecode/nodecode-cyber-v1", name: "Cyber v1", group: "nodecode" },
+      { id: "nodecode/nodecode-decide-v1", name: "nodecode-decide-v1", group: "nodecode" },
+      { id: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1", group: "nodecode-free" },
+    ]);
+
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ source: "local", commandPath: "nodecode", commandArgs: ["acp"] }),
+      checkedAt: "2026-11-28T06:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "local",
+        version: "0.1.17",
+        distribution: "local",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: groupedConfig.models,
+          currentModelId: groupedConfig.currentModelId,
+          configOptions: groupedConfig.configOptions,
+          sessionManagement: {
+            canList: false,
+            canLoad: false,
+            canResume: false,
+            canLogout: false,
+            canDelete: false,
+            canConfigureProviders: false,
+          },
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(provider.subProviders).toEqual([{ name: "nodecode" }, { name: "nodecode-free" }]);
+    expect(
+      provider.models.map((m) => ({ slug: m.slug, name: m.name, subProvider: m.subProvider })),
+    ).toEqual([
+      { slug: "nodecode/nodecode-cyber-v1", name: "Cyber v1", subProvider: "nodecode" },
+      { slug: "nodecode/nodecode-decide-v1", name: "nodecode-decide-v1", subProvider: "nodecode" },
+      { slug: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1", subProvider: "nodecode-free" },
+    ]);
+
+    // When a subsequent session sends a provisional single-model fallback, subProviders are retained.
+    const provisional = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [{ id: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1", description: null }],
+        currentModelId: "nodecode-free/nodecode-cyber-v1",
+        configOptions: groupedConfig.configOptions,
+        modelsFromModelSelect: false,
+      },
+      [],
+    );
+    expect(provisional.subProviders).toEqual([{ name: "nodecode" }, { name: "nodecode-free" }]);
+    expect(provisional.models.map((m) => m.subProvider)).toEqual([
+      "nodecode",
+      "nodecode",
+      "nodecode-free",
+    ]);
+  });
+
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

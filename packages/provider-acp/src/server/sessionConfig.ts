@@ -27,10 +27,18 @@ export const isAcpThoughtLevelOption = (option: EffectAcpSchema.SessionConfigOpt
   option.category === "thought_level" ||
   (option.category === "thinking" && option.type === "select");
 
+export interface AcpSelectChoiceWithGroup extends EffectAcpSchema.SessionConfigSelectOption {
+  readonly groupName?: string;
+}
+
 export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
+): ReadonlyArray<AcpSelectChoiceWithGroup> {
+  return options.flatMap((candidate) => {
+    if ("value" in candidate) return [candidate];
+    const groupName = boundedText(candidate.name, MAX_TEXT_LENGTH);
+    return candidate.options.map((choice) => (groupName ? { ...choice, groupName } : choice));
+  });
 }
 
 function selectChoices(
