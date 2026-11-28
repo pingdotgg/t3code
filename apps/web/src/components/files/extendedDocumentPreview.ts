@@ -74,6 +74,17 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
   const value = Number(start);
   return value >= 0 && value <= 2_147_483_647 ? value : undefined;
 }
+// Writer hides text whose character style sets text:display="none"; a style without it inherits from its parent.
+function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean {
+  for (const seen = new Set<string>(); name && !seen.has(name);) {
+    seen.add(name);
+    const style = styles.get(`span\n${name}`);
+    const display = style && find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
+    if (display === "none" || display === "true") return display === "none";
+    name = style?.attrs["style:parent-style-name"] ?? "";
+  }
+  return false;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -127,7 +138,8 @@ async function odfHtml(
       "text:bibliography-source",
       "table:covered-table-cell",
     ].includes(node.name) ||
-    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none")
+    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none") ||
+    (node.name === "text:span" && odfSpanHidden(listStyles, node.attrs["text:style-name"]))
   )
     return "";
   const childImageAlt =
@@ -302,8 +314,8 @@ export async function openDocument(
   const pages = kind === "odp" ? find(root, "draw:page") : find(root, "office:text");
   if (!pages.length || pages.length > 500) throw new PreviewError({ code: "odf-page-count" });
   const listStyles = new Map<string, XmlNode>();
-  if (find(root, "text:list").length) {
-    // Named list styles live in styles.xml; it only decides numbering, so a bad part falls back to bullets.
+  if (find(root, "text:list").length || kind === "odt") {
+    // Named styles live in styles.xml; it only decides numbering and hidden text, so a bad part loses both.
     let named: XmlNode[] = [];
     const styles = await archive.file("styles.xml")?.async("uint8array");
     try {
@@ -316,6 +328,12 @@ export async function openDocument(
       find(part, "text:list-style", "office:body"),
     ))
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
+    if (kind === "odt")
+      for (const style of [...named, root].flatMap((part) =>
+        find(part, "style:style", "office:body"),
+      ))
+        if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
+          listStyles.set(`span\n${style.attrs["style:name"]}`, style);
   }
   const rendered = [];
   for (const page of pages) {
