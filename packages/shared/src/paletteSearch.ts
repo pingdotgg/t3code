@@ -765,12 +765,14 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
       let found = findMessageToken(text, plain, token, tokens.length === 1);
       // Accents typed or left out: "cafe" finds "Café", also after "cafeteria".
       if (found?.quality !== 1 && foldedToken.length > 0 && (nonAscii || NON_ASCII.test(text))) {
-        found = findMessageToken(
-          text,
-          (folded ??= foldInPlace(text)),
-          foldedToken,
-          tokens.length === 1,
-        );
+        // Folding keeps Thai and Indic vowel signs in the text, so the bare token can miss there.
+        found =
+          findMessageToken(
+            text,
+            (folded ??= foldInPlace(text)),
+            foldedToken,
+            tokens.length === 1,
+          ) ?? found;
       }
       if (found === null) return null;
       if (found.quality === MID_WORD && mustStartWord) return null;
