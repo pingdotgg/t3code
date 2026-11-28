@@ -417,16 +417,14 @@ export function pullRequestSurface(target: {
   };
 }
 
-/** A pending link belongs to the click that made it, not to a reload or a reopen. */
+/** A pending link or preview belongs to the click that made it, not to a reload or a reopen. */
 const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
+  if (surface.kind === "file" && surface.renderMarkdown) {
+    const { renderMarkdown: _preview, ...rest } = surface;
+    return rest;
+  }
   if (surface.kind !== "pull-request" || surface.revealUrl === undefined) return surface;
   const { revealUrl: _pending, ...rest } = surface;
-  return rest;
-};
-
-const withoutTransientOpenState = (surface: RightPanelSurface): RightPanelSurface => {
-  if (surface.kind !== "file" || !surface.renderMarkdown) return withoutReveal(surface);
-  const { renderMarkdown: _temporary, ...rest } = surface;
   return rest;
 };
 
@@ -1067,7 +1065,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               surface.kind === "file" &&
               surface.id === surfaceId &&
               surface.revealRequestId === requestId
-                ? withoutTransientOpenState(surface)
+                ? withoutReveal(surface)
                 : surface,
             ),
           })),
@@ -1453,10 +1451,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : [
                   [
                     threadKey,
-                    {
-                      ...threadState,
-                      surfaces: threadState.surfaces.map(withoutTransientOpenState),
-                    },
+                    { ...threadState, surfaces: threadState.surfaces.map(withoutReveal) },
                   ],
                 ],
           ),
@@ -1497,7 +1492,7 @@ useRightPanelStore.subscribe((next, previous) => {
       ...removed.filter((surface) => surface.id !== before.activeSurfaceId),
       ...removed.filter((surface) => surface.id === before.activeSurfaceId),
     ];
-    for (const surface of closedInOrder.map(withoutTransientOpenState)) {
+    for (const surface of closedInOrder.map(withoutReveal)) {
       if (
         surface.kind === "terminal" ||
         (surface.kind === "preview" && surface.resourceId !== null)
