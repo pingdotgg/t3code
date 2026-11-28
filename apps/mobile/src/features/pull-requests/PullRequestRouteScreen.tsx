@@ -60,8 +60,10 @@ import {
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { pullRequestReviewKey, reviewDraftReplacement } from "./pullRequestReviewDrafts";
 import {
+  EnvironmentId,
+  ProjectId,
   pullRequestConversationThreads,
   type PullRequestDetail,
   type PullRequestListEntry,
@@ -70,7 +72,7 @@ import {
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
-import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -146,6 +148,7 @@ import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFa
 import { subscribePullRequestFileJump } from "./pullRequestFileJump";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -389,9 +392,24 @@ function PullRequestOverview(props: {
           footer={<PullRequestReactions params={props.params} />}
         />
       </Animated.View>
+      <WorkflowRunsAbout
+        environmentId={EnvironmentId.make(props.params.environmentId)}
+        item={{
+          subject: pr.url,
+          pullRequest: {
+            projectId: ProjectId.make(props.params.projectId),
+            repository: props.params.repository,
+            number: props.params.number,
+            host:
+              props.params.host ?? (URL.canParse(pr.url) ? new URL(pr.url).hostname : undefined),
+          },
+        }}
+      />
     </View>
   );
 }
+
+const NO_TAB_ROWS: ReadonlyArray<{ readonly key: string; readonly content: ReactNode }> = [];
 
 function usePullRequestToolbarHeight(bottomInset: number) {
   const { buttonSize } = useAndroidControlSizing();
@@ -730,6 +748,72 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         : []),
     ],
   };
+  // Built outside the tab map: an update that leaves a tab's body as it was hands its list the
+  // same element, so the list skips re-rendering the body.
+  const overviewBody = (
+    <View>
+      {identity ? (
+        <View>
+          <SourceControlAppAccessNotice
+            environmentId={params.environmentId}
+            provider={identity.provider}
+            host={params.host}
+            repository={params.repository}
+          />
+          {pr ? (
+            <PullRequestOverview
+              pr={pr}
+              description={description}
+              params={params}
+              stack={stack}
+              descriptionExpanded={descriptionExpanded}
+              onDescriptionExpandedChange={setDescriptionExpanded}
+              onDescriptionLayout={(y) => {
+                descriptionY.current = y;
+              }}
+              onDescriptionCollapse={() => {
+                pendingDescriptionJump.current = true;
+              }}
+            />
+          ) : summary ? (
+            <PullRequestOverviewLoading summary={summary} params={params} stack={stack} />
+          ) : null}
+          <View
+            className="mt-8 border-t border-border-subtle pt-3"
+            onLayout={(event) => {
+              filesY.current = event.nativeEvent.layout.y;
+              if (pendingFilesJump.current) {
+                requestAnimationFrame(() => {
+                  if (shown(requestedSection.current) === "overview") jumpToFiles();
+                });
+              }
+            }}
+          >
+            {filesContent.header}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+  const guideBody = guidesEnabled ? (
+    <View>
+      <PullRequestGuideContent params={params} visible={section === "guide"} />
+    </View>
+  ) : null;
+  const activityBody = (
+    <View>
+      <PullRequestActivityFilters
+        value={activityFilter}
+        onChange={activity.setFilter}
+        hiddenCount={tabContent.hiddenCount}
+      />
+      <PullRequestReadStatus
+        pending={tabContent.pending}
+        error={tabContent.error}
+        terminology={terminology}
+      />
+    </View>
+  );
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={pr}>
       <View className="flex-1 android:bg-header ios:bg-screen">
@@ -824,94 +908,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   data={[
                     {
                       key: `${tab}:body`,
-                      content: (
-                        <View>
-                          {tab === "overview" && identity ? (
-                            <View>
-                              <SourceControlAppAccessNotice
-                                environmentId={params.environmentId}
-                                provider={identity.provider}
-                                host={params.host}
-                                repository={params.repository}
-                              />
-                              {pr ? (
-                                <PullRequestOverview
-                                  pr={pr}
-                                  description={description}
-                                  params={params}
-                                  stack={stack}
-                                  descriptionExpanded={descriptionExpanded}
-                                  onDescriptionExpandedChange={setDescriptionExpanded}
-                                  onDescriptionLayout={(y) => {
-                                    descriptionY.current = y;
-                                  }}
-                                  onDescriptionCollapse={() => {
-                                    pendingDescriptionJump.current = true;
-                                  }}
-                                />
-                              ) : summary ? (
-                                <PullRequestOverviewLoading
-                                  summary={summary}
-                                  params={params}
-                                  stack={stack}
-                                />
-                              ) : null}
-                              <View
-                                className="mt-8 border-t border-border-subtle pt-3"
-                                onLayout={(event) => {
-                                  filesY.current = event.nativeEvent.layout.y;
-                                  if (pendingFilesJump.current) {
-                                    requestAnimationFrame(() => {
-                                      if (shown(requestedSection.current) === "overview")
-                                        jumpToFiles();
-                                    });
-                                  }
-                                }}
-                              >
-                                {filesContent.header}
-                              </View>
-                            </View>
-                          ) : null}
-                          {tab === "guide" ? (
-                            <PullRequestGuideContent
-                              params={params}
-                              visible={section === "guide"}
-                            />
-                          ) : null}
-                          {tab === "activity" ? (
-                            <PullRequestActivityFilters
-                              value={activityFilter}
-                              onChange={activity.setFilter}
-                              hiddenCount={tabContent.hiddenCount}
-                            />
-                          ) : null}
-                          {tab === "activity" ? (
-                            <PullRequestReadStatus
-                              pending={tabContent.pending}
-                              error={tabContent.error}
-                              terminology={terminology}
-                            />
-                          ) : null}
-                        </View>
-                      ),
+                      content:
+                        tab === "overview"
+                          ? overviewBody
+                          : tab === "guide"
+                            ? guideBody
+                            : activityBody,
                     },
+                    // Each tab has its own list, so rows keep their own keys and, unchanged,
+                    // their identity: a list re-renders only the rows that changed.
                     ...(tab === "overview"
                       ? identity
                         ? filesContent.rows
-                        : []
+                        : NO_TAB_ROWS
                       : tab === "activity"
                         ? tabContent.rows
-                        : []
-                    ).map((row) => ({
-                      ...row,
-                      key: `${tab}:${row.key}`,
-                      content: row.content,
-                    })),
+                        : NO_TAB_ROWS),
                   ]}
                   keyExtractor={(row) => row.key}
-                  getItemType={(row) =>
-                    row.key.endsWith(":body") ? row.key : row.key.split(":")[0]
-                  }
+                  getItemType={(row) => (row.key === `${tab}:body` ? row.key : tab)}
                   // Animating overview fights clipped markdown and collapse scroll correction; file rows can still fade.
                   itemLayoutAnimation={tab === "overview" ? undefined : PR_ROW_LAYOUT}
                   onLoad={() => setListAnimationsReady(true)}
@@ -919,12 +934,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     <Animated.View
                       key={item.key}
                       entering={
-                        listAnimationsReady && !item.key.endsWith(":body")
-                          ? PR_ROW_ENTER
-                          : undefined
+                        listAnimationsReady && item.key !== `${tab}:body` ? PR_ROW_ENTER : undefined
                       }
                       exiting={
-                        listAnimationsReady && !item.key.endsWith(":body") ? PR_ROW_EXIT : undefined
+                        listAnimationsReady && item.key !== `${tab}:body` ? PR_ROW_EXIT : undefined
                       }
                     >
                       <PullRequestMediaVisibleContext value={section === tab}>
@@ -1045,16 +1058,23 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
           ?.path
       : undefined;
+  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
+  const reviewDraft = usePullRequestReviewDraft(route.params);
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const filter = usePullRequestFileFilter(
     result.parsed,
+    viewed,
     linkPath ?? (route.params.focus ? route.params.path : undefined),
+    [
+      route.params.path,
+      ...reviewDraft.draft.comments.map((comment) => comment.path),
+      ...(pickedPath ? [pickedPath] : []),
+    ],
   );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const { loadMore } = result;
   const parsed = filter.parsed;
-  const reviewDraft = usePullRequestReviewDraft(route.params);
-  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
   const [commitViewedPaths, setCommitViewedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const permissions = usePullRequestPermissions(route.params, detail.data);
   const scopeKey = pullRequestReviewKey(route.params);
@@ -1101,6 +1121,11 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const selectedRow = data.rows.find((row) => row.id === selectedRowId);
   const selectedFile = data.files.find((file) => file.id === selectedRow?.fileId);
+  const { draftId: replacingDraftId, resetOnReload } = reviewDraftReplacement(
+    reviewDraft.draft,
+    reviewDraft.ready ? diffHead.sha : null,
+    route.params.replacingDraftId,
+  );
   const commentOnLine = (rowId = selectedRowId) => {
     const row = data.rows.find((row) => row.id === rowId);
     const file = data.files.find((file) => file.id === row?.fileId);
@@ -1111,10 +1136,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       parsed.kind === "files"
         ? parsed.files.find((entry) => entry.id === file.id)?.previousPath
         : null;
-    if (route.params.replacingDraftId) navigation.setParams({ replacingDraftId: undefined });
     navigation.navigate("PullRequestInlineComment", {
       ...route.params,
-      ...(route.params.replacingDraftId ? { draftId: route.params.replacingDraftId } : {}),
+      ...(replacingDraftId ? { draftId: replacingDraftId } : {}),
       path: file.path,
       ...(oldPath ? { oldPath } : {}),
       position,
@@ -1122,7 +1146,6 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
-  const [pickedPath, setJumpPath] = useState<string | null>(null);
   const jumpPath = pickedPath ?? linkPath ?? route.params.path;
   const requestedFile =
     result.parsed.kind === "files"
@@ -1180,18 +1203,24 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     .map((file) => file.id);
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
-  // The filter the current jump was made under. Hiding or showing test files replaces the rows,
-  // so a jump made under the other filter has to run again. Native applies the entry
+  // The filters the current jump was made under. Hiding or showing files replaces the rows,
+  // so a jump made under other filters has to run again. Native applies the entry
   // destination before its first viewport, so the first one counts as made.
-  const jumpedUnder = useRef<boolean | null>(targetFile ? filter.hideTestFiles : null);
+  const filterChoice = {
+    hideTestFiles: filter.hideTestFiles,
+    hideViewedFiles: filter.hideViewedFiles,
+  };
+  const jumpedUnder = useRef<typeof filterChoice | null>(targetFile ? filterChoice : null);
   const hasTestFiles =
     result.parsed.kind === "files" &&
     result.parsed.files.some((file) => isTestChangedFile(file.path));
   const jumpStarted = () =>
-    jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
+    jumpedUnder.current !== null &&
+    (!hasTestFiles || jumpedUnder.current.hideTestFiles === filter.hideTestFiles) &&
+    (!filter.viewedCount || jumpedUnder.current.hideViewedFiles === filter.hideViewedFiles);
   const scrollToFile = (fileId: string) => {
     if (!nativeView.current) return;
-    jumpedUnder.current = filter.hideTestFiles;
+    jumpedUnder.current = filterChoice;
     void nativeView.current.scrollToFile(fileId, false).catch(() => {
       jumpedUnder.current = null;
     });
@@ -1241,7 +1270,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       nativeView,
       jumpStarted,
       setJumpStarted: (started) => {
-        jumpedUnder.current = started ? filter.hideTestFiles : null;
+        jumpedUnder.current = started ? filterChoice : null;
       },
       onDebug: bridge.onDebug,
       loadMore,
@@ -1254,12 +1283,25 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     );
   };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
-  const toggleTestFiles = () => {
+  const keepVisibleFile = () => {
     setJumpPath(visibleFile?.path ?? route.params.path);
     setSelectedRowId(null);
+  };
+  const toggleTestFiles = () => {
+    keepVisibleFile();
     filter.toggle();
   };
+  const toggleViewedFiles = () => {
+    keepVisibleFile();
+    filter.toggleViewedFiles();
+  };
   const title = commit ? gt("Commit changes") : gt("Changes");
+  const reportedFileCount =
+    filter.hideTestFiles || filter.hiddenViewedCount
+      ? undefined
+      : commit
+        ? activity.data?.commits.find((entry) => entry.oid === commit)?.changedFiles
+        : detail.data?.changedFiles;
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   const verticalControls = usePullRequestVerticalControls();
@@ -1310,13 +1352,22 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         selected: filter.hideTestFiles,
         onPress: toggleTestFiles,
       },
+      ...(filter.canHideViewedFiles
+        ? [
+            {
+              id: "hide-viewed",
+              title: gt("Hide viewed files"),
+              icon: "eye.slash",
+              selected: filter.hideViewedFiles,
+              onPress: toggleViewedFiles,
+            },
+          ]
+        : []),
       ...(selectedRow && selectedFile && canCommentOnDiff
         ? [
             {
               id: "comment",
-              title: route.params.replacingDraftId
-                ? gt("Move draft to this line")
-                : gt("Add review comment"),
+              title: replacingDraftId ? gt("Move draft to this line") : gt("Add review comment"),
               icon: "bubble.left",
               onPress: () => commentOnLine(),
             },
@@ -1340,18 +1391,25 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         title={title}
         subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${gt(
           "{count, plural, one {{count} file} other {{count} files}}",
-          { count: data.files.length },
+          { count: Math.max(reportedFileCount ?? 0, data.files.length) },
         )}${
           filter.hideTestFiles && filter.hiddenCount
             ? ` · ${gt("{count, plural, one {{count} test hidden} other {{count} tests hidden}}", {
                 count: filter.hiddenCount,
               })}`
             : ""
+        }${
+          filter.hiddenViewedCount
+            ? ` · ${gt(
+                "{count, plural, one {{count} viewed hidden} other {{count} viewed hidden}}",
+                { count: filter.hiddenViewedCount },
+              )}`
+            : ""
         }`}
         onBack={() => navigation.goBack()}
         menus={verticalControls ? undefined : [diffMenu]}
       />
-      {route.params.replacingDraftId ? (
+      {replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
           <T>Select a current line, then choose “Move draft to this line” from its menu.</T>
         </Text>
@@ -1370,6 +1428,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           <Button
             label={gt("Reload changes")}
             onPress={() => {
+              if (resetOnReload) navigation.setParams(resetOnReload);
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
@@ -1456,6 +1515,25 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                 contentInsetTop={staleDiff ? 0 : contentTopInset}
                 contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
                 contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
+              />
+            </View>
+          ) : filter.hiddenViewedCount > 0 &&
+            !data.rows.length &&
+            !result.isPending &&
+            !result.error &&
+            !seekingFile ? (
+            <View style={{ paddingTop: contentTopInset }}>
+              <EmptyState
+                title={gt("All files are hidden")}
+                detail={gt("Viewed files are hidden from this review.")}
+                action={
+                  <Button
+                    label={gt("Show viewed files")}
+                    tone="contrast"
+                    onPress={filter.showViewedFiles}
+                  />
+                }
+                variant="plain"
               />
             </View>
           ) : filter.hiddenCount > 0 &&

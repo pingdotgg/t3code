@@ -124,7 +124,7 @@ vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
 }));
 vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
-  ProjectActionsSettings: (() => null) as never,
+  ProjectActionsSettings: (() => <div data-testid="project-actions" />) as never,
 }));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
@@ -661,6 +661,13 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).toBeVisible();
   });
 
+  it("shows the machine-wide Actions while no project is selected", async () => {
+    setup();
+    await using _screen = await mountSettings({});
+
+    await expect.element(page.getByTestId("project-actions")).toBeInTheDocument();
+  });
+
   it("lists only the selected environment's projects and keeps it when one is opened", async () => {
     setup();
     const [primaryProject, remoteProject] = state.projects;
@@ -830,4 +837,24 @@ describe("project name composition", () => {
       "日本語の名前",
     ]);
   });
+});
+
+it("shows the saved project name again after an empty name is rejected", async () => {
+  setup();
+  await using screen = await mountPanel();
+  const input = nameInput(screen);
+
+  await userEvent.fill(input, "   ");
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(input).toHaveValue("Shared repo");
+  expect(state.toast).toHaveBeenCalledWith({
+    type: "warning",
+    title: "Project title cannot be empty",
+  });
+
+  await userEvent.click(input);
+  await userEvent.keyboard("{Tab}");
+  expect(state.toast).toHaveBeenCalledOnce();
+  expect(state.update).not.toHaveBeenCalled();
 });

@@ -30,6 +30,7 @@ it("keeps the Day breakdown when an empty read becomes pending and settles", asy
     environmentId: EnvironmentId.make("workstation"),
     label: "Workstation",
     canReadDiagnostics: true,
+    accessRequests: [],
     isConnected: true,
     isPending: false,
     error: null,

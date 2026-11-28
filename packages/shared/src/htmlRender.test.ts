@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  htmlRenderFileName,
+  htmlRenderFrameHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
@@ -8,6 +10,34 @@ import {
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+describe("htmlRenderFileName", () => {
+  it("never ends on half of an emoji at the length limit", () => {
+    const fits = "a".repeat(118);
+    const crosses = "a".repeat(119);
+    expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
+    expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+  });
+});
+
+describe("htmlRenderFrameHeight", () => {
+  const responsive = {
+    attachmentId: "a",
+    title: "Report",
+    height: 600,
+    heights: [
+      [728, 350],
+      [1000, 700],
+      [1144, 250],
+    ],
+  } as const;
+
+  it("uses the last measured height at and above the widest sampled width", () => {
+    expect(
+      [1143, 1144, 1145, 1300].map((width) => htmlRenderFrameHeight(responsive, width)),
+    ).toEqual([700, 250, 250, 250]);
+  });
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {
@@ -45,6 +75,31 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected.match(/charset/g)).toHaveLength(1);
     expect(injected.match(/name="viewport"/g)).toHaveLength(1);
     expect(injected.endsWith("<p>hi</p>")).toBe(true);
+  });
+
+  it.each([
+    '<meta data-name="viewport" content="card">',
+    '<meta name="viewport-fit" content="cover">',
+    "<meta name=viewport-fit content=cover>",
+  ])("injects a default viewport when metadata is only viewport-like: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected).toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    );
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
+  it.each([
+    "<meta name='viewport' content='width=600'>",
+    "<meta name=viewport />",
+    '<meta data-x="1"name="viewport" content="width=600">',
+    '<meta data-if="a>b" name="viewport" content="width=600">',
+  ])("preserves a genuine viewport declaration: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected).not.toContain(
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    );
+    expect(injected.endsWith(fragment)).toBe(true);
   });
 
   it.each(["textarea", "iframe", "plaintext"])("keeps the bootstrap outside %s content", (tag) => {

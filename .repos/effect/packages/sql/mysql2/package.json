@@ -1,6 +1,6 @@
 {
   "name": "@effect/sql-mysql2",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "type": "module",
   "license": "MIT",
   "description": "A MySQL toolkit for Effect",
@@ -61,7 +61,7 @@
     "check": "tsc -b tsconfig.json"
   },
   "devDependencies": {
-    "@testcontainers/mysql": "^12.2.1",
+    "@testcontainers/mysql": "^12.2.2",
     "effect": "workspace:^"
   },
   "peerDependencies": {

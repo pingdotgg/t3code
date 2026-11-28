@@ -43,6 +43,7 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { usageAxisDayLabel, usageAxisHourLabel } from "./usageAxisLabels";
+import { UsageAccessCard, type UsageAccessPrompt } from "./UsageAccessCard";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -148,6 +149,13 @@ function UsageScreen(props: {
     (environment) => environment.canReadDiagnostics,
   );
   const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
+  const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
+    environment.accessRequests.map((request) => ({
+      ...request,
+      environmentId: environment.environmentId,
+      environmentLabel: environment.label,
+    })),
+  );
 
   const days = enumerateDays(window.sinceDay, window.untilDay);
   const chartDays =
@@ -304,7 +312,9 @@ function UsageScreen(props: {
               entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
               className="gap-6"
             >
-              {showingLimits ? (
+              {accessPrompts.length > 0 ? (
+                <UsageAccessCard prompts={accessPrompts} />
+              ) : showingLimits ? (
                 <UsageLimitsSection
                   now={limits.now}
                   failedLabels={limits.failedLabels}
@@ -550,10 +560,13 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
       <Text className="text-sm text-foreground-muted">
         {metric === "cost"
           ? gt("* if billed at full API rate")
-          : gt("{count, plural, other {Across {sessions} sessions}}", {
-              count: merged.sessions,
-              sessions: formatCount(merged.sessions),
-            })}
+          : gt(
+              "{count, plural, one {Across {sessions} session} other {Across {sessions} sessions}}",
+              {
+                count: merged.sessions,
+                sessions: formatCount(merged.sessions),
+              },
+            )}
       </Text>
     </View>
   );

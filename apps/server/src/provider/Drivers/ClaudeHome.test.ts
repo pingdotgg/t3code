@@ -49,6 +49,26 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("gives a symlinked Claude home the continuation key of its target", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+        const target = path.join(root, ".claude");
+        const link = path.join(root, ".claude-second-account");
+        yield* fileSystem.makeDirectory(target);
+        yield* fileSystem.symlink(target, link);
+
+        const direct = yield* makeClaudeContinuationGroupKey({ homePath: target });
+        expect(yield* makeClaudeContinuationGroupKey({ homePath: link })).toBe(direct);
+        expect(
+          yield* makeClaudeContinuationGroupKey({ homePath: "" }, { CLAUDE_CONFIG_DIR: link }),
+        ).toBe(direct);
+        // The spawned process keeps the literal path, because Claude keys its login by that path.
+        expect((yield* makeClaudeEnvironment({ homePath: link })).CLAUDE_CONFIG_DIR).toBe(link);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
@@ -60,7 +80,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",
+    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden, without reading settings while turned off",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -80,11 +100,15 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           { name: "CLAUDE_EFFORT", value: "low", sensitive: false },
         ];
 
-        expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+        expect(
+          yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, undefined, host),
+        ).toEqual({
           CLAUDE_CODE_ENTRYPOINT: "t3-code",
           KEEP: "1",
         });
-        expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+        expect(
+          yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, instance, host),
+        ).toEqual({
           CLAUDE_CODE_ENTRYPOINT: "instance",
           CLAUDE_EFFORT: "low",
           KEEP: "1",
@@ -95,9 +119,13 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           JSON.stringify({ env: { CLAUDE_CODE_ENTRYPOINT: "custom" } }),
         );
         expect(
-          (yield* mergeClaudeProcessEnvironment({ homePath }, instance, host))
+          (yield* mergeClaudeProcessEnvironment({ homePath, enabled: true }, instance, host))
             .CLAUDE_CODE_ENTRYPOINT,
         ).toBe("custom");
+        expect(
+          (yield* mergeClaudeProcessEnvironment({ homePath, enabled: false }, instance, host))
+            .CLAUDE_CODE_ENTRYPOINT,
+        ).toBe("instance");
       }),
   );
 });

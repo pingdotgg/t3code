@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
+import { mobileThreadTriageOutboxStore } from "../state/thread-triage-outbox-storage";
 
 class EnvironmentOwnedDataClearError extends Schema.TaggedError<EnvironmentOwnedDataClearError>()(
   "EnvironmentOwnedDataClearError",
@@ -40,6 +41,7 @@ export const layer = Layer.succeed(
           settle("outbox", clearThreadOutboxEnvironment),
           settle("drafts", clearComposerDraftsEnvironment),
           Effect.sync(() => clearThreadComposerErrorsForEnvironment(environmentId)),
+          Effect.ignore(mobileThreadTriageOutboxStore.clearEnvironment(environmentId)),
         ],
         { concurrency: "unbounded", discard: true },
       );

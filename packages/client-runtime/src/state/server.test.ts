@@ -109,6 +109,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
 }
@@ -849,6 +850,18 @@ describe("server state projection", () => {
       stage: "resuming",
       fromVersion: "0.0.30",
       targetVersion: "0.0.31",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "boot-service", updateId: "update-1" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      updateId: "update-1",
     });
     expect(
       serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {

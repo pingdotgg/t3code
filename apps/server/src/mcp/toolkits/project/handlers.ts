@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  type ModelSelection,
   ThreadId,
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -37,10 +38,15 @@ import {
 } from "@t3tools/shared/projectSettings";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import {
+  providerOptionDescriptors,
+  refuseAgentModePick,
+  resolveRuntimeMode,
+} from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
+import { firstLineTitle } from "../../firstLineTitle.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -246,7 +252,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 text: input.message ?? "",
                 attachments: input.attachments,
               });
-        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message))
+        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message?.trim()))
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message: schemaProblem ?? "outputSchema needs a message that asks for the result.",
@@ -322,26 +328,45 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               }
             : input.workspaceStrategy;
+        let validatedModelSelection = input.modelSelection;
         if (!replaying && input.modelSelection !== undefined) {
-          const { instanceId, model } = input.modelSelection;
+          const requestedSelection = input.modelSelection;
+          const { instanceId, model } = requestedSelection;
           const registry = yield* ProviderRegistry.ProviderRegistry;
           // The thread runs in this folder, whose own provider config can add models.
           const cwd =
             workspaceStrategy?.type === "existing_worktree"
               ? workspaceStrategy.worktreePath
               : project?.workspaceRoot;
-          const requireModel = (
+          const validateSelection = Effect.fn("mcp.validateLaunchModelSelection")(function* (
             providers: ReadonlyArray<ServerProvider>,
-          ): Effect.Effect<void, OrchestratorMcpFailure> => {
+          ): Effect.fn.Return<ModelSelection, OrchestratorMcpFailure> {
             const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
               (candidate) => candidate.instanceId === instanceId,
             );
-            return provider === undefined
-              ? Effect.void
-              : OrchestrationMcp.requireAdvertisedModel(provider, model);
-          };
-          const checked = requireModel(yield* registry.getProviders);
-          yield* cwd === undefined
+            // Checked with the same provider snapshot that validates the options below.
+            yield* refuseAgentModePick({
+              callerRuntimeMode: context.limits.runtimeMode,
+              picked: requestedSelection.options,
+              descriptors: providerOptionDescriptors(provider),
+              held:
+                caller?.modelSelection.instanceId === instanceId
+                  ? caller.modelSelection.options
+                  : undefined,
+            });
+            if (provider === undefined) return requestedSelection;
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+            const options = yield* OrchestrationMcp.validateModelOptions(
+              provider,
+              model,
+              requestedSelection.options,
+            );
+            return options === undefined || options === requestedSelection.options
+              ? requestedSelection
+              : { ...requestedSelection, options };
+          });
+          const checked = validateSelection(yield* registry.getProviders);
+          validatedModelSelection = yield* cwd === undefined
             ? checked
             : checked.pipe(
                 Effect.catchIf(
@@ -352,7 +377,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                       Effect.flatMap((scanCwd) =>
                         registry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
                       ),
-                      Effect.flatMap(requireModel),
+                      Effect.flatMap(validateSelection),
                     ),
                 ),
               );
@@ -408,7 +433,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // within the ceiling it was approved with.
         const projectDefaults = caller === undefined ? projectSettings : undefined;
         const modelSelection =
-          input.modelSelection ??
+          validatedModelSelection ??
           launchedModel ??
           caller?.modelSelection ??
           (projectDefaults
@@ -449,14 +474,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           commandId,
           threadId,
           projectId,
-          title: input.title,
+          title: firstLineTitle(input.title) ?? input.title,
           ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
           ...(input.generateTitle === true ? {} : { titleRenamed: true }),
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
           workspaceStrategy: strategy ?? { type: "root" },
-          ...(input.message === undefined && attachments.length === 0
+          // A blank message is no message: clients that fill every optional field send "".
+          ...(!input.message?.trim() && attachments.length === 0
             ? {}
             : {
                 initialMessage: {
@@ -543,10 +569,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         if (workspaceRoot === undefined) {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
-            input.scripts !== undefined ||
-            input.trackedFolders !== undefined ||
+            (input.scripts?.length ?? 0) > 0 ||
+            (input.trackedFolders?.length ?? 0) > 0 ||
             input.createWorkspaceRootIfMissing !== undefined ||
-            input.defaultModelSelection !== undefined
+            (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
           )
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
@@ -554,15 +580,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
             });
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-          const created = yield* folders.createNamedProject({ name: input.title }).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+          const created = yield* folders
+            .createNamedProject({
+              name: input.title,
+              ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
           const project = yield* projects
             .getById(created.projectId)
             .pipe(

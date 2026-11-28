@@ -52,6 +52,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as P from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
@@ -530,6 +531,9 @@ const formQuestions = (
       options,
       multiSelect: field.type === "multiselect",
       allowCustomAnswer: field.custom === true || options.length === 0,
+      ...(field.required === true || (field.type === "multiselect" && (field.minItems ?? 0) > 0)
+        ? { required: true }
+        : {}),
     });
   }
   return { questions };
@@ -542,8 +546,11 @@ const formAnswer = (form: NativeForm, answers: Readonly<Record<string, unknown>>
     const values = (Array.isArray(raw) ? raw : [raw]).filter(
       (value): value is string => typeof value === "string" && value.trim().length > 0,
     );
-    if (values.length > 0) {
-      answer[field.key] = field.type === "multiselect" ? values : values.join(", ");
+    // An explicit empty list answers an optional multiselect with "none".
+    if (field.type === "multiselect" && (Array.isArray(raw) || values.length > 0)) {
+      answer[field.key] = values;
+    } else if (values.length > 0) {
+      answer[field.key] = values.join(", ");
     }
   }
   return answer;
@@ -908,6 +915,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
+    const commandStarts = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -1141,6 +1149,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
         yield* emit({ type: "provider_session.updated", driver, providerSession: session });
       });
+
+    const setStartupPhase = Effect.fnUntraced(function* (phase: string | undefined) {
+      if (session.startupPhase === phase) return;
+      const updatedAt = yield* DateTime.now;
+      const { startupPhase: _reported, ...current } = session;
+      session = { ...current, ...(phase === undefined ? {} : { startupPhase: phase }), updatedAt };
+      yield* emit({ type: "provider_session.updated", driver, providerSession: session });
+    });
 
     const ordinalOf = (turn: ActiveTurn, nativeId: string) => {
       const known = turn.ordinals.get(nativeId);
@@ -2400,6 +2416,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       const turn = state.active;
       if (turn === undefined) return;
+      const promptDropped = terminal.status === "interrupted" && turn.unsent;
       state.active = undefined;
       for (const inboxID of turn.steers) state.strandedSteers.add(inboxID);
       for (const entry of pending.values()) {
@@ -2466,6 +2483,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ...turn.providerTurn,
         status: terminal.status,
         completedAt,
+        ...(promptDropped ? { promptDropped: true } : {}),
         turnTokenUsage: turnTokenUsage(turn, terminal.status),
         ...(lastStep === undefined
           ? {}
@@ -2519,6 +2537,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
+        ...(promptDropped ? { promptDropped: true as const } : {}),
         ...retainedRequestsOf(turn),
       };
       yield* emit(
@@ -3448,6 +3467,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             else state.unsettledStarted = true;
           }
           busy.add(sessionId);
+          const commandStart = commandStarts.get(sessionId);
+          if (commandStart !== undefined) yield* Deferred.succeed(commandStart, undefined);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
           busy.delete(sessionId);
         }
@@ -4012,6 +4033,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.gen(function* () {
             streamFailure = "The OpenCode event stream was lost. Reconnecting.";
             yield* Effect.logWarning("Lost the OpenCode event stream; reconnecting.");
+            yield* setStartupPhase("connecting");
             // Failures may contain URLs or response text; annotate only the tag and keep details in cause.
             const next = yield* reconnect.pipe(
               Effect.tapCause((cause) =>
@@ -4021,6 +4043,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
               ),
               Effect.option,
+              Effect.ensuring(setStartupPhase(undefined)),
             );
             if (next._tag === "None") {
               return yield* lock.withPermit(
@@ -4735,8 +4758,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // OpenCode 2.2.5 answers its model list only once the scan has ended (observed, not documented).
     const skillsMentioned = Effect.fnUntraced(function* (
       location: { readonly directory: string },
-      mentions: ReadonlyArray<string>,
+      text: string,
     ) {
+      const mentions = skillMentions(text);
+      if (mentions.length === 0) return [];
       const known = yield* listSkills(location);
       if (mentions.some((name) => !known.has(name))) {
         yield* readModels(location.directory);
@@ -4800,7 +4825,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
             return yield* finishControl;
           }
-          yield* client.session.command({ sessionID, ...command });
+          // The reply waits for the whole execution, which may wait on a question this turn must answer.
+          const commandStart = yield* Deferred.make<void>();
+          commandStarts.set(sessionId, commandStart);
+          const reply = yield* client.session.command({ sessionID, ...command }).pipe(
+            Effect.tapCause((cause) =>
+              Deferred.isDoneUnsafe(commandStart)
+                ? Effect.logWarning("OpenCode command failed after it started.", cause)
+                : Effect.void,
+            ),
+            Effect.exit,
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (commandStarts.get(sessionId) === commandStart) commandStarts.delete(sessionId);
+              }),
+            ),
+            Effect.forkIn(sessionScope),
+          );
+          const replied = yield* Effect.raceFirst(
+            Fiber.join(reply).pipe(Effect.asSome),
+            Deferred.await(commandStart).pipe(Effect.as(Option.none())),
+          );
+          // Once started, the execution's events own the turn.
+          if (Option.isNone(replied)) return;
+          yield* replied.value;
           // A command that never prompts the model starts no execution, so no event ends its turn.
           const idle = () => state.active === turn && !busy.has(sessionId);
           if (!idle()) return;
@@ -4840,8 +4888,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         }
       }
-      const mentions = skillMentions(text);
-      const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
+      const skills = yield* skillsMentioned(location, text);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
@@ -4903,13 +4950,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             policy,
             threadInput.threadId,
           );
-          const title = threadInput.title?.trim() || undefined;
-          // A session created with a title is never titled by OpenCode's own model.
+          // A session created with a title is never titled by OpenCode's own model, so leave it unset.
           const created = yield* client.session.create({
             location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
             model,
             permissions,
-            ...(title === undefined ? {} : { title }),
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
@@ -4937,7 +4982,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               id: created.id,
               model: created.model,
               agent: created.agent,
-              title: title ?? created.title,
+              title: created.title,
               permissions,
             },
             directory,
@@ -5089,10 +5134,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               }
               // Refresh stale mode rules; running subagent updates are best effort because they outlive this turn.
               yield* writeRules(state, turnInput.runtimePolicy);
-              yield* writeTitle(state, turnInput.appThread.title).pipe(
-                Effect.timeout(REQUEST_REPLY_TIMEOUT),
-                Effect.ignore({ log: true }),
-              );
+              // A root thread's seed or generated title is left to OpenCode, which titles the session itself.
+              if (
+                turnInput.appThread.titleRenamed === true ||
+                turnInput.appThread.lineage.parentThreadId !== null
+              ) {
+                yield* writeTitle(state, turnInput.appThread.title).pipe(
+                  Effect.timeout(REQUEST_REPLY_TIMEOUT),
+                  Effect.ignore({ log: true }),
+                );
+              }
               for (const call of runningCalls(state)) {
                 if (call.child === undefined) continue;
                 yield* writeRules(call.child, turnInput.runtimePolicy).pipe(
@@ -5181,7 +5232,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
-          const { files, messageText } = yield* Effect.gen(function* () {
+          const { files, messageText, skills } = yield* Effect.gen(function* () {
             const files = yield* promptFiles(steerInput.message.attachments);
             const messageText = (yield* providerMessageTextWithAttachmentPaths({
               text: steerInput.message.text,
@@ -5189,7 +5240,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             })).trim();
-            return { files, messageText };
+            const skills = yield* skillsMentioned(
+              { directory: directoryOf(turn.input.runtimePolicy.cwd) },
+              steerInput.message.text,
+            );
+            return { files, messageText, skills };
           }).pipe(
             Effect.onInterrupt(() =>
               lock.withPermit(
@@ -5226,6 +5281,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               id: inboxID,
               text: messageText,
               ...(files.length === 0 ? {} : { files }),
+              ...(skills.length === 0
+                ? {}
+                : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
               delivery: "steer",
             })
             .pipe(

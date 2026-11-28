@@ -21,8 +21,8 @@ const sections = [
   description="How T3 Tools, Inc. handles information when you use T3 Code, app.t3.codes, and t3.codes."
   heading="T3 Code Privacy Policy"
   lede="This Privacy Policy describes how T3 Tools, Inc. collects, uses, and shares personal information when you use the T3 Code desktop, mobile, and hosted web applications, visit the t3.codes marketing site, or use the optional T3 Connect service."
-  effectiveDate="2026-10-06"
-  lastUpdated="2026-10-06"
+  effectiveDate="2026-11-27"
+  lastUpdated="2026-11-27"
   sections={sections}
 >
   <section id="introduction">
@@ -82,10 +82,41 @@ const sections = [
               headline.
             </li>
             <li>
-              <strong>Product usage data.</strong> By default, T3 Code sends us anonymous usage
-              data, such as which provider and model a turn used, whether it succeeded, and your app
-              version and operating system. We use it to improve the product. You can turn this off
-              at any time; see “Product Usage Data” under Your Choices below.
+              <strong>Product usage data.</strong> By default, T3 Code sends us pseudonymous product
+              usage data, such as which provider and model a turn used, whether it succeeded, and
+              your app version and operating system. Events are linked to a hashed random install
+              ID, hashed random IDs of the devices that connect to it, and, when you are signed in to
+              T3 Connect, a hashed account ID. We use this data to improve the product. You can turn
+              this off at any time; see “Product Usage Data” under Your Choices below.
+            </li>
+            <li>
+              <strong>Agent feedback reports.</strong> If you turn on Agent feedback in Settings,
+              coding agents can send us reports about problems with T3 Code. A report you approve
+              contains what the agent expected, what happened, any workaround, an outline of the
+              turn without its text, and, only if you choose to include it, up to 16 KB of the
+              conversation. In Automatic mode, reports sent without your review contain only the
+              kind of problem and the tool or command name. File paths, usernames, hostnames, git
+              remotes, and secret-like strings are removed before a report is saved.
+            </li>
+            <li>
+              <strong>Held webhooks.</strong> If you turn on holding webhooks while your environment
+              is offline, T3 Connect stores incoming webhook requests to your scheduled tasks,
+              including their headers and body, for up to 24 hours so they can be delivered when
+              the environment reconnects.
+            </li>
+            <li>
+              <strong>T3 Chat account linking.</strong> If you link a T3 Chat account to your T3
+              account, we send your T3 account user ID and its primary email address to T3 Chat to
+              verify the link and apply your T3 Chat plan to T3 Connect.
+            </li>
+            <li>
+              <strong>Mobile crash reports and diagnostics.</strong> By default, the mobile app
+              sends crash and error reports, which contain the error message, stack trace, app
+              version, and device model and operating-system version, along with startup timings,
+              under a random ID for the install. It also sends connection traces when it connects
+              through T3 Connect, which contain step timings, error types, an app-session ID, and
+              the app version. These never include your threads, prompts, or code. You can turn
+              each off; see “Product Usage Data” under Your Choices below.
             </li>
             <li>
               <strong>Information you provide to us.</strong> We collect information that you choose
@@ -135,6 +166,11 @@ const sections = [
             <li>
               <strong>Photos and files.</strong> Items you select are accessed only to preview them or
               attach them to a request you initiate.
+            </li>
+            <li>
+              <strong>Microphone.</strong> Used only when you choose to dictate with voice input.
+              Audio is transcribed on your device, on an environment you connect, or by a
+              transcription provider you configure.
             </li>
             <li>
               <strong>Notifications.</strong> Used only if you enable agent-status notifications or
@@ -206,6 +242,12 @@ const sections = [
             artificial-intelligence providers configured in your environment. Because you bring and
             configure your own coding-agent harness and provider, the applicable third parties vary.
             Those providers process information under their own terms and privacy policies.
+          </p>
+
+          <h3>Accounts You Link</h3>
+          <p>
+            If you link a T3 Chat account, we share your T3 account user ID and primary email
+            address with T3 Chat to verify the link, as described above.
           </p>
 
           <h3>Third-Party Service Providers</h3>
@@ -338,15 +380,27 @@ const sections = [
           <p>
             You may use local or direct connections without signing in to a T3 account. You can
             disconnect environments, sign out, disable optional notifications and Live Activities,
-            and clear local caches from Settings. You can grant or revoke camera, photo, local-network,
-            and notification permissions in your device settings.
+            and clear local caches from Settings. You can grant or revoke camera, microphone, photo,
+            local-network, and notification permissions in your device settings.
           </p>
 
           <h3>Product Usage Data</h3>
           <p>
-            To stop sending product usage data, set the environment variable{" "}
-            <code>T3CODE_TELEMETRY_ENABLED=false</code>{" "}where T3 Code runs, for example in your
-            shell profile, and restart T3 Code.
+            To stop sending product usage data and T3 Connect diagnostic traces from the desktop app
+            or server, set the environment variable{" "}<code>T3CODE_TELEMETRY_ENABLED=false</code
+            >{" "}or{" "}<code>DO_NOT_TRACK=1</code>{" "}where T3 Code runs, for example in your
+            shell profile, and restart T3 Code. Administrators can also turn this off with a
+            managed policy.
+          </p>
+          <p>
+            In the mobile app, turn off <strong>Send crash reports</strong> and
+            {" "}<strong>Send connection traces</strong>{" "}under
+            {" "}<strong>Settings → About T3 Code → Diagnostics</strong>.
+          </p>
+          <p>
+            Agent feedback is off unless you turn it on, and you can turn it off again under
+            {" "}<strong>Settings → Labs → Agent feedback</strong>. Holding webhooks while offline is
+            off unless you turn it on under <strong>Settings → Sharing &amp; access</strong>.
           </p>
 
           <h3>Cookies and Local Data</h3>
@@ -432,7 +486,9 @@ const sections = [
           <p class="section-number">09</p>
           <h2>Do Not Track</h2>
           <p>
-            We currently do not respond to browser “Do Not Track” signals. T3 Code does not use
+            We currently do not respond to browser “Do Not Track” signals. The T3 Code desktop app
+            and server honor the <code>DO_NOT_TRACK=1</code> environment variable, which turns off
+            product usage data and T3 Connect diagnostic traces. T3 Code does not use
             personal information for cross-context behavioral or targeted advertising.
           </p>
         </section>
