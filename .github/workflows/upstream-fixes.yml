@@ -19,10 +19,6 @@ permissions:
   pull-requests: write
   actions: write
 
-concurrency:
-  group: upstream-fixes
-  cancel-in-progress: false
-
 jobs:
   pick:
     name: Propose upstream fixes
@@ -31,6 +27,9 @@ jobs:
       (github.event.pull_request.merged == true &&
        github.event.pull_request.head.ref == 'upstream-fixes' &&
        github.event.pull_request.head.repo.full_name == github.repository)
+    concurrency:
+      group: upstream-fixes
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
