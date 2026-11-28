@@ -141,12 +141,29 @@ export const AgentRpcs = RpcGroup.make(
   SetSessionConfigOptionRpc,
 );
 
+export const CompatInitializeResponseV1 = Schema.Struct({
+  ...AcpSchemaV1.InitializeResponse.fields,
+  authMethods: Schema.optionalKey(
+    Schema.Array(
+      Schema.Union([
+        Schema.Struct({
+          ...AcpSchemaV1.AuthMethodAgent.fields,
+          type: Schema.Literal("env_var"),
+          vars: Schema.optionalKey(Schema.Unknown),
+          link: Schema.optionalKey(Schema.Unknown),
+        }),
+        AcpSchemaV1.AuthMethod,
+      ]),
+    ),
+  ),
+});
+
 const CompatInitializeRpc = Rpc.make(AGENT_METHODS.initialize, {
   // The negotiation request intentionally carries both v1 and v2 capability
   // field names. A union encoder would select one branch and discard the
   // other generation's fields before they reach the agent.
   payload: Schema.Unknown,
-  success: Schema.Union([AcpSchema.InitializeResponse, AcpSchemaV1.InitializeResponse]),
+  success: Schema.Union([AcpSchema.InitializeResponse, CompatInitializeResponseV1]),
   error: AcpSchema.Error,
 });
 
