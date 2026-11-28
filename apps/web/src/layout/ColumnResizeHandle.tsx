@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { flushSync } from "react-dom";
+import { cn } from "../lib/utils";
 import { settleStripCamera } from "../motion/stripCamera";
 import {
   LAYOUT_COLUMN_WIDTH_PRESETS,
@@ -602,7 +603,7 @@ export function LayoutResizeHandles({
           snapped: presetAt(width),
         });
       }
-      handles.push(
+      const handle = (
         <div
           key={key}
           role="separator"
@@ -612,8 +613,11 @@ export function LayoutResizeHandles({
           tabIndex={0}
           data-layout-gutter=""
           data-dragging={dragging || undefined}
-          className="group/resize absolute inset-y-0 z-30 cursor-col-resize touch-none select-none outline-none [-webkit-app-region:no-drag]"
-          style={{ left, width: HANDLE_SIZE }}
+          className={cn(
+            "group/resize z-30 cursor-col-resize touch-none select-none outline-none [-webkit-app-region:no-drag]",
+            start ? "pointer-events-auto sticky left-2 h-full" : "absolute inset-y-0",
+          )}
+          style={start ? { width: HANDLE_SIZE } : { left, width: HANDLE_SIZE }}
           onPointerDown={(event) => {
             const metrics = measure();
             if (!metrics || metrics.width <= 0) return;
@@ -671,7 +675,22 @@ export function LayoutResizeHandles({
           }}
         >
           <ResizeTarget />
-        </div>,
+        </div>
+      );
+      // At the strip's visible start the sidebar's resize rail reaches half its 16px over the
+      // strip, so a start handle there sticks that far into its column, clear of the rail.
+      handles.push(
+        start ? (
+          <div
+            key={key}
+            className="pointer-events-none absolute inset-y-0 z-30"
+            style={{ left, width: `calc(${HANDLE_SIZE} * 2)` }}
+          >
+            {handle}
+          </div>
+        ) : (
+          handle
+        ),
       );
     };
     const endPct = ((thisColumnLeft + width) / stripWidth) * 100;

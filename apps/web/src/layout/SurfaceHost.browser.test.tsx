@@ -1107,6 +1107,47 @@ it("keeps growing a column held at the strip's edge, up to the window's width", 
   );
 });
 
+it("shrinks a full-width column from its start at the window's left edge, beside the sidebar's rail", async () => {
+  using _tabs = setupThreeColumns();
+  const { layout } = useLayoutStore.getState();
+  const workspace = layout.workspaces[0]!;
+  useLayoutStore.setState({
+    layout: {
+      ...layout,
+      workspaces: [
+        {
+          ...workspace,
+          columns: workspace.columns.map((column, index) =>
+            index === 1 ? { ...column, width: 1 } : column,
+          ),
+          focusedPaneId: workspace.columns[1]!.panes[0]!.id,
+        },
+      ],
+    },
+  });
+  await using _screen = await renderHost({ edges: [40, 0] });
+  const strip = stripElement();
+  const view = strip.getBoundingClientRect();
+  await vi.waitFor(() => expect(paneRect(1).left).toBeCloseTo(view.left + 4, 0));
+  // The sidebar's resize rail reaches 8px past the sidebar's edge, over the strip.
+  const rail = document.createElement("div");
+  rail.style.cssText = `position:fixed;top:0;bottom:0;left:${view.left - 8}px;width:16px;z-index:100`;
+  document.body.append(rail);
+  using _rail = { [Symbol.dispose]: () => rail.remove() };
+  const widths = columnWidths();
+  const handle = document.querySelector<HTMLElement>('[aria-label="Resize column start"]')!;
+  const rect = handle.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const { hit, release } = dragFrom(x, rect.top + rect.height / 2, [x + 100, x + 200]);
+  expect(hit).toBe(handle);
+  await vi.waitFor(() => expect(handle.hasAttribute("data-dragging")).toBe(true));
+  release(x + 200);
+  widths[1]! -= 200 / strip.clientWidth;
+  await vi.waitFor(() =>
+    columnWidths().forEach((width, index) => expect(width).toBeCloseTo(widths[index]!, 3)),
+  );
+});
+
 it("moves focus to the neighboring column on a double-click in the gutter on that side", async () => {
   using _tabs = setupThreeColumns();
   await using _screen = await renderHost();
