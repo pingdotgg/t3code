@@ -3220,11 +3220,13 @@
   "ffc9b1ef30d0c03b": "Sin commit",
   "9614272348cc04cf": "Último turno",
   "9e3bec1565bba8ea": "Turno",
+  "287c30f8300f49f8": "Borrar selección",
   "706084d25f85dd5a": "Repositorio",
   "347abb91b1250a79": "No hay diffs de revisión",
   "5439d3917c97951f": "Este hilo no tiene diffs de turno listos y el diff del worktree está vacío.",
   "323793c598edeb57": "Sin cambios",
   "91ee3665e9c5f61d": "Este diff está vacío.",
+  "63557ee89759f09f": "Esta vista previa supera el límite de tamaño. Se muestra el fragmento sin procesar; los cambios mostrados están incompletos.",
   "ea27dee4af84c962": "Diff parcial",
   "c3ceec490d628d41": "Revisión no disponible",
   "87fff45fd430fafb": [

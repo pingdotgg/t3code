@@ -3226,11 +3226,13 @@
   "ffc9b1ef30d0c03b": "Uncommitted",
   "9614272348cc04cf": "Latest turn",
   "9e3bec1565bba8ea": "Turn",
+  "287c30f8300f49f8": "Clear selection",
   "706084d25f85dd5a": "Repository",
   "347abb91b1250a79": "No review diffs",
   "5439d3917c97951f": "This thread has no ready turn diffs and the worktree diff is empty.",
   "323793c598edeb57": "No changes",
   "91ee3665e9c5f61d": "This diff is empty.",
+  "63557ee89759f09f": "This preview exceeds the size limit. Showing the raw excerpt; changes shown are incomplete.",
   "ea27dee4af84c962": "Partial diff",
   "c3ceec490d628d41": "Review unavailable",
   "87fff45fd430fafb": [

@@ -3225,11 +3225,13 @@
   "ffc9b1ef30d0c03b": "Lokal",
   "9614272348cc04cf": "Letzte Runde",
   "9e3bec1565bba8ea": "Runde",
+  "287c30f8300f49f8": "Auswahl aufheben",
   "706084d25f85dd5a": "Repository",
   "347abb91b1250a79": "Keine Review-Diffs",
   "5439d3917c97951f": "Dieser Thread hat keine fertigen Diffs der Runden und der Worktree-Diff ist leer.",
   "323793c598edeb57": "Keine Änderungen",
   "91ee3665e9c5f61d": "Dieser Diff ist leer.",
+  "63557ee89759f09f": "Diese Vorschau überschreitet das Größenlimit. Der rohe Auszug wird angezeigt; die angezeigten Änderungen sind unvollständig.",
   "ea27dee4af84c962": "Unvollständiger Diff",
   "c3ceec490d628d41": "Review nicht verfügbar",
   "87fff45fd430fafb": [

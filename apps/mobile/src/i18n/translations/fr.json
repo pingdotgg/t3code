@@ -3220,11 +3220,13 @@
   "ffc9b1ef30d0c03b": "Locales",
   "9614272348cc04cf": "Dernier tour",
   "9e3bec1565bba8ea": "Tour",
+  "287c30f8300f49f8": "Effacer la sélection",
   "706084d25f85dd5a": "Dépôt",
   "347abb91b1250a79": "Aucun diff à relire",
   "5439d3917c97951f": "Ce fil n’a aucun diff de tour prêt et le diff du worktree est vide.",
   "323793c598edeb57": "Aucune modification",
   "91ee3665e9c5f61d": "Ce diff est vide.",
+  "63557ee89759f09f": "Cet aperçu dépasse la taille limite. Affichage de l’extrait brut ; les modifications affichées sont incomplètes.",
   "ea27dee4af84c962": "Diff partiel",
   "c3ceec490d628d41": "Revue indisponible",
   "87fff45fd430fafb": [

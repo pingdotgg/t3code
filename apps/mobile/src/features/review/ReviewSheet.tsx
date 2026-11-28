@@ -13,7 +13,7 @@ import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } fr
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReduceMotionEnabled } from "../../lib/appState";
+import { useReduceMotionEnabled, useScreenReaderEnabled } from "../../lib/appState";
 import { useContentTopInset, useSheetContentBottomInset } from "../../components/ui/useBarInset";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
@@ -44,7 +44,7 @@ import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
   type NativeReviewDiffViewHandle,
-  resolveNativeReviewDiffView,
+  resolveReadableReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { NATIVE_REVIEW_DIFF_CONTENT_WIDTH } from "./nativeReviewDiffAdapter";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
@@ -210,6 +210,7 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
+  const gt = useGT();
   if (!props.title) {
     return null;
   }
@@ -253,6 +254,8 @@ function ReviewSelectionActionBar(props: {
       )}
 
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={gt("Clear selection")}
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
@@ -467,7 +470,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
           },
   });
   // Expo may return null before registration or in older binaries; use the fallback.
-  const NativeReviewDiffView = resolveNativeReviewDiffView();
+  const NativeReviewDiffView = resolveReadableReviewDiffView(useScreenReaderEnabled());
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -852,7 +855,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
               ) : parsedDiff.kind === "files" && !allFilesHidden ? (
                 <ContentBand spacing="roomy">
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    <T>Native diff view unavailable. Showing the raw patch.</T>
+                    {selectedSection.truncated ? (
+                      gt(
+                        "This preview exceeds the size limit. Showing the raw excerpt; changes shown are incomplete.",
+                      )
+                    ) : (
+                      <T>Native diff view unavailable. Showing the raw patch.</T>
+                    )}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
