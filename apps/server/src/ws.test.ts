@@ -2755,6 +2755,8 @@ const seedAcpThread = Effect.fn(function* (
 
 it.effect("ACP session RPCs list a thread missing its history and repair it on import", () =>
   Effect.gen(function* () {
+    const otherProjectId = ProjectId.make("project:acp-other");
+    let ownerRoot = "/workspace/acp";
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const pending = yield* seedAcpThread("pending", { imported: false, ran: false });
@@ -2765,7 +2767,12 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       ran: true,
       nativeId: "owned-session",
     });
-    const repaired: Array<ThreadId> = [];
+    const crossProject = yield* seedAcpThread("existing-pending-thread", {
+      imported: false,
+      ran: false,
+      nativeId: "cross-project",
+    });
+    const repaired: Array<{ threadId: ThreadId; workspaceRoot: string }> = [];
     const deleted: Array<string> = [];
     const session = (sessionId: string) => ({
       sessionId,
@@ -2783,9 +2790,14 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         }),
       },
       acpSessionManagement: {
-        listSessions: () =>
+        listSessions: ({ cwd }: { readonly cwd: string }) =>
           Effect.succeed({
-            sessions: ["new", "pending", "complete", "ran", "owned-session"].map(session),
+            sessions:
+              cwd === "/workspace/acp"
+                ? ["new", "pending", "complete", "ran", "owned-session", "cross-project"].map(
+                    session,
+                  )
+                : [],
             nextCursor: null,
             canLoad: true,
             canResume: true,
@@ -2810,11 +2822,11 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(ProjectService.ProjectService)({
-        getById: () =>
+        getById: (id) =>
           Effect.succeedSome({
-            id: acpProjectId,
+            id,
             title: "ACP",
-            workspaceRoot: "/workspace/acp",
+            workspaceRoot: id === acpProjectId ? ownerRoot : "/workspace/acp",
             defaultModelSelection: null,
             scripts: [],
             createdAt: "2026-10-23T00:00:00.000Z",
@@ -2841,8 +2853,8 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       // Repairing an existing thread must not launch another one.
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(AgentSessionImporter.AgentSessionImporter)({
-        importNativeHistory: ({ threadId }) =>
-          Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
+        importNativeHistory: ({ threadId, workspaceRoot }) =>
+          Effect.sync(() => repaired.push({ threadId, workspaceRoot })).pipe(Effect.as(1)),
       }),
       Layer.succeed(SqlClient.SqlClient, sql),
     );
@@ -2885,6 +2897,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         ["complete", complete, undefined],
         ["ran", ran, undefined],
         ["owned-session", owned, undefined],
+        ["cross-project", crossProject, true],
       ],
     );
 
@@ -2894,14 +2907,14 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       sessionId: "pending",
     });
     assert.deepEqual(imported, { threadId: pending, imported: true });
-    assert.deepEqual(repaired, [pending]);
+    assert.deepEqual(repaired, [{ threadId: pending, workspaceRoot: "/workspace/acp" }]);
     const reopened = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
       instanceId: acpInstanceId,
       projectId: acpProjectId,
       sessionId: "owned-session",
     });
     assert.deepEqual(reopened, { threadId: owned, imported: false });
-    assert.deepEqual(repaired, [pending]);
+    assert.deepEqual(repaired, [{ threadId: pending, workspaceRoot: "/workspace/acp" }]);
     const deletion = yield* client[WS_METHODS.serverDeleteAcpRegistrySession]({
       instanceId: acpInstanceId,
       projectId: acpProjectId,
@@ -2909,6 +2922,29 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     }).pipe(Effect.exit);
     assert.isTrue(Exit.isFailure(deletion));
     assert.deepEqual(deleted, []);
+
+    // The owner project moved, and a new project now points to the session's original directory.
+    ownerRoot = "/workspace/moved";
+    const otherListing = yield* client[WS_METHODS.serverListAcpRegistrySessions]({
+      instanceId: acpInstanceId,
+      projectId: otherProjectId,
+    });
+    const pendingElsewhere = otherListing.sessions.find(
+      ({ sessionId }) => sessionId === "cross-project",
+    );
+    assert.strictEqual(pendingElsewhere?.nativeHistoryPending, true);
+
+    const retried = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: otherProjectId,
+      sessionId: "cross-project",
+    });
+    assert.strictEqual(retried.imported, true);
+    assert.strictEqual(retried.threadId, crossProject);
+    assert.deepEqual(repaired, [
+      { threadId: pending, workspaceRoot: "/workspace/acp" },
+      { threadId: crossProject, workspaceRoot: "/workspace/acp" },
+    ]);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
