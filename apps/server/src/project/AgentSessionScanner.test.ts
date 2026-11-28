@@ -481,36 +481,38 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("returns the imported project ID through a realpath alias", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const workspaceAlias = path.join(linkParent, "workspace-alias");
-        yield* fileSystem.symlink(workspace, workspaceAlias);
+    it.effect.skipIf(!symlinksSupported)(
+      "returns the imported project ID through a realpath alias",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const workspaceAlias = path.join(linkParent, "workspace-alias");
+          yield* fileSystem.symlink(workspace, workspaceAlias);
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(workspaceAlias),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(workspaceAlias),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({
-          claudeHomePath,
-          codexHomePath,
-          importedWorkspaceRoots: [workspace],
-        });
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            importedWorkspaceRoots: [workspace],
+          });
 
-        expect(result.candidates[0]).toMatchObject({
-          path: workspace,
-          projectId: ProjectId.make("project-1"),
-          alreadyImported: true,
-          git: null,
-        });
-      }),
+          expect(result.candidates[0]).toMatchObject({
+            path: workspace,
+            projectId: ProjectId.make("project-1"),
+            alreadyImported: true,
+            git: null,
+          });
+        }),
     );
 
     it.effect("merges case aliases and preserves the persisted project path", () =>
@@ -1039,130 +1041,135 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("folds linked git worktrees into their checkout and reports real origins", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const repo = yield* makeTempDir("t3code-workspace-repo-");
-        const worktree = yield* makeTempDir("t3code-workspace-worktree-");
-        const plain = yield* makeTempDir("t3code-workspace-plain-");
-        const noRemote = yield* makeTempDir("t3code-workspace-noremote-");
-        const submodule = yield* makeTempDir("t3code-workspace-submodule-");
+    it.effect.skipIf(!symlinksSupported)(
+      "folds linked git worktrees into their checkout and reports real origins",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const repo = yield* makeTempDir("t3code-workspace-repo-");
+          const worktree = yield* makeTempDir("t3code-workspace-worktree-");
+          const plain = yield* makeTempDir("t3code-workspace-plain-");
+          const noRemote = yield* makeTempDir("t3code-workspace-noremote-");
+          const submodule = yield* makeTempDir("t3code-workspace-submodule-");
 
-        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
-        yield* fileSystem.writeFileString(
-          path.join(repo, ".git", "config"),
-          '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
-        );
-        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
-        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
-        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
-        yield* fileSystem.writeFileString(
-          path.join(worktree, ".git"),
-          `gitdir: ${worktreeGitDir}\n`,
-        );
-        yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
-        yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
-        const submoduleGitDir = path.join(repo, ".git", "modules", "vendor");
-        yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(submoduleGitDir, "config"),
-          '[remote "origin"]\n\turl = ssh://gitlab.com/pingdotgg/libs/vendor.git\n',
-        );
-        yield* fileSystem.writeFileString(
-          path.join(submodule, ".git"),
-          `gitdir: ${submoduleGitDir}\n`,
-        );
-        // A repository whose sessions all ran in a linked worktree is still offered.
-        const worktreeOnly = yield* makeTempDir("t3code-workspace-worktree-only-");
-        const worktreeOnlyCheckout = yield* makeTempDir("t3code-workspace-worktree-only-wt-");
-        const worktreeOnlyGitDir = path.join(worktreeOnly, ".git", "worktrees", "wt");
-        yield* fileSystem.makeDirectory(worktreeOnlyGitDir, { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(worktreeOnly, ".git", "config"),
-          '[remote "origin"]\n\turl = git@github.com:pingdotgg/other.git\n',
-        );
-        yield* fileSystem.writeFileString(path.join(worktreeOnlyGitDir, "commondir"), "../..\n");
-        yield* fileSystem.writeFileString(
-          path.join(worktreeOnlyCheckout, ".git"),
-          `gitdir: ${worktreeOnlyGitDir}\n`,
-        );
+          yield* fileSystem.makeDirectory(path.join(repo, ".git"));
+          yield* fileSystem.writeFileString(
+            path.join(repo, ".git", "config"),
+            '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+          );
+          const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+          yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+          yield* fileSystem.writeFileString(
+            path.join(worktree, ".git"),
+            `gitdir: ${worktreeGitDir}\n`,
+          );
+          yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
+          yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
+          const submoduleGitDir = path.join(repo, ".git", "modules", "vendor");
+          yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(submoduleGitDir, "config"),
+            '[remote "origin"]\n\turl = ssh://gitlab.com/pingdotgg/libs/vendor.git\n',
+          );
+          yield* fileSystem.writeFileString(
+            path.join(submodule, ".git"),
+            `gitdir: ${submoduleGitDir}\n`,
+          );
+          // A repository whose sessions all ran in a linked worktree is still offered.
+          const worktreeOnly = yield* makeTempDir("t3code-workspace-worktree-only-");
+          const worktreeOnlyCheckout = yield* makeTempDir("t3code-workspace-worktree-only-wt-");
+          const worktreeOnlyGitDir = path.join(worktreeOnly, ".git", "worktrees", "wt");
+          yield* fileSystem.makeDirectory(worktreeOnlyGitDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(worktreeOnly, ".git", "config"),
+            '[remote "origin"]\n\turl = git@github.com:pingdotgg/other.git\n',
+          );
+          yield* fileSystem.writeFileString(path.join(worktreeOnlyGitDir, "commondir"), "../..\n");
+          yield* fileSystem.writeFileString(
+            path.join(worktreeOnlyCheckout, ".git"),
+            `gitdir: ${worktreeOnlyGitDir}\n`,
+          );
 
-        // Not offered: the config is unreadable, so the repository could be bare; and
-        // the main checkout is reached through a symlink into T3's own state.
-        const configBaseDir = yield* fileSystem.realPath(
-          yield* makeTempDir("t3code-scanner-base-"),
-        );
-        const links = yield* makeTempDir("t3code-workspace-links-");
-        const unknown = yield* makeTempDir("t3code-workspace-unknown-");
-        yield* fileSystem.makeDirectory(path.join(configBaseDir, "state-repo"));
-        yield* fileSystem.symlink(path.join(configBaseDir, "state-repo"), path.join(links, "repo"));
-        const hiddenCheckouts: Array<string> = [];
-        for (const [main, config] of [
-          [unknown, null],
-          [path.join(links, "repo"), "[core]\n"],
-        ] as const) {
-          const gitDir = path.join(main, ".git", "worktrees", "wt");
-          yield* fileSystem.makeDirectory(gitDir, { recursive: true });
-          if (config !== null) {
-            yield* fileSystem.writeFileString(path.join(main, ".git", "config"), config);
+          // Not offered: the config is unreadable, so the repository could be bare; and
+          // the main checkout is reached through a symlink into T3's own state.
+          const configBaseDir = yield* fileSystem.realPath(
+            yield* makeTempDir("t3code-scanner-base-"),
+          );
+          const links = yield* makeTempDir("t3code-workspace-links-");
+          const unknown = yield* makeTempDir("t3code-workspace-unknown-");
+          yield* fileSystem.makeDirectory(path.join(configBaseDir, "state-repo"));
+          yield* fileSystem.symlink(
+            path.join(configBaseDir, "state-repo"),
+            path.join(links, "repo"),
+          );
+          const hiddenCheckouts: Array<string> = [];
+          for (const [main, config] of [
+            [unknown, null],
+            [path.join(links, "repo"), "[core]\n"],
+          ] as const) {
+            const gitDir = path.join(main, ".git", "worktrees", "wt");
+            yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+            if (config !== null) {
+              yield* fileSystem.writeFileString(path.join(main, ".git", "config"), config);
+            }
+            yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+            const checkout = yield* makeTempDir("t3code-workspace-hidden-wt-");
+            yield* fileSystem.writeFileString(path.join(checkout, ".git"), `gitdir: ${gitDir}\n`);
+            hiddenCheckouts.push(checkout);
           }
-          yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
-          const checkout = yield* makeTempDir("t3code-workspace-hidden-wt-");
-          yield* fileSystem.writeFileString(path.join(checkout, ".git"), `gitdir: ${gitDir}\n`);
-          hiddenCheckouts.push(checkout);
-        }
 
-        const sessionDirectories = [
-          repo,
-          worktree,
-          plain,
-          noRemote,
-          submodule,
-          worktreeOnlyCheckout,
-          ...hiddenCheckouts,
-        ];
-        for (const [index, cwd] of sessionDirectories.entries()) {
-          yield* writeTranscript({
-            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
-            contents: claudeSessionLine(cwd),
-            mtimeMs: Date.parse(`2026-01-0${index + 1}T00:00:00.000Z`),
-          });
-        }
+          const sessionDirectories = [
+            repo,
+            worktree,
+            plain,
+            noRemote,
+            submodule,
+            worktreeOnlyCheckout,
+            ...hiddenCheckouts,
+          ];
+          for (const [index, cwd] of sessionDirectories.entries()) {
+            yield* writeTranscript({
+              filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
+              contents: claudeSessionLine(cwd),
+              mtimeMs: Date.parse(`2026-01-0${index + 1}T00:00:00.000Z`),
+            });
+          }
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
-        expect(
-          result.candidates.map((candidate) => ({
-            path: candidate.path,
-            git: candidate.git,
-            threadCount: candidate.threadCount,
-          })),
-        ).toEqual([
-          {
-            path: worktreeOnly,
-            git: { remoteKey: "github.com/pingdotgg/other", repository: "pingdotgg/other" },
-            threadCount: 1,
-          },
-          {
-            path: submodule,
-            git: {
-              remoteKey: "gitlab.com/pingdotgg/libs/vendor",
-              repository: "pingdotgg/libs/vendor",
+          expect(
+            result.candidates.map((candidate) => ({
+              path: candidate.path,
+              git: candidate.git,
+              threadCount: candidate.threadCount,
+            })),
+          ).toEqual([
+            {
+              path: worktreeOnly,
+              git: { remoteKey: "github.com/pingdotgg/other", repository: "pingdotgg/other" },
+              threadCount: 1,
             },
-            threadCount: 1,
-          },
-          { path: noRemote, git: { remoteKey: null, repository: null }, threadCount: 1 },
-          { path: plain, git: null, threadCount: 1 },
-          {
-            path: repo,
-            git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
-            threadCount: 2,
-          },
-        ]);
-      }),
+            {
+              path: submodule,
+              git: {
+                remoteKey: "gitlab.com/pingdotgg/libs/vendor",
+                repository: "pingdotgg/libs/vendor",
+              },
+              threadCount: 1,
+            },
+            { path: noRemote, git: { remoteKey: null, repository: null }, threadCount: 1 },
+            { path: plain, git: null, threadCount: 1 },
+            {
+              path: repo,
+              git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+              threadCount: 2,
+            },
+          ]);
+        }),
     );
 
     it.effect(
@@ -1324,29 +1331,31 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const fileSystem = yield* FileSystem.FileSystem;
+    it.effect.skipIf(!symlinksSupported)(
+      "excludes sandboxes reached through a symlink into the worktrees dir",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const fileSystem = yield* FileSystem.FileSystem;
 
-        const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
-        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
-        const symlinkCwd = path.join(linkParent, "innocent-project");
-        yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(symlinkCwd),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
+          yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+          const symlinkCwd = path.join(linkParent, "innocent-project");
+          yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(symlinkCwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
-        expect(result.candidates).toEqual([]);
-      }),
+          expect(result.candidates).toEqual([]);
+        }),
     );
 
     it.effect("excludes sandboxes recorded by their real path when the base dir is a symlink", () =>

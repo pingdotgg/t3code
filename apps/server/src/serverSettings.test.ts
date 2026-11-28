@@ -21,6 +21,7 @@ import {
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -354,26 +355,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("saves through a symlinked settings file without replacing the link", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
-      const linkedSettingsPath = path.join(dotfiles, "settings.json");
-      yield* fs.writeFileString(linkedSettingsPath, `{ "responseStreamingMode": "turn" }`);
-      yield* fs.remove(config.settingsPath, { force: true });
-      yield* fs.symlink(linkedSettingsPath, config.settingsPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "saves through a symlinked settings file without replacing the link",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+        const linkedSettingsPath = path.join(dotfiles, "settings.json");
+        yield* fs.writeFileString(linkedSettingsPath, `{ "responseStreamingMode": "turn" }`);
+        yield* fs.remove(config.settingsPath, { force: true });
+        yield* fs.symlink(linkedSettingsPath, config.settingsPath);
 
-      yield* service.updateSettings({ responseStreamingMode: "paragraph" });
+        yield* service.updateSettings({ responseStreamingMode: "paragraph" });
 
-      assert.equal(yield* fs.readLink(config.settingsPath), linkedSettingsPath);
-      const persisted = yield* decodeServerSettingsJson(
-        yield* fs.readFileString(linkedSettingsPath),
-      );
-      assert.equal(persisted.responseStreamingMode, "paragraph");
-    }).pipe(Effect.provide(layerServerSettings())),
+        assert.equal(yield* fs.readLink(config.settingsPath), linkedSettingsPath);
+        const persisted = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(linkedSettingsPath),
+        );
+        assert.equal(persisted.responseStreamingMode, "paragraph");
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("retries a failed settings read instead of keeping the failure", () =>
@@ -3307,174 +3310,182 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   },
 );
 
-it.live("reloads a symlinked settings file after its target directory is replaced", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const service = yield* ServerSettingsModule.ServerSettingsService;
-    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
-    const active = path.join(dotfiles, "active");
-    const restored = path.join(dotfiles, "restored");
-    yield* fs.makeDirectory(active);
-    yield* fs.makeDirectory(restored);
-    yield* fs.writeFileString(
-      path.join(active, "settings.json"),
-      `{ "responseStreamingMode": "turn" }`,
-    );
-    yield* fs.writeFileString(
-      path.join(restored, "settings.json"),
-      `{ "responseStreamingMode": "turn" }`,
-    );
-    yield* fs.remove(config.settingsPath, { force: true });
-    yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
-    yield* service.start;
-    const changes = yield* service.subscribeChanges;
-
-    yield* fs.writeFileString(
-      path.join(restored, "settings.json"),
-      `{ "responseStreamingMode": "turn", "defaultAutoPull": true }`,
-    );
-    yield* fs.rename(active, path.join(dotfiles, "previous"));
-    yield* fs.rename(restored, active);
-
-    const restoredSettings = yield* changes.pipe(
-      Stream.filter((settings) => settings.defaultAutoPull),
-      Stream.runHead,
-    );
-    assert.isTrue(Option.isSome(restoredSettings));
-
-    yield* fs.writeFileString(
-      path.join(active, "settings.json"),
-      `{ "responseStreamingMode": "paragraph" }`,
-    );
-
-    const reloaded = yield* changes.pipe(
-      Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
-      Stream.runHead,
-    );
-    assert.isTrue(Option.isSome(reloaded));
-  }).pipe(
-    Effect.scoped,
-    // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
-    Effect.provide(layerServerSettings()),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  ),
-);
-
-it.effect("starts with symlinked settings when the settings directory watch fails", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    let settingsDirectory: string | undefined;
-    const watchFailure = PlatformError.systemError({
-      _tag: "Unknown",
-      module: "FileSystem",
-      method: "watch",
-      description: "No file watches available.",
-    });
-    const failingFileSystem = FileSystem.FileSystem.of({
-      ...fs,
-      watch: (directory, options) =>
-        directory === settingsDirectory ? Stream.fail(watchFailure) : fs.watch(directory, options),
-    });
-    const settingsLayer = layerServerSettings().pipe(
-      Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
-    );
-
-    yield* Effect.gen(function* () {
+it.live.skipIf(!symlinksSupported)(
+  "reloads a symlinked settings file after its target directory is replaced",
+  () =>
+    Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const service = yield* ServerSettingsModule.ServerSettingsService;
-      settingsDirectory = path.dirname(config.settingsPath);
       const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
-      const target = path.join(dotfiles, "settings.json");
-      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      const active = path.join(dotfiles, "active");
+      const restored = path.join(dotfiles, "restored");
+      yield* fs.makeDirectory(active);
+      yield* fs.makeDirectory(restored);
+      yield* fs.writeFileString(
+        path.join(active, "settings.json"),
+        `{ "responseStreamingMode": "turn" }`,
+      );
+      yield* fs.writeFileString(
+        path.join(restored, "settings.json"),
+        `{ "responseStreamingMode": "turn" }`,
+      );
       yield* fs.remove(config.settingsPath, { force: true });
-      yield* fs.symlink(target, config.settingsPath);
-
-      yield* service.start;
-
-      const settings = yield* service.getSettings;
-      assert.equal(settings.responseStreamingMode, "paragraph");
-    }).pipe(Effect.provide(settingsLayer));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("publishes edits made before the restored settings watch is registered", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
-    const active = path.join(dotfiles, "active");
-    const restored = path.join(dotfiles, "restored");
-    const target = path.join(active, "settings.json");
-    yield* fs.makeDirectory(active);
-    yield* fs.makeDirectory(restored);
-    yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
-    yield* fs.writeFileString(
-      path.join(restored, "settings.json"),
-      `{ "responseStreamingMode": "turn" }`,
-    );
-
-    const replaced = yield* Deferred.make<void>();
-    const registering = yield* Deferred.make<void>();
-    const allowRegistration = yield* Deferred.make<void>();
-    const settingsLayer = layerServerSettings().pipe(
-      Layer.provide(
-        Layer.succeed(
-          FileSystem.FileSystem,
-          FileSystem.FileSystem.of({
-            ...fs,
-            watch: (directory, options) =>
-              Stream.unwrap(
-                Effect.gen(function* () {
-                  if (directory === dotfiles) {
-                    options?.onReady?.();
-                    return Stream.fromEffect(Deferred.await(replaced)).pipe(
-                      Stream.as({ _tag: "Create", path: "active" } as const),
-                      Stream.concat(Stream.never),
-                    );
-                  }
-                  if (directory !== active) return fs.watch(directory, options);
-                  if (yield* Deferred.isDone(replaced)) {
-                    yield* Deferred.succeed(registering, undefined);
-                    yield* Deferred.await(allowRegistration);
-                  }
-                  options?.onReady?.();
-                  return Stream.never;
-                }),
-              ),
-          }),
-        ),
-      ),
-    );
-
-    yield* Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fs.symlink(target, config.settingsPath);
+      yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
       yield* service.start;
       const changes = yield* service.subscribeChanges;
 
+      yield* fs.writeFileString(
+        path.join(restored, "settings.json"),
+        `{ "responseStreamingMode": "turn", "defaultAutoPull": true }`,
+      );
       yield* fs.rename(active, path.join(dotfiles, "previous"));
       yield* fs.rename(restored, active);
-      // Deliver the event on the test clock so it drains the watcher and any eager debounce.
-      yield* Deferred.succeed(replaced, undefined).pipe(
-        Effect.delay(1),
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(registering);
-      yield* service.withSettingsSnapshot(() => Effect.void);
-      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
-      yield* Deferred.succeed(allowRegistration, undefined).pipe(
-        Effect.delay(1),
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* TestClock.adjust("1 second");
 
-      const published = yield* changes.pipe(Stream.runHead);
-      assert.equal(Option.getOrThrow(published).responseStreamingMode, "paragraph");
-    }).pipe(Effect.provide(settingsLayer));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      const restoredSettings = yield* changes.pipe(
+        Stream.filter((settings) => settings.defaultAutoPull),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(restoredSettings));
+
+      yield* fs.writeFileString(
+        path.join(active, "settings.json"),
+        `{ "responseStreamingMode": "paragraph" }`,
+      );
+
+      const reloaded = yield* changes.pipe(
+        Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(reloaded));
+    }).pipe(
+      Effect.scoped,
+      // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
+      Effect.provide(layerServerSettings()),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "starts with symlinked settings when the settings directory watch fails",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let settingsDirectory: string | undefined;
+      const watchFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "FileSystem",
+        method: "watch",
+        description: "No file watches available.",
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        watch: (directory, options) =>
+          directory === settingsDirectory
+            ? Stream.fail(watchFailure)
+            : fs.watch(directory, options),
+      });
+      const settingsLayer = layerServerSettings().pipe(
+        Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        settingsDirectory = path.dirname(config.settingsPath);
+        const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+        const target = path.join(dotfiles, "settings.json");
+        yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+        yield* fs.remove(config.settingsPath, { force: true });
+        yield* fs.symlink(target, config.settingsPath);
+
+        yield* service.start;
+
+        const settings = yield* service.getSettings;
+        assert.equal(settings.responseStreamingMode, "paragraph");
+      }).pipe(Effect.provide(settingsLayer));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "publishes edits made before the restored settings watch is registered",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+      const active = path.join(dotfiles, "active");
+      const restored = path.join(dotfiles, "restored");
+      const target = path.join(active, "settings.json");
+      yield* fs.makeDirectory(active);
+      yield* fs.makeDirectory(restored);
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+      yield* fs.writeFileString(
+        path.join(restored, "settings.json"),
+        `{ "responseStreamingMode": "turn" }`,
+      );
+
+      const replaced = yield* Deferred.make<void>();
+      const registering = yield* Deferred.make<void>();
+      const allowRegistration = yield* Deferred.make<void>();
+      const settingsLayer = layerServerSettings().pipe(
+        Layer.provide(
+          Layer.succeed(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fs,
+              watch: (directory, options) =>
+                Stream.unwrap(
+                  Effect.gen(function* () {
+                    if (directory === dotfiles) {
+                      options?.onReady?.();
+                      return Stream.fromEffect(Deferred.await(replaced)).pipe(
+                        Stream.as({ _tag: "Create", path: "active" } as const),
+                        Stream.concat(Stream.never),
+                      );
+                    }
+                    if (directory !== active) return fs.watch(directory, options);
+                    if (yield* Deferred.isDone(replaced)) {
+                      yield* Deferred.succeed(registering, undefined);
+                      yield* Deferred.await(allowRegistration);
+                    }
+                    options?.onReady?.();
+                    return Stream.never;
+                  }),
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* fs.symlink(target, config.settingsPath);
+        yield* service.start;
+        const changes = yield* service.subscribeChanges;
+
+        yield* fs.rename(active, path.join(dotfiles, "previous"));
+        yield* fs.rename(restored, active);
+        // Deliver the event on the test clock so it drains the watcher and any eager debounce.
+        yield* Deferred.succeed(replaced, undefined).pipe(
+          Effect.delay(1),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(registering);
+        yield* service.withSettingsSnapshot(() => Effect.void);
+        yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+        yield* Deferred.succeed(allowRegistration, undefined).pipe(
+          Effect.delay(1),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 second");
+
+        const published = yield* changes.pipe(Stream.runHead);
+        assert.equal(Option.getOrThrow(published).responseStreamingMode, "paragraph");
+      }).pipe(Effect.provide(settingsLayer));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
