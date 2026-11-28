@@ -4,6 +4,7 @@ import type {
   UpdateProjectInput,
 } from "@t3tools/client-runtime/state/projects";
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
@@ -12,6 +13,8 @@ import {
   ProviderInstanceId,
   type AuthEnvironmentScope,
   type AuthSessionState,
+  type ProjectSearchEntriesInput,
+  type ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -52,6 +55,8 @@ const state = vi.hoisted(() => ({
   releaseUploads: vi.fn(),
   clearDraft: vi.fn(),
   toast: vi.fn(),
+  searchEntries: vi.fn<(input: ProjectSearchEntriesInput) => void>(),
+  searchResults: new Map<string, Atom.Atom<AsyncResult.AsyncResult<ProjectSearchEntriesResult>>>(),
 }));
 
 // Session grants come from the server; each test drives them through these atoms.
@@ -92,6 +97,21 @@ vi.mock(import("~/state/projects"), async (original) => {
       ...actual.projectEnvironment,
       update: "update",
       delete: "delete",
+      searchEntries: (request: {
+        environmentId: EnvironmentId;
+        input: ProjectSearchEntriesInput;
+      }) => {
+        const key = JSON.stringify(request);
+        let atom = state.searchResults.get(key);
+        if (!atom) {
+          atom = Atom.make(() => {
+            state.searchEntries(request.input);
+            return AsyncResult.success({ entries: [], truncated: false });
+          });
+          state.searchResults.set(key, atom);
+        }
+        return atom;
+      },
     } as unknown as typeof actual.projectEnvironment,
   };
 });
@@ -167,7 +187,8 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
     sessionCookieName: "t3_session",
   },
 });
-const writable = () => AsyncResult.success(session([AuthOrchestrationOperateScope]));
+const writable = () =>
+  AsyncResult.success(session([AuthOrchestrationOperateScope, AuthFilesystemReadScope]));
 const missingProjectFile = Atom.make(AsyncResult.initial<never, never>());
 
 function deferred<T>() {
@@ -181,6 +202,7 @@ function deferred<T>() {
 function setup() {
   vi.clearAllMocks();
   state.sessions.clear();
+  state.searchResults.clear();
   for (const id of [primaryId, remoteId])
     state.sessions.set(id, Atom.make<SessionResult>(writable()).pipe(Atom.keepAlive));
   state.projects = [primaryId, remoteId].map((environmentId) => ({
@@ -362,6 +384,7 @@ describe("project settings permissions", () => {
       "Shared settings require permission to change every checkout in this group.",
     );
     expect(state.update).not.toHaveBeenCalled();
+    expect(state.searchEntries).not.toHaveBeenCalled();
   });
 
   it("renames every member when all have project access without settings access", async () => {
@@ -510,6 +533,26 @@ describe("project settings permissions", () => {
       expect(state.update).toHaveBeenCalledTimes(2);
     },
   );
+});
+
+it("searches icon files only while the picker is open, starting fresh on reopen", async () => {
+  setup();
+  await using _screen = await mountPanel();
+  const chooseFile = page.getByRole("button", { name: "Choose a project icon file" });
+  const search = page.getByPlaceholder("Search image files…");
+  expect(state.searchEntries).not.toHaveBeenCalled();
+
+  await userEvent.click(chooseFile);
+  await expect.element(search).toBeVisible();
+  expect(state.searchEntries).toHaveBeenCalledWith(
+    expect.objectContaining({ cwd: "/work/primary", query: "", imageOnly: true }),
+  );
+  await userEvent.fill(search, "logo");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+
+  await userEvent.click(chooseFile);
+  await expect.element(search).toHaveValue("");
 });
 
 describe("project identity reset", () => {
