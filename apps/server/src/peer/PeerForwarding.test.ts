@@ -18,6 +18,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "./handoff/ThreadHandoff.testkit.ts";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
@@ -273,7 +274,10 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(
         Layer.merge(
           Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-          Layer.mock(ThreadImportService.ThreadImportService)({}),
+          Layer.merge(
+            Layer.mock(ThreadImportService.ThreadImportService)({}),
+            HandoffTestkit.layerUnused,
+          ),
         ),
       ),
       Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -359,7 +363,10 @@ const makeLaptop = Effect.gen(function* () {
           followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
         }),
         Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-        Layer.mock(ThreadImportService.ThreadImportService)({}),
+        Layer.merge(
+          Layer.mock(ThreadImportService.ThreadImportService)({}),
+          HandoffTestkit.layerUnused,
+        ),
       ),
     ),
     Layer.fresh,

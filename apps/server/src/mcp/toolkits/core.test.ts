@@ -30,6 +30,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "../../peer/handoff/ThreadHandoff.testkit.ts";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
@@ -1145,7 +1146,12 @@ it.effect("hides act-as-caller tools from a client caller", () =>
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(
+          Layer.merge(
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            HandoffTestkit.layerUnused,
+          ),
+        ),
       ),
     ),
   ),
@@ -1209,7 +1215,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(
+          Layer.merge(
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            HandoffTestkit.layerUnused,
+          ),
+        ),
       ),
     ),
   ),
@@ -1404,7 +1415,12 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(
+            Layer.merge(
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              HandoffTestkit.layerUnused,
+            ),
+          ),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1450,7 +1466,12 @@ it.effect(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(
+            Layer.merge(
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              HandoffTestkit.layerUnused,
+            ),
+          ),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1551,7 +1572,12 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(
+          Layer.merge(
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            HandoffTestkit.layerUnused,
+          ),
+        ),
       ),
     ),
   );
@@ -1772,7 +1798,12 @@ it.effect(
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(
+            Layer.merge(
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              HandoffTestkit.layerUnused,
+            ),
+          ),
         ),
       ),
     );

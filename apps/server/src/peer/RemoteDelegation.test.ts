@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "./handoff/ThreadHandoff.testkit.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -585,7 +586,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.merge(
         Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-        Layer.mock(ThreadImportService.ThreadImportService)({}),
+        Layer.merge(
+          Layer.mock(ThreadImportService.ThreadImportService)({}),
+          HandoffTestkit.layerUnused,
+        ),
       ),
     ),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -748,7 +752,12 @@ const makeLaptop = (
       ),
       Layer.provide(Layer.succeedContext(linking)),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-      Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
+      Layer.provide(
+        Layer.merge(
+          Layer.mock(ThreadImportService.ThreadImportService)({}),
+          HandoffTestkit.layerUnused,
+        ),
+      ),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
       Layer.provide(

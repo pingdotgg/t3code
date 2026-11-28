@@ -11,6 +11,7 @@ import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
+import * as ThreadHandoff from "./peer/handoff/ThreadHandoff.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1596,6 +1597,7 @@ export const layerWsRpc = (
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
       const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+      const threadHandoff = yield* ThreadHandoff.ThreadHandoff;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
@@ -2865,6 +2867,20 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
+        [WS_METHODS.threadHandoffOptions]: ({ threadId }) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": threadId }).pipe(
+            Effect.andThen(threadHandoff.options(threadId)),
+            Effect.map((options) => ({ options })),
+          ),
+        [WS_METHODS.threadHandoffStart]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(threadHandoff.start(input)),
+          ),
+        [WS_METHODS.threadHandoffCancel]: ({ threadId }) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": threadId }).pipe(
+            Effect.andThen(threadHandoff.cancel(threadId)),
+            Effect.as({}),
+          ),
         [WS_METHODS.serverGetSettings]: (_input) =>
           Effect.map(serverSettings.getSettings, (settings) =>
             ServerSettings.redactServerSettingsForClient(settings, settingsClient),
@@ -3834,6 +3850,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+    const threadHandoff = yield* ThreadHandoff.ThreadHandoff;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3942,6 +3959,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
+              Layer.provide(Layer.succeed(ThreadHandoff.ThreadHandoff, threadHandoff)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

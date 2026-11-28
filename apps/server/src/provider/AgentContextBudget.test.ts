@@ -7,6 +7,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "../peer/handoff/ThreadHandoff.testkit.ts";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
@@ -101,6 +102,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadIssueService)({}),
   Layer.mock(ThreadLaunchService)({}),
   Layer.mock(ThreadImportService)({}),
+  HandoffTestkit.layerUnused,
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),

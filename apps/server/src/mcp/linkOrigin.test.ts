@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "../peer/handoff/ThreadHandoff.testkit.ts";
 import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 
@@ -180,7 +181,10 @@ const layerTools = Layer.mergeAll(
   Layer.provide(
     Layer.merge(
       Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-      Layer.mock(ThreadImportService.ThreadImportService)({}),
+      Layer.merge(
+        Layer.mock(ThreadImportService.ThreadImportService)({}),
+        HandoffTestkit.layerUnused,
+      ),
     ),
   ),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),

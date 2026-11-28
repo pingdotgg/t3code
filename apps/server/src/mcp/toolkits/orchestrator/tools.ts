@@ -7,6 +7,8 @@ import {
   OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpEnvironmentUnlinkInput,
   OrchestratorMcpEnvironmentUnlinkResult,
+  OrchestratorMcpThreadHandoffInput,
+  OrchestratorMcpThreadHandoffResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -47,6 +49,7 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
+import * as ThreadHandoff from "../../../peer/handoff/ThreadHandoff.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -320,6 +323,20 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+const ThreadHandoffTool = Tool.make("t3_thread_handoff", {
+  description:
+    "Move a thread to a linked environment (`t3_environment_links`) with its conversation and git work, uncommitted edits included. It continues there in a new worktree; this copy becomes read-only. Omit `threadId` for THIS thread: call last in your turn. The move runs when the turn ends, and `continuationPrompt` is its first message there. A message here before then cancels it. Another thread must be idle.",
+  parameters: OrchestratorMcpThreadHandoffInput,
+  success: OrchestratorMcpThreadHandoffResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, ThreadHandoff.ThreadHandoff],
+})
+  .annotate(Tool.Title, "Move a thread to a linked environment")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
+
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
     "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`.",
@@ -383,4 +400,5 @@ export const OrchestratorToolkit = Toolkit.make(
   EnvironmentLinksTool,
   EnvironmentLinkTool,
   EnvironmentUnlinkTool,
+  ThreadHandoffTool,
 );

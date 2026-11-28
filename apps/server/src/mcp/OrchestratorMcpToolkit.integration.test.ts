@@ -22,6 +22,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as HandoffTestkit from "../peer/handoff/ThreadHandoff.testkit.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -288,7 +289,12 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(layerOrchestration),
           ),
         ),
-        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(
+          Layer.merge(
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            HandoffTestkit.layerUnused,
+          ),
+        ),
         Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       );
 
