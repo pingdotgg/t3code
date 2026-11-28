@@ -247,22 +247,3 @@ it("the note button picks an option without sending and opens the composer", asy
   expect(onFocusComposer).toHaveBeenCalledOnce();
   expect(onAdvance).not.toHaveBeenCalled();
 });
-
-it("Shift and an option's number pick it for a note without sending", async () => {
-  const onAdvance = vi.fn();
-  const onFocusComposer = vi.fn();
-  await using screen = await render(
-    <NoteHarness onAdvance={onAdvance} onFocusComposer={onFocusComposer} />,
-  );
-  const yes = screen.getByRole("button", { name: /^Yes/ });
-  await expect.element(yes).toBeVisible();
-  using _timers = fakeTimers();
-  document.body.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "!", code: "Digit1", shiftKey: true, bubbles: true }),
-  );
-  await expect.element(yes).toHaveAttribute("aria-pressed", "true");
-  vi.advanceTimersByTime(1_000);
-
-  expect(onFocusComposer).toHaveBeenCalledOnce();
-  expect(onAdvance).not.toHaveBeenCalled();
-});

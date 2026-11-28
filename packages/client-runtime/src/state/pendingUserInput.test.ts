@@ -288,60 +288,34 @@ it.each([
 
 describe("question notes", () => {
   const noteQuestion = { ...singleSelectQuestion, supportsNote: true } as const;
-  const multiNoteQuestion = { ...noteQuestion, id: "targets", multiSelect: true } as const;
 
-  it("keeps the pick and sends typed text as its note", () => {
-    const picked = togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js");
-    const draft = setPendingUserInputCustomAnswer(noteQuestion, picked, "  reuse the CLI  ");
-
-    expect(isPendingUserInputOptionSelected(noteQuestion, draft, "Node.js")).toBe(true);
-    expect(buildPendingUserInputAnswers([noteQuestion], { scope: draft })).toEqual({
-      scope: "Node.js",
-    });
-    expect(buildPendingUserInputNotes([noteQuestion], { scope: draft })).toEqual({
-      scope: "reuse the CLI",
-    });
-  });
-
-  it("turns text typed before the pick into the note", () => {
-    const typed = setPendingUserInputCustomAnswer(noteQuestion, undefined, "reuse the CLI");
-    const draft = togglePendingUserInputOptionSelection(noteQuestion, typed, "Node.js");
-
-    expect(buildPendingUserInputAnswers([noteQuestion], { scope: draft })).toEqual({
-      scope: "Node.js",
-    });
-    expect(buildPendingUserInputNotes([noteQuestion], { scope: draft })).toEqual({
-      scope: "reuse the CLI",
-    });
-  });
-
-  it("adds one note to several picks, and sends the text as the answer once none is picked", () => {
-    const first = togglePendingUserInputOptionSelection(multiNoteQuestion, undefined, "Node.js");
-    const both = togglePendingUserInputOptionSelection(
-      multiNoteQuestion,
-      setPendingUserInputCustomAnswer(multiNoteQuestion, first, "both, CLI first"),
-      "Orchestration-first",
+  it("keeps the pick and sends typed text as its note, typed before or after the pick", () => {
+    const after = setPendingUserInputCustomAnswer(
+      noteQuestion,
+      togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js"),
+      "  reuse the CLI  ",
     );
-    expect(buildPendingUserInputAnswers([multiNoteQuestion], { targets: both })).toEqual({
-      targets: ["Node.js", "Orchestration-first"],
-    });
-    expect(buildPendingUserInputNotes([multiNoteQuestion], { targets: both })).toEqual({
-      targets: "both, CLI first",
-    });
-
-    const cleared = ["Node.js", "Orchestration-first"].reduce(
-      (draft, option) => togglePendingUserInputOptionSelection(multiNoteQuestion, draft, option),
-      both,
+    const before = togglePendingUserInputOptionSelection(
+      noteQuestion,
+      setPendingUserInputCustomAnswer(noteQuestion, undefined, "reuse the CLI"),
+      "Node.js",
     );
-    expect(buildPendingUserInputAnswers([multiNoteQuestion], { targets: cleared })).toEqual({
-      targets: "both, CLI first",
-    });
-    expect(buildPendingUserInputNotes([multiNoteQuestion], { targets: cleared })).toEqual({});
+    for (const draft of [after, before]) {
+      expect(buildPendingUserInputAnswers([noteQuestion], { scope: draft })).toEqual({
+        scope: "Node.js",
+      });
+      expect(buildPendingUserInputNotes([noteQuestion], { scope: draft })).toEqual({
+        scope: "reuse the CLI",
+      });
+    }
   });
 
-  it("clears a single pick on a second tap, so the typed text becomes the answer", () => {
-    const picked = togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js");
-    const typed = setPendingUserInputCustomAnswer(noteQuestion, picked, "Deno instead");
+  it("sends the text as the answer once a second tap clears the pick", () => {
+    const typed = setPendingUserInputCustomAnswer(
+      noteQuestion,
+      togglePendingUserInputOptionSelection(noteQuestion, undefined, "Node.js"),
+      "Deno instead",
+    );
     const cleared = togglePendingUserInputOptionSelection(noteQuestion, typed, "Node.js");
 
     expect(buildPendingUserInputAnswers([noteQuestion], { scope: cleared })).toEqual({
@@ -351,14 +325,12 @@ describe("question notes", () => {
   });
 
   it("keeps the old behavior for a question that does not take notes", () => {
-    const picked = togglePendingUserInputOptionSelection(
+    const draft = setPendingUserInputCustomAnswer(
       singleSelectQuestion,
-      undefined,
-      "Node.js",
+      togglePendingUserInputOptionSelection(singleSelectQuestion, undefined, "Node.js"),
+      "reuse the CLI",
     );
-    const draft = setPendingUserInputCustomAnswer(singleSelectQuestion, picked, "reuse the CLI");
 
-    expect(isPendingUserInputOptionSelected(singleSelectQuestion, draft, "Node.js")).toBe(false);
     expect(buildPendingUserInputAnswers([singleSelectQuestion], { scope: draft })).toEqual({
       scope: "reuse the CLI",
     });

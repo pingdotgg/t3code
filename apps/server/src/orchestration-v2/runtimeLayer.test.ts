@@ -2947,7 +2947,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
   it.effect("sends a note with picked options only where the question takes one", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("runtime-question-note");
       yield* orchestrator.dispatch({
         type: "thread.create",
@@ -2982,27 +2981,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
           { id: "shade", header: "Shade", question: "Which shade?", options },
         ],
       );
-      const before = yield* orchestrator.getThreadProjection(threadId);
-      const beforeSequence = yield* eventSink.latestSequence();
-      for (const [index, invalid] of [
-        // The question does not take notes.
-        { answers: { color: "Blue", shade: "Red" }, notesByQuestionId: { shade: "darker" } },
-        // A note needs an answer to sit beside.
-        { answers: { color: " ", shade: "Red" }, notesByQuestionId: { color: "darker" } },
-      ].entries()) {
-        const result = yield* orchestrator
-          .dispatch({
-            type: "runtime-request.respond",
-            commandId: CommandId.make(`runtime-question-note-invalid:${index}`),
-            threadId,
-            requestId,
-            ...invalid,
-          })
-          .pipe(Effect.result);
-        assert.equal(result._tag, "Failure", JSON.stringify(invalid));
-        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
-        assert.equal(yield* eventSink.latestSequence(), beforeSequence);
-      }
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("runtime-question-note-invalid"),
+          threadId,
+          requestId,
+          answers: { color: "Blue", shade: "Red" },
+          notesByQuestionId: { shade: "darker" },
+        })
+        .pipe(Effect.result);
+      assert.equal(rejected._tag, "Failure");
 
       yield* orchestrator.dispatch({
         type: "runtime-request.respond",

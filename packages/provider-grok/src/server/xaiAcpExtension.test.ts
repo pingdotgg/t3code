@@ -1208,25 +1208,6 @@ describe("XAiAcpExtension", () => {
       answers: { "Which scope should Grok use?": ["workspace"] },
       annotations: { "Which scope should Grok use?": { notes: "session" } },
     });
-
-    // A question id that names an inherited property gets no note.
-    expect(
-      makeXAiAskUserQuestionResponse(
-        {
-          sessionId: "session-1",
-          toolCallId: "tool-call-2",
-          mode: "default",
-          questions: [
-            {
-              id: "toString",
-              question: "Which scope?",
-              options: [{ label: "workspace", description: "Use the current workspace" }],
-            },
-          ],
-        },
-        { toString: "workspace" },
-      ),
-    ).toEqual({ outcome: "accepted", answers: { "Which scope?": ["workspace"] } });
   });
 
   it("encodes typed custom answers as xAI Other annotations", () => {

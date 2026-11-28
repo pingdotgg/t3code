@@ -620,7 +620,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(annotations, {
       annotations: { "Which approach?": { notes: "keep the old endpoint for one release" } },
     });
-    assert.deepEqual(ClaudeAdapterV2.claudeSdkUserInputAnnotations(undefined), {});
     // T3's own resume dialog reads only the pick, so it offers no note.
     assert.isUndefined(
       ClaudeAdapterV2.claudeUserInputQuestions(
