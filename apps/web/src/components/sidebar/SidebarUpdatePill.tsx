@@ -3,7 +3,7 @@ import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ComponentProps, useId, useRef, useState } from "react";
+import { type ComponentProps, type ReactNode, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
@@ -410,8 +410,6 @@ function SidebarUpdateControl() {
     );
   };
 
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
-
   const statusIcon = (
     <DesktopUpdateStatusIcon
       key={showCheckIcon ? checkAnimationKey : iconStatus}
@@ -433,6 +431,14 @@ function SidebarUpdateControl() {
       onConfirm={() => void runEverything()}
     />
   );
+  // Every path renders the same [pill, dialog] shape, so an open dialog outlives a hidden pill.
+  const withDialog = (pill: ReactNode) => (
+    <>
+      {pill}
+      {confirmDialog}
+    </>
+  );
+  if (!isElectron && !runsEverything && !isRunningEverything) return withDialog(null);
 
   if (run !== null) {
     const local: UpdateRunLocalState =
@@ -441,7 +447,7 @@ function SidebarUpdateControl() {
         : state?.status === "downloading"
           ? { status: "downloading", percent: state.downloadPercent }
           : { status: "waiting" };
-    return (
+    return withDialog(
       <SidebarMenuItem className="@container/sidebar-update ml-auto flex min-w-8 flex-1">
         <SidebarUpdateCapsule
           run={run}
@@ -465,8 +471,7 @@ function SidebarUpdateControl() {
               }
             : {})}
         />
-        {confirmDialog}
-      </SidebarMenuItem>
+      </SidebarMenuItem>,
     );
   }
 
@@ -521,7 +526,7 @@ function SidebarUpdateControl() {
     </button>
   );
 
-  return (
+  return withDialog(
     <SidebarMenuItem className="ml-auto shrink-0">
       <Popover
         handle={releaseNotesPopoverHandle}
@@ -598,7 +603,6 @@ function SidebarUpdateControl() {
           </PopoverPopup>
         ) : null}
       </Popover>
-      {confirmDialog}
-    </SidebarMenuItem>
+    </SidebarMenuItem>,
   );
 }

@@ -12227,7 +12227,10 @@
     }
   ],
   "e7f35f60e6229cf5": "Skrivbordsapp",
+  "8907bc7124be3655": "Inget att uppdatera just nu",
+  "e2b6767a6f691040": "Allt är uppdaterat",
   "77be1b7e2a1d3d31": "{count, plural, one {Uppdatera {count} dator?} other {Uppdatera {count} datorer?}}",
+  "f2008fcdc60c6cdf": "Det finns inget kvar att uppdatera.",
   "e4892b21e88abb60": "{count, plural, one {{count} leverantörsuppdatering} other {{count} leverantörsuppdateringar}}",
   "36d530903a763a14": "Söker efter fler…",
   "f34dd019e6000fe3": "{count, plural, one {{count} hoppades över} other {{count} hoppades över}}",
