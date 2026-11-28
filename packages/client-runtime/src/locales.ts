@@ -11,8 +11,8 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   "pt-BR": "Português (Brasil)",
   ru: "Русский",
   sv: "Svenska",
-  zh: "中文（简体）",
   vi: "Tiếng Việt",
+  zh: "中文（简体）",
 };
 
 export function nativeLanguageName(locale: string): string {
