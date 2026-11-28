@@ -35,7 +35,6 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import {
   codexModelFamily,
   createModelCapabilities,
@@ -44,6 +43,7 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   codexAppServerArgs,
+  codexSqliteHomeOverride,
   codexUsesStrictConfig,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
@@ -657,40 +657,61 @@ const resolveCodexHomePath = Effect.fn("resolveCodexHomePath")(function* (input:
     : path.join(homeDir, ".codex");
 });
 
-const CODEX_SQLITE_HOME_VALUE_PATTERN = /^sqlite_home\s*=\s*(.*)$/s;
-const CODEX_SQLITE_HOME_TOML_PATTERN = /^\s*sqlite_home\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/;
+const CODEX_SQLITE_HOME_TOML_PATTERN =
+  /^\s*sqlite_home\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(?:#.*)?$/;
 
-function extractCodexSqliteHomeOverride(assignment: string | undefined): string | undefined {
-  if (!assignment) return undefined;
-  const match = CODEX_SQLITE_HOME_VALUE_PATTERN.exec(assignment);
-  const candidate = match?.[1]
-    ?.trim()
-    .replace(/^(["'])(.*)\1$/s, "$2")
-    .trim();
-  return candidate || undefined;
-}
-
-function parseCodexSqliteHomeFromLaunchArgs(launchArgs: string | undefined): string | undefined {
-  const tokens = tokenizeCliArgs(launchArgs);
-  let value: string | undefined;
-  for (let index = 0; index < tokens.length; index++) {
-    const rawToken = tokens[index];
-    if (rawToken === undefined) continue;
-    let assignment: string | undefined;
-    if (rawToken === "-c" || rawToken === "--config") {
-      assignment = tokens[index + 1];
-      index++;
-    } else if (rawToken.startsWith("--config=")) {
-      assignment = rawToken.slice("--config=".length);
-    } else if (rawToken.startsWith("-c=")) {
-      assignment = rawToken.slice("-c=".length);
-    } else if (rawToken.startsWith("-c") && rawToken.length > 2) {
-      assignment = rawToken.slice(2);
+function decodeTomlBasicString(raw: string): string | undefined {
+  let decoded = "";
+  for (let index = 0; index < raw.length; index++) {
+    const ch = raw[index];
+    if (ch !== "\\") {
+      decoded += ch;
+      continue;
     }
-    const candidate = extractCodexSqliteHomeOverride(assignment);
-    if (candidate) value = candidate;
+    const next = raw[++index];
+    if (next === undefined) return undefined;
+    switch (next) {
+      case '"':
+        decoded += '"';
+        break;
+      case "\\":
+        decoded += "\\";
+        break;
+      case "b":
+        decoded += "\b";
+        break;
+      case "f":
+        decoded += "\f";
+        break;
+      case "n":
+        decoded += "\n";
+        break;
+      case "r":
+        decoded += "\r";
+        break;
+      case "t":
+        decoded += "\t";
+        break;
+      case "u":
+      case "U": {
+        const hexLength = next === "u" ? 4 : 8;
+        const hex = raw.slice(index + 1, index + 1 + hexLength);
+        if (!new RegExp(`^[0-9a-fA-F]{${hexLength}}$`).test(hex)) {
+          return undefined;
+        }
+        const codePoint = Number.parseInt(hex, 16);
+        if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+          return undefined;
+        }
+        decoded += String.fromCodePoint(codePoint);
+        index += hexLength;
+        break;
+      }
+      default:
+        return undefined;
+    }
   }
-  return value;
+  return decoded;
 }
 
 function parseCodexSqliteHomeFromConfigToml(content: string): string | undefined {
@@ -698,7 +719,8 @@ function parseCodexSqliteHomeFromConfigToml(content: string): string | undefined
     const trimmed = line.trim();
     if (trimmed.startsWith("[")) break;
     const match = CODEX_SQLITE_HOME_TOML_PATTERN.exec(line);
-    const candidate = (match?.[1] ?? match?.[2])?.trim();
+    if (!match) continue;
+    const candidate = match[1] !== undefined ? decodeTomlBasicString(match[1]) : match[2];
     if (candidate) return candidate;
   }
   return undefined;
@@ -714,7 +736,7 @@ const resolveCodexSqliteHomePath = Effect.fn("resolveCodexSqliteHomePath")(funct
   const path = yield* Path.Path;
   const homeDir = yield* HostProcess.HomeDirectory;
   const codexHome = yield* resolveCodexHomePath(input);
-  const fromLaunchArgs = parseCodexSqliteHomeFromLaunchArgs(input.launchArgs);
+  const fromLaunchArgs = codexSqliteHomeOverride(input.launchArgs);
   if (fromLaunchArgs) {
     return path.resolve(input.cwd, expandHomePath(fromLaunchArgs, homeDir));
   }

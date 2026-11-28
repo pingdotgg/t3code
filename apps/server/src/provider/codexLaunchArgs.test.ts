@@ -135,6 +135,11 @@ describe("codexSqliteHomeOverride", () => {
       codexSqliteHomeOverride(String.raw`--config sqlite_home=\"/a\" -csqlite_home='/b'`),
       "/b",
     );
+    NodeAssert.equal(
+      codexSqliteHomeOverride(`-c " sqlite_home=/tmp/codex-state"`),
+      "/tmp/codex-state",
+    );
+    NodeAssert.equal(codexSqliteHomeOverride(`-c 'sqlite_home="/tmp/codex "'`), "/tmp/codex ");
     NodeAssert.equal(codexSqliteHomeOverride("--config model=gpt -c sqlite_home"), undefined);
   });
 });

@@ -670,3 +670,45 @@ it.effect("parses quoted sqlite_home launch args with spaces", () =>
     assert.strictEqual(isClosed(), true);
   }).pipe(Effect.provide(NodeServices.layer), Effect.provideService(HostProcess.Platform, "linux")),
 );
+
+it.effect("decodes TOML escapes in config.toml sqlite_home", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-home-" });
+    const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-toml-sqlite-" });
+    const escapedSqliteHome = path.join(parentDir, "codex state");
+    yield* fs.makeDirectory(escapedSqliteHome, { recursive: true });
+    const tomlEscaped = `${parentDir.replace(/\\/g, "\\\\")}/codex\\u0020state`;
+    yield* fs.writeFileString(
+      path.join(codexHome, "config.toml"),
+      `sqlite_home = "${tomlEscaped}"\n`,
+    );
+    const dbPath = path.join(escapedSqliteHome, "state_5.sqlite");
+
+    const { spawner, started, awaitClosed, isClosed } = makeHangingCodexProbeSpawner(() => {
+      writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC);
+    });
+
+    const fiber = yield* checkCodexProviderStatus(
+      decodeCodexSettings({ homePath: codexHome }),
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.forkChild,
+    );
+
+    yield* started;
+    yield* TestClock.adjust("20 seconds");
+    const status = yield* Fiber.join(fiber);
+
+    assert.strictEqual(status.status, "error");
+    assert.match(status.message ?? "", /backfilling its local state database/);
+    assert.strictEqual(isClosed(), false);
+
+    writeCodexBackfillState(dbPath, "complete", TEST_EPOCH_SEC + 25);
+    yield* TestClock.adjust("1 second");
+    yield* awaitClosed;
+    assert.strictEqual(isClosed(), true);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.provideService(HostProcess.Platform, "linux")),
+);
