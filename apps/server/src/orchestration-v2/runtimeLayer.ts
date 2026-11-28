@@ -37,6 +37,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as PromptSuggestionService from "./PromptSuggestionService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -168,6 +169,17 @@ const layerProviderAuthServiceProvided = ProviderAuthService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
 );
 
+const layerPromptSuggestionProvided = PromptSuggestionService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      ProjectStore.layer,
+      layerProviderSessionManagerProvided,
+      TextGeneration.layer.pipe(Layer.provide(ProviderInstallationGate.layer)),
+    ),
+  ),
+);
+
 const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -179,6 +191,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       layerProviderEventIngestorProvided,
       TurnItemPositionStore.layer,
       ThreadCommandExecutor.layer,
+      layerPromptSuggestionProvided,
     ),
   ),
 );
