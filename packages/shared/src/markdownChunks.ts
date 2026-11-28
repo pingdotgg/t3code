@@ -20,6 +20,7 @@ const LIST_ITEM = /^( {0,3}(?:[-*+]|\d{1,9}[.)]))([ \t]+|(?=\r?$))/;
 // Further markers on an item's first line open nested items that start on the same line.
 const NESTED_LIST_MARKERS = /^(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|(?=\r?$)))+/;
 const BLOCK_QUOTE = /^ {0,3}>/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*\r?$/;
 const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
@@ -454,6 +455,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let closes: ((line: string) => boolean) | null = null;
   let ambiguousHtml = false;
+  let listFenceIndent = 0;
   let afterBlankLine = false;
   let definitionEnd = -1;
   let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
@@ -534,13 +536,23 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     const indent = indentationColumn(whitespace);
     if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
     emptyListItem = false;
+    const continued = whitespace.includes("\t")
+      ? " ".repeat(indent) + line.slice(whitespace.length)
+      : line;
+    if (closes && listFenceIndent && !blank && indent < listFenceIndent) {
+      closes = null;
+      listFenceIndent = 0;
+      afterHeading = true;
+      resetFlow(lineIndex);
+    }
     const dedented = indent < listContentIndent;
     let handledAsFootnote = false;
     let interruptedFootnote = false;
 
     if (closes !== null) {
-      if (closes(line)) {
+      if (closes(continued)) {
         closes = null;
+        listFenceIndent = 0;
         resetFlow(lineIndex + 1);
       }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
@@ -608,10 +620,60 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             activeFootnoteLines = null;
           }
           pendingFootnoteBlanks = [];
+          if (dedented) listContentIndent = Infinity;
+          paragraphOpen = false;
           openedFence = false;
           handledAsFootnote = true;
         } else {
-          const closer = blockCloser(line);
+          const afterFence = afterHeading && openedFence && dedented;
+          const thematicBreak = THEMATIC_BREAK.test(line);
+          const contentColumn = dedented ? 0 : listContentIndent;
+          const canStartBlock = indent - contentColumn <= 3;
+          const content = canStartBlock ? line.slice(whitespace.length) : "";
+          const item = thematicBreak ? null : LIST_ITEM.exec(content);
+          const marker = item?.[1];
+          let itemContent = item ? content.slice(item[0].length) : "";
+          const itemIsEmpty = BLANK_LINE.test(itemContent);
+          const markerKind = marker?.at(-1);
+          const continuesList =
+            dedented && listContentIndent !== Infinity && markerKind === listMarker;
+          const opensItem: boolean =
+            item !== null &&
+            (!paragraphOpen ||
+              continuesList ||
+              (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
+          let startsIndentedCode = false;
+          let itemFenceIndent = 0;
+          if (item && opensItem) {
+            const markerEnd = indent + item[1]!.length;
+            const paddedColumn = indentationColumn(item[2]!, markerEnd);
+            emptyListItem = dedented && itemIsEmpty;
+            // Empty items and items starting with indented code use one column of padding.
+            startsIndentedCode = paddedColumn - markerEnd > 4;
+            if (dedented) {
+              listContentIndent = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
+              listMarker = markerKind!;
+            }
+            const nestedMarkers = NESTED_LIST_MARKERS.exec(itemContent)?.[0] ?? "";
+            itemContent = itemContent.slice(nestedMarkers.length);
+            if (!startsIndentedCode)
+              itemFenceIndent = indentationColumn(nestedMarkers, paddedColumn);
+          } else if (
+            dedented &&
+            !blank &&
+            (!paragraphOpen || afterBlankLine || afterFence || opensNonParagraph(line))
+          ) {
+            // Dedented prose can still be a lazy continuation until a block boundary.
+            listContentIndent = Infinity;
+          }
+          const listCloser =
+            itemFenceIndent && FENCE_OPEN.test(itemContent) ? blockCloser(itemContent) : null;
+          listFenceIndent = listCloser ? itemFenceIndent : 0;
+          const closer = listCloser
+            ? (next: string) => listCloser(next.slice(itemFenceIndent))
+            : blockCloser(line);
+          openedFence =
+            Boolean(listCloser) || (FENCE_OPEN.test(line) && (dedented || /^ ?[`~]/.test(line)));
           closes = closer ?? null;
           if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
             resetFlow(lineIndex + 1);
@@ -652,47 +714,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             if (lineIndex === flowStart || htmlStarts?.has(lineIndex)) closes = closesAtBlankLine;
             else if (lineIndex >= parsedThrough) ambiguousHtml = true;
           }
-          const afterFence = afterHeading && openedFence && dedented;
-          const fence = FENCE_OPEN.test(line);
-          // Fence tracking ignores lists, so it finds the real end of a fence indented two or more
-          // spaces only when that fence is outside every list item.
-          openedFence = fence && (dedented || /^ ?[`~]/.test(line));
-          const thematicBreak = THEMATIC_BREAK.test(line);
-          const contentColumn = dedented ? 0 : listContentIndent;
-          const canStartBlock = indent - contentColumn <= 3;
-          const content = canStartBlock ? line.slice(whitespace.length) : "";
-          const item = thematicBreak ? null : LIST_ITEM.exec(content);
-          const marker = item?.[1];
-          let itemContent = item ? content.slice(item[0].length) : "";
-          const itemIsEmpty = BLANK_LINE.test(itemContent);
-          const markerKind = marker?.at(-1);
-          const continuesList =
-            dedented && listContentIndent !== Infinity && markerKind === listMarker;
-          const opensItem: boolean =
-            item !== null &&
-            (!paragraphOpen ||
-              continuesList ||
-              (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
-          let startsIndentedCode = false;
-          if (item && opensItem) {
-            const markerEnd = indent + item[1]!.length;
-            const paddedColumn = indentationColumn(item[2]!, markerEnd);
-            emptyListItem = dedented && itemIsEmpty;
-            // Empty items and items starting with indented code use one column of padding.
-            startsIndentedCode = paddedColumn - markerEnd > 4;
-            if (dedented) {
-              listContentIndent = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
-              listMarker = markerKind!;
-            }
-            itemContent = itemContent.replace(NESTED_LIST_MARKERS, "");
-          } else if (
-            dedented &&
-            !blank &&
-            (afterBlankLine || afterFence || opensNonParagraph(line))
-          ) {
-            // Dedented prose can still be a lazy continuation until a block boundary.
-            listContentIndent = Infinity;
-          }
           let isDefinition = false;
           // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
           // a closing code fence or frontmatter, or another definition.
@@ -732,6 +753,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           paragraphOpen =
             !blank &&
             !isDefinition &&
+            !(paragraphOpen && SETEXT_UNDERLINE.test(content)) &&
             closes === null &&
             (canStartBlock || paragraphOpen) &&
             (item && opensItem
