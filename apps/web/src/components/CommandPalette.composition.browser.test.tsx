@@ -384,50 +384,63 @@ it("keeps a reopened palette open after a late folder pick", async () => {
   expect(search.element()).toHaveValue("another search");
 });
 
-it.each(["dismissed", "edited"] as const)(
-  "ignores a pending repository reply after the lookup is %s",
-  async (action) => {
-    setup(undefined, githubAvailable);
-    const repository = AsyncResult.success({
-      provider: "github",
-      nameWithOwner: "example/slow",
-      url: "https://github.com/example/slow",
-      sshUrl: "git@github.com:example/slow.git",
-    });
-    const lookup = Promise.withResolvers<typeof repository>();
-    const correctedLookup = Promise.withResolvers<typeof repository>();
-    scopes.lookupRepository
-      .mockReset()
-      .mockReturnValueOnce(lookup.promise)
-      .mockReturnValueOnce(correctedLookup.promise);
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    await act(() => openCommandPalette({ open: "add-project" }));
-    await page.getByRole("option", { name: /^GitHub repository/ }).click();
-    const input = page.getByRole("combobox");
-    await input.fill("example/slow");
-    await userEvent.keyboard("{Enter}");
-    expect(scopes.lookupRepository).toHaveBeenCalledOnce();
-    if (action === "dismissed") {
-      await input.fill("");
-      await userEvent.keyboard("{Backspace}");
-      await expect.element(page.getByText("Git URL", { exact: true })).toBeVisible();
-    } else {
-      await input.fill("example/corrected");
-    }
+it("keeps the source list visible after a dismissed repository lookup succeeds", async () => {
+  setup(undefined, githubAvailable);
+  const repository = AsyncResult.success({
+    provider: "github",
+    nameWithOwner: "example/slow",
+    url: "https://github.com/example/slow",
+    sshUrl: "git@github.com:example/slow.git",
+  });
+  const lookup = Promise.withResolvers<typeof repository>();
+  scopes.lookupRepository.mockReset().mockReturnValue(lookup.promise);
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("option", { name: /^GitHub repository/ }).click();
+  await page.getByRole("combobox").fill("example/slow");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenCalledOnce();
+  await page.getByRole("combobox").fill("");
+  await userEvent.keyboard("{Backspace}");
+  const sources = page.getByText("Git URL", { exact: true });
+  await expect.element(sources).toBeVisible();
 
-    await act(async () => {
-      lookup.resolve(repository);
-      await lookup.promise;
-    });
+  await act(async () => {
+    lookup.resolve(repository);
+    await lookup.promise;
+  });
+  expect(sources.element()).toBeVisible();
+});
 
-    if (action === "dismissed") {
-      expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
-    } else {
-      expect(input.element()).toHaveValue("example/corrected");
-      await userEvent.keyboard("{Enter}");
-      expect(scopes.lookupRepository).toHaveBeenLastCalledWith(
-        expect.objectContaining({ input: { provider: "github", repository: "example/corrected" } }),
-      );
-    }
-  },
-);
+it("looks up a corrected repository name after the pending reply for the old one", async () => {
+  setup(undefined, githubAvailable);
+  const repository = AsyncResult.success({
+    provider: "github",
+    nameWithOwner: "example/slow",
+    url: "https://github.com/example/slow",
+    sshUrl: "git@github.com:example/slow.git",
+  });
+  const lookup = Promise.withResolvers<typeof repository>();
+  scopes.lookupRepository
+    .mockReset()
+    .mockReturnValueOnce(lookup.promise)
+    .mockReturnValueOnce(Promise.withResolvers<typeof repository>().promise);
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("option", { name: /^GitHub repository/ }).click();
+  const input = page.getByRole("combobox");
+  await input.fill("example/slow");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenCalledOnce();
+  await input.fill("example/corrected");
+
+  await act(async () => {
+    lookup.resolve(repository);
+    await lookup.promise;
+  });
+  expect(input.element()).toHaveValue("example/corrected");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenLastCalledWith(
+    expect.objectContaining({ input: { provider: "github", repository: "example/corrected" } }),
+  );
+});
