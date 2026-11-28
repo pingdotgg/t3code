@@ -378,7 +378,11 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     yield* HostProcess.WorkingDirectory,
     yield* expandHomePath(identifier),
   );
-  const target = yield* realPath(requestedPath);
+  const resolvedTarget = yield* fileSystem.realPath(requestedPath).pipe(
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+    Effect.orElseSucceed(() => requestedPath),
+  );
+  const target = resolvedTarget ?? requestedPath;
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -404,7 +408,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   };
 
   const containing = containingRoots(target, requestedPath)[0]?.project;
-  if (containing !== undefined) return containing;
+  if (resolvedTarget !== undefined && containing !== undefined) return containing;
   const projectNotFound = () => new ThreadProjectNotFoundError({ identifier });
   const statIfExists = (value: string) =>
     fileSystem.stat(value).pipe(
@@ -427,7 +431,10 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     if (info.type !== "Directory") return yield* projectNotFound();
     gitDirectory = yield* realPath(existing);
     checkoutTarget = path.join(gitDirectory, path.relative(existing, target));
+    const canonicalProject = containingRoots(checkoutTarget, requestedPath)[0]?.project;
+    if (canonicalProject !== undefined) return canonicalProject;
   }
+  if (containing !== undefined) return containing;
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
     Effect.provide(ProcessRunner.layer),
