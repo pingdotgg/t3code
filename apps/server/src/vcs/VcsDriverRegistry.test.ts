@@ -26,7 +26,8 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
 const DETECT_COMMAND = "rev-parse --is-inside-work-tree --show-toplevel --git-common-dir";
 
 describe("VcsDriverRegistry", () => {
-  const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
+  // resolveSymlinks makes the fake discover from the physical directory, as Git does.
+  const makeDiskBackedLayer = (rootDir: string, calls: string[], resolveSymlinks = false) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.provide(
@@ -42,9 +43,12 @@ describe("VcsDriverRegistry", () => {
               const path = yield* Path.Path;
               const command = normalizeGitArgs(input.args).join(" ");
               calls.push(command);
-              let repoDir: string | null = input.cwd;
+              const root = resolveSymlinks ? yield* fs.realPath(rootDir) : rootDir;
+              let repoDir: string | null = resolveSymlinks
+                ? yield* fs.realPath(input.cwd)
+                : input.cwd;
               while (repoDir !== null && !(yield* fs.exists(path.join(repoDir, ".git")))) {
-                repoDir = repoDir === rootDir ? null : path.dirname(repoDir);
+                repoDir = repoDir === root ? null : path.dirname(repoDir);
               }
               if (repoDir === null) {
                 return {
@@ -115,6 +119,21 @@ describe("VcsDriverRegistry", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reuses a negative lookup while no .git entry appears", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
+      const calls: string[] = [];
+
+      yield* Effect.gen(function* () {
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        assert.equal(yield* registry.detect({ cwd: projectDir }), null);
+        assert.equal(yield* registry.detect({ cwd: projectDir }), null);
+        assert.equal(calls.filter((call) => call === DETECT_COMMAND).length, 1);
+      }).pipe(Effect.provide(makeDiskBackedLayer(projectDir, calls)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("detects a repository created after a negative lookup", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -133,6 +152,34 @@ describe("VcsDriverRegistry", () => {
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  it.effect(
+    "detects git init above the target of a symlinked project after a negative lookup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
+        const outerDir = path.join(parentDir, "outer");
+        const projectLink = path.join(parentDir, "link");
+        yield* fs.makeDirectory(path.join(outerDir, "target"), { recursive: true });
+        yield* fs.symlink(path.join(outerDir, "target"), projectLink);
+        const calls: string[] = [];
+
+        yield* Effect.gen(function* () {
+          const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+          assert.equal(yield* registry.detect({ cwd: projectLink }), null);
+
+          yield* fs.makeDirectory(path.join(outerDir, ".git"));
+
+          assert.equal(
+            (yield* registry.detect({ cwd: projectLink }))?.repository.rootPath,
+            yield* fs.realPath(outerDir),
+          );
+        }).pipe(Effect.provide(makeDiskBackedLayer(parentDir, calls, true)));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   const makeFailingLayer = (detectOutput: VcsProcess.VcsProcessOutput) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
