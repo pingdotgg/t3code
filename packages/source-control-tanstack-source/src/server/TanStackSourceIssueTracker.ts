@@ -125,6 +125,12 @@ export const make = Effect.gen(function* () {
       : Effect.fail(failure(operation, "TanStack Source issues live in owner/name repositories."));
   };
 
+  /** The key is checked here because it becomes a path segment of the request. */
+  const issuePath = (operation: string, input: IssueScopeTarget & { readonly key: string }) =>
+    /^[1-9]\d*$/u.test(input.key)
+      ? Effect.map(base(operation, input), (path) => `${path}/issues/${input.key}`)
+      : Effect.fail(failure(operation, "TanStack Source issue keys are numbers."));
+
   const send = (
     operation: string,
     input: Pick<IssueScopeTarget, "host">,
@@ -220,10 +226,8 @@ export const make = Effect.gen(function* () {
     operation: string,
     input: IssueScopeTarget & { readonly key: string },
   ) {
-    const path = yield* base(operation, input);
-    if (!/^\d+$/u.test(input.key))
-      return yield* failure(operation, "TanStack Source issue keys are numbers.");
-    return yield* read(operation, input, { path: `${path}/issues/${input.key}` }, IssueDetail);
+    const path = yield* issuePath(operation, input);
+    return yield* read(operation, input, { path }, IssueDetail);
   });
 
   const tracker: IssueTrackerApi = {
@@ -314,13 +318,11 @@ export const make = Effect.gen(function* () {
     }),
 
     getComments: Effect.fn("TanStackSourceIssueTracker.getComments")(function* (input) {
-      const path = yield* base("getComments", input);
+      const path = yield* issuePath("getComments", input);
       const detail = yield* read(
         "getComments",
         input,
-        {
-          path: `${path}/issues/${input.key}?${new URLSearchParams({ cursor: input.cursor })}`,
-        },
+        { path: `${path}?${new URLSearchParams({ cursor: input.cursor })}` },
         IssueDetail,
       );
       return { comments: toConversation(detail, input).comments, nextCursor: detail.next };
@@ -359,16 +361,16 @@ export const make = Effect.gen(function* () {
     }),
 
     comment: Effect.fn("TanStackSourceIssueTracker.comment")(function* (input) {
-      const path = yield* base("comment", input);
+      const path = yield* issuePath("comment", input);
       yield* send("comment", input, {
         method: "POST",
-        path: `${path}/issues/${input.key}/comments`,
+        path: `${path}/comments`,
         body: { body: input.body },
       });
     }),
 
     update: Effect.fn("TanStackSourceIssueTracker.update")(function* (input) {
-      const path = `${yield* base("update", input)}/issues/${input.key}`;
+      const path = yield* issuePath("update", input);
       if (input.title !== undefined || input.body !== undefined)
         yield* send("update", input, {
           method: "PATCH",
@@ -396,10 +398,10 @@ export const make = Effect.gen(function* () {
       const state = STATES.find((candidate) => candidate.name === input.state);
       if (state === undefined)
         return yield* failure("setState", `TanStack Source issues have no "${input.state}" state.`);
-      const path = yield* base("setState", input);
+      const path = yield* issuePath("setState", input);
       yield* send("setState", input, {
         method: "PATCH",
-        path: `${path}/issues/${input.key}`,
+        path,
         body: { state: state.category },
       });
     }),

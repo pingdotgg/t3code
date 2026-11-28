@@ -9,9 +9,9 @@ export type WorkflowPaneTab =
   | { readonly kind: string; readonly key: string };
 
 export interface WorkflowPaneState {
-  readonly pane?: ReadonlyArray<WorkflowPaneTab>;
+  readonly pane?: ReadonlyArray<WorkflowPaneTab> | undefined;
   /** Which tab shows; the last one when it names none. */
-  readonly tab?: number;
+  readonly tab?: number | undefined;
 }
 
 // A link is typed into an address bar: what it holds is capped like the rest of the address.
@@ -46,11 +46,18 @@ export function readWorkflowPane(rawPane: unknown, rawTab: unknown): WorkflowPan
     tabs.push(tab);
     if (tabs.length === MOST_TABS) break;
   }
-  if (tabs.length === 0) return {};
-  const tab = typeof rawTab === "number" ? rawTab : Number(rawTab);
-  return Number.isInteger(tab) && tab >= 0 && tab < tabs.length - 1
-    ? { pane: tabs, tab }
-    : { pane: tabs };
+  // The router keeps any address value validateSearch leaves out, so what cannot be read is cleared, not omitted.
+  if (tabs.length === 0) return { pane: undefined, tab: undefined };
+  const tab =
+    typeof rawTab === "number"
+      ? rawTab
+      : typeof rawTab === "string" && rawTab.trim() !== ""
+        ? Number(rawTab)
+        : Number.NaN;
+  return {
+    pane: tabs,
+    tab: Number.isInteger(tab) && tab >= 0 && tab < tabs.length - 1 ? tab : undefined,
+  };
 }
 
 /** The index of the tab that shows, or -1 when nothing is open. */

@@ -6,6 +6,7 @@ import {
   ModelSelection,
   NodeId,
   NonNegativeInt,
+  OrchestrationV2ProviderThread,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -45,6 +46,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
     revokeMcpCredential: Schema.optional(Schema.Boolean),
+    handoffProviderThread: Schema.optional(Schema.toCodecJson(OrchestrationV2ProviderThread)),
+    handoffRunId: Schema.optional(RunId),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.apply-model-selection"),
@@ -128,6 +131,9 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     skipReferenced: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread-content.purge"),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
       Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
@@ -150,6 +156,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
+  "thread-content.purge",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;

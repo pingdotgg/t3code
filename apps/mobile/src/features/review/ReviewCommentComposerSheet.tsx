@@ -100,7 +100,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       ? firstNumber !== null
         ? gt("Line {line}", { line: firstNumber })
         : gt("File comment")
-      : firstNumber !== null && lastNumber !== null
+      : firstNumber !== null && lastNumber !== null && firstNumber < lastNumber
         ? gt("Lines {first}-{last}", { first: firstNumber, last: lastNumber })
         : gt("{count, plural, one {{count} lines selected} other {{count} lines selected}}", {
             count: selectedLines.length,

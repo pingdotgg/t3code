@@ -228,14 +228,16 @@ export const make = (
     const makeConnection = Effect.gen(function*() {
       const db = options.db
 
+      const prepare = (sql: string) =>
+        Effect.try({
+          try: () => db.prepare(sql),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") })
+        })
+
       const prepareCache = yield* Cache.make({
         capacity: options.prepareCacheSize ?? 200,
         timeToLive: options.prepareCacheTTL ?? Duration.minutes(10),
-        lookup: (sql: string) =>
-          Effect.try({
-            try: () => db.prepare(sql),
-            catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to prepare statement", "prepare") })
-          })
+        lookup: prepare
       })
 
       const runStatementRaw = (
@@ -262,7 +264,7 @@ export const make = (
       const runRaw = (
         sql: string,
         params: ReadonlyArray<unknown> = []
-      ) => runStatementRaw(db.prepare(sql), params)
+      ) => Effect.flatMap(prepare(sql), (s) => runStatementRaw(s, params))
 
       const runCached = (
         sql: string,
@@ -272,7 +274,7 @@ export const make = (
       const runUncached = (
         sql: string,
         params: ReadonlyArray<unknown> = []
-      ) => runStatement(db.prepare(sql), params)
+      ) => Effect.flatMap(prepare(sql), (s) => runStatement(s, params))
 
       const runValues = (
         sql: string,

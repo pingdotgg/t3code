@@ -31,8 +31,8 @@ describe("feedbackRequestDisplay", () => {
 describe("feedback preview", () => {
   it("shows every field that is sent, and each outline entry with its text", () => {
     const trace = {
-      turns: 1,
-      textTurns: 1,
+      turns: 2,
+      textTurns: 2,
       truncated: false,
       entries: [
         { turn: 1, type: "user" as const, length: 5, text: "Hello" },
@@ -43,6 +43,7 @@ describe("feedback preview", () => {
           outcome: "error" as const,
           durationMs: 1_500,
         },
+        { turn: 2, type: "user" as const, length: 1, text: "y" },
       ],
     };
     expect(
@@ -58,6 +59,7 @@ describe("feedback preview", () => {
     expect(feedbackTraceLines(trace)).toEqual([
       { key: "0", line: "Turn 1 · You · 5 characters", text: "Hello" },
       { key: "1", line: "Turn 1 · t3_thread_read · error · 1.5 s" },
+      { key: "2", line: "Turn 2 · You · 1 character", text: "y" },
     ]);
     // Text only in turn 4 of 5: the wording reaches back to it, not "the last turn".
     const older = {

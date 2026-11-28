@@ -61,6 +61,19 @@ describe("linked pull request thread navigation", () => {
 });
 
 describe("reduceCommandPaletteUiState", () => {
+  it("keeps the session on dismissal and advances it on keyboard reopen", () => {
+    const open: CommandPaletteUiState = {
+      open: true,
+      mode: "command",
+      openIntent: null,
+      session: 1,
+    };
+    const toggle = { _tag: "ToggleMode", mode: "command" } as const;
+    const closed = reduceCommandPaletteUiState(open, toggle);
+    expect(closed).toMatchObject({ open: false, session: 1 });
+    expect(reduceCommandPaletteUiState(closed, toggle)).toMatchObject({ open: true, session: 2 });
+  });
+
   it("opens PR search from another overlay and replaces an earlier search", () => {
     const first = reduceCommandPaletteUiState(
       { open: true, mode: "files", openIntent: null, session: 0 },
@@ -90,7 +103,7 @@ describe("reduceCommandPaletteUiState", () => {
     ).toBeNull();
   });
 
-  it("keeps the session across mode switches so only intents start the palette over", () => {
+  it("starts a new session when a shortcut replaces the active mode", () => {
     let state: CommandPaletteUiState = {
       open: false,
       mode: "command",
@@ -100,12 +113,12 @@ describe("reduceCommandPaletteUiState", () => {
     state = reduceCommandPaletteUiState(state, { _tag: "OpenNewThreadIn" });
     expect(state).toMatchObject({ open: true, openIntent: { kind: "new-thread-in" }, session: 1 });
     state = reduceCommandPaletteUiState(state, { _tag: "ToggleMode", mode: "files" });
-    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 1 });
+    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 2 });
     state = reduceCommandPaletteUiState(state, { _tag: "OpenAddProject" });
     expect(state).toMatchObject({
       mode: "command",
       openIntent: { kind: "add-project" },
-      session: 2,
+      session: 3,
     });
   });
 });
@@ -943,7 +956,10 @@ describe("returning from file and content search", () => {
     const closed = reduceCommandPaletteUiState(child, { _tag: "SetOpen", open: false });
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
-    expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+    expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual({
+      ...root,
+      session: 1,
+    });
   });
 });
 

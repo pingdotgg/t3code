@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { create } from "zustand";
 
 import { environmentServerConfigsAtom } from "./server";
 import { sourceControlEnvironment } from "./sourceControl";
@@ -39,6 +40,18 @@ export function useEnvironmentProjectClones(
 }
 
 const silencedCloneToasts = new Set<string>();
+export const useProjectCloneToastHolds = create<ReadonlySet<string>>(() => new Set());
+
+/** Defers toasts for a newly requested project until its start reply is handled. */
+export function holdProjectCloneToasts(ref: ScopedProjectRef) {
+  const key = scopedProjectKey(ref);
+  useProjectCloneToastHolds.setState((held) => new Set(held).add(key), true);
+  return () => {
+    const held = new Set(useProjectCloneToastHolds.getState());
+    held.delete(key);
+    useProjectCloneToastHolds.setState(held, true);
+  };
+}
 
 /**
  * Keeps a clone's progress out of toasts once the user is looking at its

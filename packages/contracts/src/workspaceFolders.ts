@@ -102,8 +102,43 @@ export const WorkspaceAddTaskFolderRepositoryInput = Schema.Struct({
 export type WorkspaceAddTaskFolderRepositoryInput =
   typeof WorkspaceAddTaskFolderRepositoryInput.Type;
 
+export const WorktreeLayoutCommandKind = Schema.Literals(["create", "remove"]);
+export type WorktreeLayoutCommandKind = typeof WorktreeLayoutCommandKind.Type;
+
+/** One of a project's `worktreeLayout` commands, as its `t3.json` holds it now. */
+export const WorktreeLayoutCommand = Schema.Struct({
+  kind: WorktreeLayoutCommandKind,
+  command: Schema.String,
+  /** A person approved this exact text for this project. */
+  approved: Schema.Boolean,
+});
+export type WorktreeLayoutCommand = typeof WorktreeLayoutCommand.Type;
+
+export const WorkspaceLayoutCommandsInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type WorkspaceLayoutCommandsInput = typeof WorkspaceLayoutCommandsInput.Type;
+
+export const WorkspaceLayoutCommandsResult = Schema.Struct({
+  /** Empty for a project that declares no `worktreeLayout`. */
+  commands: Schema.Array(WorktreeLayoutCommand),
+});
+export type WorkspaceLayoutCommandsResult = typeof WorkspaceLayoutCommandsResult.Type;
+
+export const WorkspaceApproveLayoutCommandsInput = Schema.Struct({
+  projectId: ProjectId,
+  approvals: Schema.Array(
+    Schema.Struct({
+      kind: WorktreeLayoutCommandKind,
+      /** The text the person was shown, so a file that changed since is not approved unseen. Null withdraws the approval. */
+      command: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+    }),
+  ),
+});
+export type WorkspaceApproveLayoutCommandsInput = typeof WorkspaceApproveLayoutCommandsInput.Type;
+
 export class TaskFolderError extends Schema.TaggedError<TaskFolderError>()("TaskFolderError", {
-  operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read"]),
+  operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read", "approve"]),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {

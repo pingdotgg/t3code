@@ -15,6 +15,9 @@ describe("trackedFolderDisplayPath", () => {
 });
 
 describe("resolveTrackedFolderInput", () => {
+  const overflowingPath = `/srv/${"a".repeat(127)}🚀`;
+  const paddedPath = `/srv/${" ".repeat(127)}🚀`;
+
   it.each([
     [
       "an absolute path that is not listed",
@@ -34,6 +37,16 @@ describe("resolveTrackedFolderInput", () => {
         exactEntryPath: "/home/me/code/tools",
       },
       { path: "/home/me/code/tools", name: "tools" },
+    ],
+    [
+      "an emoji crossing the name limit",
+      { query: overflowingPath, listedDirectoryPath: null, exactEntryPath: null },
+      { path: overflowingPath, name: "a".repeat(127) },
+    ],
+    [
+      "an emoji after leading whitespace at the name limit",
+      { query: paddedPath, listedDirectoryPath: null, exactEntryPath: null },
+      { path: paddedPath, name: "🚀" },
     ],
     [
       "a directory name longer than a folder name may be",

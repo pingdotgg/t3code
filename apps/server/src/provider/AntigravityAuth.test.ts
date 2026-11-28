@@ -341,6 +341,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("keeps the runtime update instruction when the runtime is refused", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(harness.authenticateCalled);
+      const detail = "Antigravity 1.5.0 only serves allowlisted editors, not T3 Code.";
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpTransportError({
+          detail,
+          cause: new ProviderSetupError({ instanceId, operation: "runtime", detail }),
+        }),
+      );
+      assert.equal((yield* phase(harness.auth, "failed")).message, detail);
+    }),
+  );
+
   it.effect("tells the user when the agent cannot reach Google", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
@@ -502,7 +519,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* Deferred.succeed(deliveryGate, undefined);
       const failed = yield* phase(harness.auth, "failed");
       assert.include(failed.message ?? "", "Could not deliver");
-      assert.isTrue(harness.events.includes("process-close"));
+      yield* Deferred.await(harness.closed);
     }),
   );
 

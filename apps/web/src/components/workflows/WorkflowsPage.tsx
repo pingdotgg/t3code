@@ -1,4 +1,5 @@
-import { EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
+import { workflowReferenceThreadId } from "@t3tools/client-runtime/workflows";
+import { EnvironmentId, type WorkflowRunSubject } from "@t3tools/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { FileCode2Icon } from "lucide-react";
@@ -129,8 +130,13 @@ export function WorkflowsPage() {
   const paneOpen = pane.pane !== undefined;
   const shownTab = activeWorkflowPaneTab(pane);
   // Opening something pins the run it is from, so the address keeps naming the run it belongs to.
+  // A tab of another run's starts a pane of that run's own.
   const togglePane = (runId: string, tab: Parameters<typeof toggleWorkflowPaneTab>[1]) =>
-    select({ ...env, run: runId, ...toggleWorkflowPaneTab(pane, tab) });
+    select({
+      ...env,
+      run: runId,
+      ...toggleWorkflowPaneTab(runId === search.run ? pane : {}, tab),
+    });
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -303,9 +309,16 @@ export function WorkflowsPage() {
                   ...(thread.environmentId === null ? {} : { env: thread.environmentId }),
                 })
               }
-              onOpenReference={(runId, reference: WorkflowRunReference) =>
-                togglePane(runId, { kind: reference.kind, key: reference.key })
-              }
+              onOpenReference={(runId, reference: WorkflowRunSubject) => {
+                // A thread opens as an agent's does, as its transcript.
+                const threadId = workflowReferenceThreadId(reference);
+                togglePane(
+                  runId,
+                  threadId === null
+                    ? { kind: reference.kind, key: reference.key }
+                    : { thread: threadId },
+                );
+              }}
             />
           )}
         </div>
@@ -315,6 +328,7 @@ export function WorkflowsPage() {
             className="min-h-0 w-full shrink-0 bg-background md:w-1/2 md:max-w-2xl md:border-s"
           >
             <WorkflowPane
+              electron={isElectron}
               environmentId={environmentId}
               runId={search.run ?? null}
               state={pane}

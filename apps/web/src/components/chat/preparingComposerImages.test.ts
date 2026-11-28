@@ -10,6 +10,7 @@ import {
   holdComposerSend,
   joinPreparedImagesToDraft,
   removePreparingComposerImages,
+  watchComposerSendEdits,
 } from "./preparingComposerImages";
 
 function preparingImage(id: string) {
@@ -55,4 +56,66 @@ it("holds a message send until its images join the draft, and cancels on edit, c
     await expect(cancelled).resolves.toEqual({ status: "cancelled" });
     cancelPreparingComposerImages(target);
   }
+});
+
+it("distinguishes draft edits from attachment progress while routing a send", () => {
+  const environmentId = EnvironmentId.make("environment-routing");
+  const draftTarget = scopeThreadRef(environmentId, ThreadId.make("routing"));
+  const target = composerTargetKey(draftTarget);
+  const drafts = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => {
+      cancelPreparingComposerImages(target);
+      drafts.clearComposerContent(draftTarget);
+    },
+  };
+  const file = new File(["text"], "notes.txt", { type: "text/plain" });
+  drafts.setPrompt(draftTarget, "read these");
+  const setEffort = (value: string) =>
+    drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
+      { id: "reasoningEffort", value },
+    ]);
+  setEffort("medium");
+  const finishSameEffortSend = watchComposerSendEdits(draftTarget);
+  setEffort("medium");
+  expect(finishSameEffortSend()).toBe("ready");
+
+  drafts.addFiles(draftTarget, [
+    { type: "file", id: "notes", name: file.name, mimeType: file.type, sizeBytes: file.size, file },
+  ]);
+  const image = preparingImage("submitted");
+  addPreparingComposerImages(target, [image]);
+  const finishUnchangedSend = watchComposerSendEdits(draftTarget);
+  drafts.setPrompt(draftTarget, drafts.getComposerDraft(draftTarget)!.prompt);
+  drafts.setFileUpload(draftTarget, "notes", environmentId, "uploaded-notes");
+  joinPreparedImagesToDraft(() =>
+    drafts.addImages(draftTarget, [
+      {
+        type: "image",
+        id: image.id,
+        name: image.name,
+        mimeType: "image/png",
+        sizeBytes: image.file.size,
+        previewUrl: URL.createObjectURL(image.file),
+        file: image.file,
+      },
+    ]),
+  );
+  removePreparingComposerImages(target, new Set([image.id]));
+  expect(finishUnchangedSend()).toBe("ready");
+
+  for (const edit of [
+    () => drafts.setPrompt(draftTarget, "replacement"),
+    () => setEffort("high"),
+    () => addPreparingComposerImages(target, [preparingImage("unsubmitted")]),
+  ]) {
+    const finishEditedSend = watchComposerSendEdits(draftTarget);
+    edit();
+    expect(finishEditedSend()).toBe("edited");
+  }
+
+  const finishCancelledSend = watchComposerSendEdits(draftTarget);
+  drafts.setPrompt(draftTarget, "another edit");
+  removePreparingComposerImages(target, new Set(["unsubmitted"]), { cancelSubmission: true });
+  expect(finishCancelledSend()).toBe("attachments-cancelled");
 });

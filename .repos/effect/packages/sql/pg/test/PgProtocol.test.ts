@@ -109,9 +109,11 @@ describe("PgProtocol", () => {
         else sink.raw(value)
         return Result.void
       })
+      const options = { portal: "p1", statement: "s1", parameters: [bytes("00000001"), null] }
+      assert.strictEqual(hex(success(encodeBind(options))), frontend.bind)
       assert.strictEqual(
-        hex(success(encodeBind({ portal: "p1", statement: "s1", parameters: [bytes("00000001"), null] }))),
-        frontend.bind
+        hex(success(encodeBind({ ...options, textResults: true }))),
+        "42000000207031007331000001000100020000000400000001ffffffff00010000"
       )
     })
 

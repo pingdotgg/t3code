@@ -244,14 +244,98 @@ describe("AzureDevOpsCli.layer", () => {
         "show",
         "--detect",
         "true",
-        "--repository",
-        "repo",
-        "--project",
-        "project",
+        "--repository=repo",
+        "--project=project",
         "--only-show-errors",
         "--output",
         "json",
       ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("sends repository and project names that look like `@path` as text", () =>
+    Effect.gen(function* () {
+      const repository = JSON.stringify({
+        name: "repo",
+        webUrl: "https://dev.azure.com/acme/project/_git/repo",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+        sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+      });
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const callsFor = (
+        outputs: ReadonlyArray<string>,
+        run: Effect.Effect<unknown, AzureDevOpsCli.AzureDevOpsCliError>,
+      ) =>
+        Effect.gen(function* () {
+          mockRun.mockReset();
+          for (const stdout of outputs) {
+            mockRun.mockReturnValueOnce(Effect.succeed(processOutput(stdout)));
+          }
+          yield* run;
+          return mockRun.mock.calls.map(([call]) => ({
+            args: call.args.slice(0, -3),
+            stdin: call.stdin,
+          }));
+        });
+      const show = (specifier: string) =>
+        callsFor(
+          [repository],
+          az.getRepositoryCloneUrls({ cwd: "/somewhere", repository: specifier }),
+        );
+      const repos = ["repos", "show", "--detect", "true"];
+
+      assert.deepStrictEqual(yield* show("project/@repo"), [
+        { args: [...repos, "--repository=@-", "--project=project"], stdin: "@repo" },
+      ]);
+      assert.deepStrictEqual(yield* show("@project/-repo"), [
+        { args: [...repos, "--repository=-repo", "--project=@-"], stdin: "@project" },
+      ]);
+
+      // az has one stdin: the project is read first and named by its ID in the lookup.
+      const projectId = "d18445d6-86b1-4b1d-88aa-bc6d45d8b9b0";
+      const withProjectId = (run: Effect.Effect<unknown, AzureDevOpsCli.AzureDevOpsCliError>) =>
+        callsFor([JSON.stringify({ id: projectId }), repository], run);
+      const project = {
+        args: ["devops", "project", "show", "--detect", "true", "--project=@-"],
+        stdin: "@project",
+      };
+      assert.deepStrictEqual(
+        yield* withProjectId(
+          az.getDefaultBranch({ cwd: "/somewhere", repository: "@project/@repo" }),
+        ),
+        [
+          project,
+          { args: [...repos, "--repository=@-", `--project=${projectId}`], stdin: "@repo" },
+        ],
+      );
+      assert.deepStrictEqual(
+        yield* withProjectId(
+          az.createRepository({
+            cwd: "/somewhere",
+            repository: "@project/@repo",
+            visibility: "private",
+          }),
+        ),
+        [
+          project,
+          {
+            args: ["repos", "create", "--detect", "true", "--name=@-", `--project=${projectId}`],
+            stdin: "@repo",
+          },
+        ],
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("runs az only for a reference that holds a pull request number", () =>
+    Effect.gen(function* () {
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      // az would read `@notes.txt` as a file and `--help` as an option.
+      for (const reference of ["@notes.txt", "--help", "feature"]) {
+        const error = yield* az.getPullRequest({ cwd: "/repo", reference }).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "AzureDevOpsPullRequestNotFoundError");
+      }
+      expect(mockRun).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layer)),
   );
 
@@ -266,8 +350,10 @@ describe("AzureDevOpsCli.layer", () => {
         state: "open",
       });
 
-      const args = mockRun.mock.calls.at(-1)?.[0].args ?? [];
-      assert.strictEqual(args[args.indexOf("--source-branch") + 1], "user%2Ffeat%2F1-(%232)-slug");
+      // Joined so a branch starting with `-` stays the option's value.
+      expect(mockRun.mock.calls.at(-1)?.[0].args).toContain(
+        "--source-branch=user%2Ffeat%2F1-(%232)-slug",
+      );
 
       for (const prefix of ["refs/heads/", "refs/pull/", "refs/tags/"]) {
         mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
@@ -278,10 +364,8 @@ describe("AzureDevOpsCli.layer", () => {
           state: "open",
         });
 
-        const refArgs = mockRun.mock.calls.at(-1)?.[0].args ?? [];
-        assert.strictEqual(
-          refArgs[refArgs.indexOf("--source-branch") + 1],
-          `${prefix}user%2Ffeat%2F1-(%232)-slug`,
+        expect(mockRun.mock.calls.at(-1)?.[0].args).toContain(
+          `--source-branch=${prefix}user%2Ffeat%2F1-(%232)-slug`,
         );
       }
     }).pipe(Effect.provide(layer)),
@@ -503,6 +587,27 @@ describe("scopeAzureCliArgs", () => {
     ]);
   });
 
+  it.each([
+    ["https://dev.azure.com/acme/_git/My%20Repo", "https://dev.azure.com/acme", "My Repo"],
+    ["https://acme.visualstudio.com/_git/My%20Repo", "https://acme.visualstudio.com", "My Repo"],
+    [
+      "https://acme.visualstudio.com/DefaultCollection/_git/My%20Repo",
+      "https://acme.visualstudio.com",
+      "My Repo",
+    ],
+  ])("reads shorthand %s as a project named after its repository", (url, organization, name) => {
+    expect(scopeAzureCliArgs(show, url)).toEqual([
+      "repos",
+      "show",
+      "--detect",
+      "false",
+      "--organization",
+      organization,
+      `--project=${name}`,
+      `--repository=${name}`,
+    ]);
+  });
+
   it("joins names starting with `-` to their options", () => {
     expect(
       scopeAzureCliArgs(
@@ -566,8 +671,18 @@ describe("primaryRemoteUrl", () => {
       remotes(azure("upstream"), ["origin", "https://github.com/acme/repo"]),
       "https://github.com/acme/repo",
     ],
+    [
+      `origin\t${azure("origin")[1]} (fetch) [blob:none]\norigin\tpush-url (push)\n`,
+      azure("origin")[1],
+    ],
+    [
+      remotes(["origin", "https://dev.azure.com/acme/My Project/_git/My Repo"]),
+      "https://dev.azure.com/acme/My Project/_git/My Repo",
+    ],
+    [remotes(["backup", "/Users/alice/My Repos/app"], azure("origin")), azure("origin")[1]],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
+    [remotes(["origin", "https://dev.azure.com/acme/My\tProject/_git/Repo"]), null],
   ])("picks the scoping remote from %j", (output, url) => {
     expect(primaryRemoteUrl(output)).toBe(url);
   });

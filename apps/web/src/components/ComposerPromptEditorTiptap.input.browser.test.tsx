@@ -68,6 +68,7 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  editorRef = createRef<ComposerPromptEditorHandle>(),
   placeholder = "",
   placeholderSuffix,
 }: {
@@ -79,13 +80,14 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  editorRef?: ComposerPromptEditorProps["editorRef"];
   placeholder?: string;
   placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
-      editorRef={createRef<ComposerPromptEditorHandle>()}
+      editorRef={editorRef}
       value={prompt.value}
       cursor={prompt.cursor}
       richTextEnabled={richTextEnabled}
@@ -419,15 +421,45 @@ it.each([false, true])(
   },
 );
 
-it("lets composition replace selected text without surrounding it", async () => {
-  await using screen = await mountEditor("word");
+it.each([
+  { code: "echo @prod next", from: 11, to: 16, expected: "echo @prod( next)" },
+  { code: "echo next @prod", from: 1, to: 11, expected: "(echo next )@prod" },
+])(
+  "wraps selected code next to a literal mention in $code",
+  async ({ code, from, to, expected }) => {
+    await using screen = await mountEditor(`\`\`\`\n${code}\n\`\`\``);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from, to });
+      typeText(editor, from, to, "(");
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`\`\`\n${expected}\n\`\`\``);
+  },
+);
+
+it.each([
+  { richText: true, composing: true, text: '"', expected: '"' },
+  { richText: true, composing: false, text: "*", expected: "*word*" },
+  { richText: false, composing: false, text: "*", expected: "*" },
+])("replaces or surrounds selected text: %j", async ({ richText, composing, text, expected }) => {
+  await using screen = await mountEditor("word", richText);
   const { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
-    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
-    typeText(editor, 1, 5, '"');
+    if (composing) editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+    typeText(editor, 1, 5, text);
   });
-  expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+  await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+});
+
+it("keeps replacement behavior at a prose mention boundary", async () => {
+  await using screen = await mountEditor("echo @prod next");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    typeText(editor, 7, 12, "(");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo @prod(");
 });
 
 // CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
@@ -555,6 +587,7 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
 it.each([
   "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
   "see `**x**` now",
+  "signal = (7 * 2**3 * 5)**4",
 ])("sends pasted %s as pasted", async (pasted) => {
   await using screen = await mountEditor("");
   const { editor } = screen;
@@ -564,6 +597,248 @@ it.each([
     editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+// Pasted lines land as if typed: the first continues the caret's line, the last runs into the text after it.
+it.each([
+  {
+    value: "Fix this error: ",
+    caret: "Fix this error: ".length,
+    expected: "Fix this error: foo\nbar",
+  },
+  { value: "before after", caret: "before ".length, expected: "before foo\nbarafter" },
+])("pastes two lines into $value at $caret", async ({ value, caret, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "foo\nbar");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "!");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected.replace("bar", "bar!"));
+});
+
+// regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
+it.each([
+  // Shown bold like the same paste; the sent text stays verbatim.
+  ["signal = (7 * 2**3 * 5)**4", "signal = (7 * 23 * 5)4"],
+  ["a **bold** and *soft* word", "a bold and soft word"],
+])("drops %s like a paste", async (dropped, shown) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", dropped);
+    const { left, top } = editor.view.coordsAtPos(1);
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: left,
+        clientY: top + 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(dropped);
+  expect(editor.state.doc.textContent).toBe(shown);
+  expect(editor.view.hasFocus()).toBe(true);
+});
+
+it("does not paste at the end of a disabled code block", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const value = "```text\nExisting answer\n```";
+  await using screen = await render(
+    <Composer value={value} richTextEnabled skills={[]} disabled editorRef={editorRef} />,
+  );
+  const editor = editorIn(screen.container);
+  const clipboard = new DataTransfer();
+  clipboard.setData("text/plain", " should not appear");
+  await act(async () => {
+    expect(editorRef.current?.pasteAtCodeBlockEnd(clipboard)).toBe(false);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+});
+
+it("keeps the destination of a link dropped from a web page", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "Setup guide");
+    dataTransfer.setData("text/html", '<a href="https://example.com/setup">Setup guide</a>');
+    const { left, top } = editor.view.coordsAtPos(1);
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: left,
+        clientY: top + 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "[Setup guide](https://example.com/setup)",
+  );
+});
+
+it.each([
+  {
+    label: "inside inline code as plain text",
+    value: "`sumBy` after",
+    caret: "su".length,
+    pasted: "`suGuidemBy` after",
+  },
+  {
+    label: "as a link in italic text that also holds inline code",
+    value: "*`a` bold* after",
+    caret: "a bo".length,
+    pasted: "*`a` bo[Guide](https://example.com/guide)ld* after",
+  },
+])("pastes a linked word $label", async ({ value, caret, pasted }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+  });
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Guide");
+    clipboardData.setData("text/html", '<a href="https://example.com/guide">Guide</a>');
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+it("keeps a pasted web link beside an imported thread chip", async () => {
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      importContextFragment={(fragment) =>
+        new Map(fragment.records.map((record) => [record.contextId, record.contextId]))
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    const thread = "https://app.t3.codes/threads/env-1/thread-1";
+    clipboardData.setData("text/plain", `${thread} and Setup guide`);
+    clipboardData.setData(
+      "text/html",
+      `<p>${thread} and <a href="https://example.com/setup">Setup guide</a></p>`,
+    );
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toMatch(
+    /^\[Thread\]\(t3-context:\/\/v1\/thread\/[^)]+\) and \[Setup guide\]\(https:\/\/example\.com\/setup\)$/,
+  );
+});
+
+it("parses markdown dropped below the first line of an empty composer", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "a **bold** word");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** word");
+  expect(editor.state.doc.textContent).toBe("a bold word");
+});
+
+it("drops plain text on a new line below the last line", async () => {
+  await using screen = await mountEditor("before");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "Docs https://example.com/document\n\nsecond");
+    dataTransfer.setData("text/html", '<a href="https://example.com/document">Docs</a>');
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "before\nDocs https://example.com/document\n\nsecond",
+  );
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("before");
+});
+
+it("drops text on a list marker inside the list", async () => {
+  await using screen = await mountEditor("- one\n- two");
+  const { editor } = screen;
+  const item = editor.view.dom.querySelectorAll("li")[1]!.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "added");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: item.left - 8,
+        clientY: item.top + item.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toMatch(/^- one\n.*added[\s\S]*- two$/);
+});
+
+it("drops text on a rule's edge without replacing the rule", async () => {
+  await using screen = await mountEditor("before\n\n---\n\nafter");
+  const { editor } = screen;
+  let rulePos = -1;
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === "horizontalRule") rulePos = offset;
+  });
+  const rule = (editor.view.nodeDOM(rulePos) as HTMLElement).getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "dropped");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: rule.left + rule.width / 2,
+        clientY: rule.top,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  const value = serializeEditorDoc(editor.state.doc).value;
+  expect(value).toContain("---");
+  expect(value).toContain("dropped");
 });
 
 it.each([
@@ -1006,6 +1281,42 @@ describe("Markdown markers around styled text", () => {
     expect(textWithMark(editor, "bold")).toEqual(["bold"]);
   });
 
+  it("keeps text a mouse drag selects still, and shows markers for a click on release", async () => {
+    await using screen = await mountEditor("start **bold words** end");
+    const { editor } = screen;
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const point = (pos: number) => {
+      const { left, top, bottom } = editor.view.coordsAtPos(pos);
+      return { x: frame.left + left, y: frame.top + (top + bottom) / 2 };
+    };
+    const mouse = (
+      type: "mousePressed" | "mouseMoved" | "mouseReleased",
+      { x, y }: { x: number; y: number },
+    ) => cdp().send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    const end = editor.state.doc.content.size - 1;
+    const hidden = editor.state.doc.textContent;
+    // A press that focuses the editor starts ProseMirror's 20ms focus timer, which can
+    // take the first drag move's selection as already read and never dispatch it.
+    await focusAt(editor, "end");
+    await mouse("mousePressed", point(end));
+    for (const pos of [end - 2, "start bold wo".length + 1, "start bo".length + 1]) {
+      await mouse("mouseMoved", point(pos));
+      await vi.waitFor(() => expect(editor.state.selection.head).toBe(pos));
+      expect(editor.state.doc.textContent).toBe(hidden);
+    }
+    const released = point("start bo".length + 1);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.selection.head).toBe("start bo".length + 1));
+    const { from, to } = editor.state.selection;
+    expect(editor.state.doc.textBetween(from, to)).toBe("ld words end");
+    expect(editor.state.doc.textContent).toBe(hidden);
+
+    await mouse("mousePressed", released);
+    await mouse("mouseReleased", released);
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("start **bold words** end"));
+    expect(editor.state.selection.empty).toBe(true);
+  });
+
   it("keeps bold around a skill pasted inside it", async () => {
     await using screen = await mountEditor("**helloworld** after", true, [babysit]);
     const { editor } = screen;
@@ -1159,7 +1470,10 @@ describe("composer context undo lifetime", () => {
       const retained = composer.retained();
       expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
+      const editorBeforeSwitch = composer.editor();
       await composer.show("b");
+      // Thread switches swap the draft into the same editor rather than rebuilding it.
+      expect(composer.editor()).toBe(editorBeforeSwitch);
       expect(retained.files.size).toBe(0);
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);

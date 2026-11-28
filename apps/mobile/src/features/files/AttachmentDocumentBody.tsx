@@ -3,10 +3,12 @@ import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import type { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
 import { AudioFilePreview } from "./AudioFilePreview";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
+import { EpubFilePreview } from "./EpubFilePreview";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { SourceFileSurface } from "./SourceFileSurface";
@@ -41,6 +43,7 @@ export function AttachmentDocumentBody(props: {
 }) {
   const { document } = props;
   const gt = useGT();
+  const headerInset = useContentTopInset();
   if (document.error) {
     return (
       <View className="flex-1 items-center justify-center bg-sheet px-6">
@@ -63,7 +66,7 @@ export function AttachmentDocumentBody(props: {
   if (document.needsText && document.content) {
     const { content, table } = document;
     return (
-      <View className="flex-1 bg-sheet">
+      <View className="flex-1 bg-sheet" style={{ paddingTop: content.truncated ? headerInset : 0 }}>
         {content.truncated ? (
           <FilePreviewNotice title={gt("Partial file")}>
             {gt("Preview limited to the first 1 MB. Save or share the file to read it in full.")}
@@ -87,6 +90,8 @@ export function AttachmentDocumentBody(props: {
     );
   }
   if (!document.uri) return null;
+  if (document.kind === "epub")
+    return <EpubFilePreview key={document.uri} uri={document.uri} name={props.name} />;
   if (document.kind === "audio") {
     return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
   }

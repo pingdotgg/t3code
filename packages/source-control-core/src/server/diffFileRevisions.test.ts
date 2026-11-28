@@ -4,11 +4,40 @@ import {
   diffFileSection,
   parseDiffFilePaths,
   parseDiffFileRevisions,
+  truncateLongDiffLines,
 } from "./diffFileRevisions.ts";
 
 function patchOf(...lines: ReadonlyArray<string>): string {
   return `${lines.join("\n")}\n`;
 }
+
+describe("truncateLongDiffLines", () => {
+  it.each(["\n", "\r\n"])("keeps emoji whole and counts omitted content with %j", (ending) => {
+    const header = patchOf("diff --git a/a.txt b/a.txt", "@@ -1,3 +1,3 @@");
+    const lines = ["+", "-", " "].map((prefix) => `${prefix}${"a".repeat(999)}😀z${ending}`);
+    const truncated = truncateLongDiffLines(header + lines.join(""), 1000);
+
+    assert.isTrue(truncated.isWellFormed());
+    assert.strictEqual(
+      truncated,
+      header +
+        ["+", "-", " "]
+          .map((prefix) => `${prefix}${"a".repeat(999)} …[3 more characters]${ending}`)
+          .join(""),
+    );
+  });
+
+  it("leaves CRLF content at the limit unchanged", () => {
+    const patch = patchOf(
+      "diff --git a/a.txt b/a.txt",
+      "@@ -0,0 +1,2 @@",
+      `+${"a".repeat(1000)}\r`,
+      `+${"a".repeat(998)}😀\r`,
+    );
+
+    assert.strictEqual(truncateLongDiffLines(patch, 1000), patch);
+  });
+});
 
 describe("parseDiffFileRevisions", () => {
   it("reads the head id of a changed file off its index line", () => {
